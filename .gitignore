@@ -11,3 +11,7 @@ runner/out/
 *.log
 .DS_Store
 Thumbs.db
+
+# scoring 运行时产物：跨 run 模型判定缓存与复核服务索引（可随时删除重建）
+scoring/verdict-cache.jsonl
+.review-index.db

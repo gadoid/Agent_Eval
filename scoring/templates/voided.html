@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}作废改判 · {{ run_id }}{% endblock %}
+{% block body %}
+<h1>作废的改判 · {{ run_id }}</h1>
+{% if not items %}<p>没有作废的改判。</p>{% endif %}
+{% for it in items %}
+<div class="card">
+  <div class="muted">{{ it.review.episode_id }} · {{ it.review.item_id }} · {{ it.review.reviewer }} · {{ it.review.at }}</div>
+  <div>改判：<span class="badge {{ it.review.value|vcls }}">{{ it.review.value }}</span>
+    <span class="muted">{{ it.review.reason }}</span></div>
+  <div><span class="badge bad">{{ it.reason }}</span></div>
+</div>
+{% endfor %}
+{% endblock %}

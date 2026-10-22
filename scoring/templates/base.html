@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>{% block title %}Agent_Eval 复核{% endblock %}</title>
+<style>
+body{font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;margin:0;background:#f5f6f8;color:#1f2328}
+header{padding:10px 24px;background:#fff;border-bottom:1px solid #e1e4e8;position:sticky;top:0;z-index:5;display:flex;gap:18px;align-items:center}
+header a{color:#0969da;text-decoration:none;font-size:14px}
+header .brand{font-weight:600;font-size:15px;color:#1f2328}
+main{max-width:1180px;margin:16px auto;padding:0 14px}
+h1{font-size:18px} h2{font-size:15px;margin:18px 0 8px}
+table{border-collapse:collapse;background:#fff;font-size:13px}
+th,td{border:1px solid #e1e4e8;padding:6px 10px;text-align:left;vertical-align:top}
+th{background:#f6f8fa}
+.card{background:#fff;border:1px solid #e1e4e8;border-radius:8px;margin-bottom:10px;padding:10px 14px}
+.badge{display:inline-block;border-radius:10px;padding:1px 8px;font-size:11px;background:#eff2f5;margin:0 2px}
+.ok{background:#dafbe1}.bad{background:#ffebe9}.mid{background:#fff8c5}
+.src-rule{color:#0969da}.src-judge{color:#8250df}.src-human{color:#1a7f37}
+.prov{background:#fff8c5;border:1px solid #d4a72c;border-radius:8px;padding:2px 8px;font-size:12px;color:#7d4e00}
+button{border:1px solid #d0d7de;background:#fff;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:13px}
+button.primary{background:#0969da;color:#fff;border-color:#0969da}
+select,input[type=text]{border:1px solid #d0d7de;border-radius:6px;padding:4px 8px;font-size:13px}
+mark{background:#fff1a8;padding:0 2px}
+.answer{background:#f6f8fa;border-radius:8px;padding:8px 12px;font-size:13px;max-height:220px;overflow:auto}
+.answer pre{white-space:pre-wrap;margin:0}
+.item-chip{display:inline-block;border:1px solid #d0d7de;border-radius:8px;padding:1px 8px;font-size:12px;margin:2px 4px 2px 0;background:#fff}
+.chip-undecided{border-color:#d4a72c;background:#fff8c5}
+.muted{color:#57606a;font-size:12px}
+.pager a,.tabs a{margin-right:8px;font-size:13px}
+.err-box{background:#ffebe9;border:1px solid #cf222e;border-radius:8px;padding:8px 14px}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Agent_Eval 复核</span>
+  <a href="/">总览</a>
+  <a href="/queue?filter_name=undecided">复核队列</a>
+  <a href="/compare">多 run 对比</a>
+  <button onclick="rescan(this)">重新扫描</button>
+</header>
+<main>{% block body %}{% endblock %}</main>
+<script>
+async function postReview(runId, epId, itemId, value, reason, reviewer, done){
+  const res = await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({run_id:runId,episode_id:epId,item_id:itemId,value,reason,reviewer})});
+  const data = await res.json();
+  if(!res.ok){alert(data.error||'提交失败');return}
+  done(data);
+}
+async function rescore(runId,btn){btn.disabled=true;await fetch('/api/rescore/'+encodeURIComponent(runId),{method:'POST'});location.reload()}
+async function rescan(btn){btn.disabled=true;await fetch('/api/rescan',{method:'POST'});location.reload()}
+function reviewerOf(inp){const v=inp.value||localStorage.getItem('reviewer')||'';localStorage.setItem('reviewer',v);return v}
+</script>
+</body>
+</html>

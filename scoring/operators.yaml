@@ -1,0 +1,16 @@
+# 算子实例与链（判定算子扩展方案 §5.2）。
+# 第二批模型算子（llm-fact / llm-forbid，impl 形如 "ext.judges:LlmFact"）待 judge
+# 模型选型定案后在此登记并加入链；就绪前链上没有模型算子的条目类型全部记
+# undecided，进入人工复核队列，不产出无意义的分数。
+schema: 1
+operators:
+  keyword:    {impl: keyword}
+  skill-path: {impl: skill-path}
+
+chains:                          # 条目类型 → 依次尝试，前一个弃权才往后走
+  required:  [keyword]
+  expected:  [keyword]
+  forbidden: []                  # llm-forbid 就绪前只能人工判
+  precond:   []                  # llm-precond 就绪前只能人工判
+  path:      [skill-path]
+  refusal:   []                  # llm-refusal 就绪前只能人工判

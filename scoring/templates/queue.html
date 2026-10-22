@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}复核队列 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<h1>复核队列 <span class="muted">共 {{ total }} 条 · j/k 切换，数字键选结论，Enter 提交</span></h1>
+<div class="tabs">
+  <a href="/queue?filter_name=undecided{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name=='undecided' %}style="font-weight:600"{% endif %}>未决</a>
+  <a href="/queue?filter_name=fail{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name=='fail' %}style="font-weight:600"{% endif %}>会话失败</a>
+  <a href="/queue?filter_name=mismatch{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name=='mismatch' %}style="font-weight:600"{% endif %}>人工与机器不一致</a>
+  <form style="display:inline" method="get" action="/queue">
+    <input type="hidden" name="filter_name" value="{{ filter_name }}">
+    <select name="run_id" onchange="this.form.submit()">
+      <option value="">全部 run</option>
+      {% for r in runs %}<option value="{{ r.run_id }}" {% if r.run_id==q_run %}selected{% endif %}>{{ r.run_id }}</option>{% endfor %}
+    </select>
+  </form>
+</div>
+{% if not items %}<p>队列为空。</p>{% endif %}
+{% for it in items %}
+<div class="card qitem" tabindex="0"
+     data-run="{{ it.r.run_id }}" data-ep="{{ it.r.episode_id }}" data-item="{{ it.r.item_id }}">
+  <div class="muted">{{ it.r.run_id }} · <a href="/case/{{ it.r.run_id }}/{{ it.r.uid|urlencode }}">{{ it.r.uid }}</a> · {{ it.r.episode_id }} · {{ it.r.kind }} {{ it.r.item_id }}{% if it.r.turn %}（第 {{ it.r.turn }} 轮）{% endif %}</div>
+  <div style="margin:6px 0"><b>期望：</b>{{ it.text or "（路径/拒答条目）" }}</div>
+  <div class="answer">{{ it.answer|highlight(it.keywords) }}</div>
+  <div style="margin:6px 0">
+    机器：<span class="badge {{ it.r.machine_value|vcls }}">{{ it.r.machine_value or "未决" }}</span>
+    {% if it.r.machine_source %}<span class="src-{{ it.r.machine_source }}">{{ it.r.machine_source }}</span>{% endif %}
+    {% if it.r.reason %}<span class="muted">{{ it.r.reason }}</span>{% endif %}
+    {% if it.r.eff_source == 'human' %} · 人工已判：<span class="badge {{ it.r.eff_value|vcls }}">{{ it.r.eff_value }}</span>{% endif %}
+  </div>
+  <form class="rv" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <select class="val">
+      {% for v in it.scale %}<option value="{{ v }}">{{ v }}</option>{% endfor %}
+    </select>
+    <input class="why" type="text" placeholder="理由（可选）" style="flex:1;min-width:160px">
+    <input class="who" type="text" placeholder="评审人" value="" style="width:90px">
+    <button class="primary" type="submit">提交</button>
+  </form>
+</div>
+{% endfor %}
+<div class="pager">
+  {% if page > 0 %}<a href="/queue?filter_name={{ filter_name }}{% if q_run %}&run_id={{ q_run }}{% endif %}&page={{ page - 1 }}">← 上一页</a>{% endif %}
+  第 {{ page + 1 }} / {{ pages }} 页
+  {% if page + 1 < pages %}<a href="/queue?filter_name={{ filter_name }}{% if q_run %}&run_id={{ q_run }}{% endif %}&page={{ page + 1 }}">下一页 →</a>{% endif %}
+</div>
+<script>
+document.querySelectorAll('.qitem .rv').forEach(f => f.addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const card = f.closest('.qitem');
+  const sel = f.querySelector('.val'), why = f.querySelector('.why'), who = f.querySelector('.who');
+  await postReview(card.dataset.run, card.dataset.ep, card.dataset.item, sel.value, why.value, reviewerOf(who),
+    () => { card.style.opacity = .35; card.querySelector('button').disabled = true; f.querySelector('button').textContent = '已提交（刷新页面更新统计）'; });
+}));
+let cur = -1;
+const cards = () => [...document.querySelectorAll('.qitem')];
+document.addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'SELECT') return;
+  const cs = cards();
+  if (!cs.length) return;
+  if (ev.key === 'j') { cur = Math.min(cur + 1, cs.length - 1); cs[cur].focus(); }
+  else if (ev.key === 'k') { cur = Math.max(cur - 1, 0); cs[cur].focus(); }
+  else if (/^[1-9]$/.test(ev.key) && cur >= 0) { const s = cs[cur].querySelector('.val'); if (s && ev.key <= s.options.length) s.selectedIndex = ev.key - 1; }
+  else if (ev.key === 'Enter' && cur >= 0) { ev.preventDefault(); cs[cur].querySelector('.rv button').click(); }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,9 @@
+# 口径配置（判定算子扩展方案 §7）。默认值为现行 scoring 行为，保证迁移前后结论一致；
+# 口径讨论定案后直接改这里，rescore 只读逐条判定重算，不重新调用算子。
+schema: 1
+partial_as: fail            # 必要事实判"部分"时：pass 视为满足 / fail 视为不满足
+veto_on_forbidden: true     # 禁止事实被采信即会话失败
+undecided: exclude          # 有未决条目的会话：exclude 不计入分母 / fail 记失败
+headline_mode:              # 各维度的主口径
+  default: natural
+  错误知识纠正: forced

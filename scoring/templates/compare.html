@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}多 run 对比 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<h1>多 run 对比</h1>
+<form method="get" action="/compare" class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <select name="a">{% for r in runs %}<option value="{{ r.run_id }}" {% if r.run_id==a %}selected{% endif %}>{{ r.run_id }}</option>{% endfor %}</select>
+  <span>vs</span>
+  <select name="b">{% for r in runs %}<option value="{{ r.run_id }}" {% if r.run_id==b %}selected{% endif %}>{{ r.run_id }}</option>{% endfor %}</select>
+  <label><input type="radio" name="intended" value="model" {% if intended=='model' %}checked{% endif %}> 预期变量：模型</label>
+  <label><input type="radio" name="intended" value="skill" {% if intended=='skill' %}checked{% endif %}> skill（知识修订验证）</label>
+  <button class="primary" type="submit">对比</button>
+</form>
+
+{% if error %}<div class="err-box">{{ error }}</div>{% endif %}
+{% if rep %}
+  {% if rep.blocked %}<div class="err-box">已拒绝对比：{{ rep.blocked }}</div>
+  {% else %}
+  <div class="card">
+    <div>快照差异键：{{ rep.snapshot_diff_keys|join('、') or '（无）' }}
+      {% if rep.allowed_diff_keys %}（预期变量 {{ rep.intended }} 放行：{{ rep.allowed_diff_keys|join('、') }}）{% endif %}</div>
+    {% if rep.demoted_excluded %}<div class="muted">按 diff.md 排除因降级移出：{{ rep.demoted_excluded|join('、') }}</div>{% endif %}
+    {% if rep.anchor_tripwires %}<div class="err-box">锚点绊线标红：{{ rep.anchor_tripwires|join('、') }}（上一 run 全过、本 run 全败，去看一眼）</div>{% endif %}
+  </div>
+  <table>
+    <tr><th>uid</th><th>Δ通过率（B−A）</th><th>95% 区间</th><th>显著</th></tr>
+    {% for uid, p in rep.paired.items() %}
+    <tr><td>{{ uid }}</td><td>{{ p.delta }}</td><td>{{ p.ci[0] }} ~ {{ p.ci[1] }}</td>
+        <td>{% if p.significant %}<span class="badge {{ 'bad' if p.delta < 0 else 'ok' }}">显著</span>{% else %}<span class="badge mid">不显著</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+{% endif %}
+{% endblock %}

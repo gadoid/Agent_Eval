@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ uid }} · Agent_Eval 复核{% endblock %}
+{% macro chip(c) -%}
+<span class="item-chip {{ 'chip-undecided' if c.undecided else c.value|vcls }}" title="{{ c.reason }}">
+  {{ c.id }} <span class="{{ 'src-' + c.source if c.source in ('rule','judge','human') }}">{{ c.value or '未决' }}</span>
+  {% if c.source == 'human' %}（人工）{% elif c.source %}（{{ c.source }}{% if c.machine and c.machine != c.value %} 机器 {{ c.machine }}{% endif %}）{% endif %}
+</span>
+{%- endmacro %}
+{% block body %}
+<h1>{{ uid }} <span class="muted">{{ exp.dim }}{% if not exp.answerable %} · 不可回答题{% endif %} · 参照 run {{ run_id }}</span></h1>
+
+<div class="card">
+  <h2 style="margin-top:0">用例期望（来自编译行）</h2>
+  {% set user_turns = exp.dialog | selectattr("role", "equalto", "user") | list %}
+  {% if user_turns | length == 1 %}
+    <div style="margin:6px 0"><b>问题：</b>{{ user_turns[0].content }}</div>
+  {% elif user_turns | length > 1 %}
+    <div style="margin:6px 0"><b>对话：</b></div>
+    {% for t in user_turns %}<div style="margin:2px 0"><span class="badge">第 {{ loop.index }} 轮</span> {{ t.content }}</div>{% endfor %}
+  {% endif %}
+  {% if exp.dialog | rejectattr("role", "equalto", "user") | list %}<div class="muted">（对话中另含预置助手消息，live 模式不发送）</div>{% endif %}
+  {% for p in exp.preconditions %}<div><span class="badge mid">P {{ p.id }}</span> {{ p.text }} <span class="muted">第 {{ p.turn or '最后' }} 轮</span></div>{% endfor %}
+  {% for f in exp.facts %}
+  <div><span class="badge {{ 'ok' if f.kind=='required' else ('bad' if f.kind=='forbidden' else 'mid') }}">{{ f.kind }} {{ f.id }}</span>
+    {{ f.text }} {% if f.keywords %}<span class="muted">关键词：{{ f.keywords|join('、') }}</span>{% endif %}
+    <span class="muted">第 {{ f.turn or '最后' }} 轮{% if f.group %} · 组 {{ f.group }}{% endif %}</span></div>
+  {% endfor %}
+  {% for p in exp.path %}<div><span class="badge mid">路径</span> {{ p.type }}：{{ p.action.skill }}{% if p.turn %}（第 {{ p.turn }} 轮）{% endif %}</div>{% endfor %}
+  {% if exp.reference %}<div class="answer" style="margin-top:8px">{{ exp.reference|md }}</div>{% endif %}
+</div>
+
+<table>
+  <tr>
+    <th>轮次</th>
+    {% for c in columns %}<th>{{ c.run_id }}{% if c.is_anchor %} ★{% endif %}<br><span class="badge">{{ c.mode }} t{{ c.trial }}</span>
+      <span class="badge {{ c.status|vcls }}">{{ c.status }}</span>{% if c.reason %}<span class="muted">{{ c.reason }}</span>{% endif %}</th>{% endfor %}
+  </tr>
+  {% for t in range(1, n_turns + 1) %}
+  <tr>
+    <td>第 {{ t }} 轮</td>
+    {% for c in columns %}
+    {% set turn = c.turns[t - 1] if t <= c.turns|length else none %}
+    <td>
+      {% if turn %}
+        <div class="muted">{{ turn.input }}</div>
+        <div class="answer">{{ turn.output|md }}</div>
+        {% if turn.skills %}<div class="muted">skill：{{ turn.skills|join('、') }}</div>{% endif %}
+        {% if turn.ask_user %}<div><span class="badge mid">反问 ×{{ turn.ask_user }}</span></div>{% endif %}
+        {% if turn.status != 'ok' %}<div><span class="badge bad">{{ turn.status }}</span></div>{% endif %}
+        {% for c2 in turn.chips %}{{ chip(c2) }}{% endfor %}
+      {% elif c.status == 'error' %}<span class="muted">（会话中途失败，后续轮留空）</span>
+      {% else %}<span class="muted">—</span>{% endif %}
+    </td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">人工改判请进该 run 的<a href="/queue?run_id={{ run_id }}">复核队列</a>；绿色=人工，蓝色=规则，紫色=模型。</p>
+{% endblock %}

@@ -1,4 +1,6 @@
-"""离线判定与聚合（v2，只读 results.jsonl——编译行内嵌在每条 EpisodeRecord.case 中）。
+"""【冻结的对拍参照】旧版单文件 scoring.py 的逐字拷贝（仅作 tests/test_scoring.py
+新旧对拍之用，不再维护；线上路径已是 scoring/ 包）。
+原文件头：离线判定与聚合（v2，只读 results.jsonl——编译行内嵌在 EpisodeRecord.case 中）。
 
 分层：前提有效性 → 事实四级判定（F/E/X + 组）→ 路径约束 → 单段会话 → 聚合（dim×topic×mode，Wilson 区间）
 → 归因（natural 三分）→ 视图（能力/归因/用例质量/版本对比/锚点绊线）。

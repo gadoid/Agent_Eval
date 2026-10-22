@@ -1,0 +1,194 @@
+"""测试辅助：确定性假 judge 算子（行为等价于旧版测试的 mk_judges 默认值，供新旧对拍）
+与会话/运行目录构造器。假算子经 tests.helpers:类名 以外部算子方式引用（方案 §5.1）。"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from scoring.chain import config_from_dict
+from scoring.items import FACT_SCALE, SCALES
+from scoring.operators import Verdict, operator
+
+
+# ---------------------------------------------------------------- 假 judge 算子
+
+@operator
+class FakeFact:
+    """默认：text in answer → 对，否则 未提及（等价旧 mk_judges.fact）。
+    value 参数可强制固定输出（对拍"错/部分"路径）。"""
+
+    id, version, source = "fake-fact", "1", "judge"
+    scales = {"required": FACT_SCALE, "expected": FACT_SCALE}
+    inputs = ("item.text", "answer")
+
+    def __init__(self, value: str | None = None):
+        self._value = value
+
+    def judge(self, item, ctx):
+        if self._value:
+            return Verdict(self._value, self.source, f"{self.id}@{self.version}")
+        t = item.text or ""
+        return Verdict("对" if t in ctx.answer_for(item) else "未提及",
+                       self.source, f"{self.id}@{self.version}")
+
+
+@operator
+class FakeForbidden:
+    """text in answer → 采信（等价旧 mk_judges.forbidden）。adopted 参数可强制。"""
+
+    id, version, source = "fake-forbid", "1", "judge"
+    scales = {"forbidden": SCALES["forbidden"]}
+    inputs = ("item.text", "answer")
+
+    def __init__(self, adopted: bool | None = None):
+        self._adopted = adopted
+
+    def judge(self, item, ctx):
+        if self._adopted is not None:
+            v = "采信" if self._adopted else "未采信"
+            return Verdict(v, self.source, f"{self.id}@{self.version}")
+        t = item.text or ""
+        return Verdict("采信" if t and t in ctx.answer_for(item) else "未采信",
+                       self.source, f"{self.id}@{self.version}")
+
+
+@operator
+class FakeRefusal:
+    """"不知道" in answer → 拒答（等价旧 mk_judges.refusal）。"""
+
+    id, version, source = "fake-refusal", "1", "judge"
+    scales = {"refusal": SCALES["refusal"]}
+    inputs = ("answer",)
+
+    def judge(self, item, ctx):
+        return Verdict("拒答" if "不知道" in ctx.answer_for(item) else "未拒答",
+                       self.source, f"{self.id}@{self.version}")
+
+
+@operator
+class FakePrecond:
+    """hold 参数：True → 成立（等价旧 mk_judges.precond 默认），False → 不成立。"""
+
+    id, version, source = "fake-precond", "1", "judge"
+    scales = {"precond": SCALES["precond"]}
+    inputs = ("item.text", "answer")
+
+    def __init__(self, hold: bool = True):
+        self._hold = hold
+
+    def judge(self, item, ctx):
+        return Verdict("成立" if self._hold else "不成立",
+                       self.source, f"{self.id}@{self.version}")
+
+
+@operator
+class CountingFact:
+    """总是"未提及"并累计调用次数（缓存与 rescore 不触发判定的验证）。"""
+
+    id, version, source = "counting-fact", "1", "judge"
+    scales = {"required": FACT_SCALE, "expected": FACT_SCALE}
+    inputs = ("item.text", "answer")
+    calls = 0
+
+    def judge(self, item, ctx):
+        CountingFact.calls += 1
+        return Verdict("未提及", self.source, f"{self.id}@{self.version}")
+
+
+@operator
+class CountingFactV2:
+    """与 CountingFact 同逻辑、id 不同（缓存键含 id@版本 的验证素材）。"""
+
+    id, version, source = "counting-fact-v2", "1", "judge"
+    scales = {"required": FACT_SCALE, "expected": FACT_SCALE}
+    inputs = ("item.text", "answer")
+    calls = 0
+
+    def judge(self, item, ctx):
+        CountingFactV2.calls += 1
+        return Verdict("未提及", self.source, f"{self.id}@{self.version}")
+
+
+def fake_config(**over) -> "config_from_dict":
+    """默认链配置：required/expected 先 keyword 后 fake-fact（等价旧 judge_fact 顺序）。"""
+    d = {
+        "schema": 1,
+        "operators": {
+            "keyword": {"impl": "keyword"},
+            "skill-path": {"impl": "skill-path"},
+            "fake-fact": {"impl": "fake-fact"},
+            "fake-forbid": {"impl": "fake-forbid"},
+            "fake-refusal": {"impl": "fake-refusal"},
+            "fake-precond": {"impl": "fake-precond"},
+        },
+        "chains": {
+            "required": ["keyword", "fake-fact"],
+            "expected": ["keyword", "fake-fact"],
+            "forbidden": ["fake-forbid"],
+            "precond": ["fake-precond"],
+            "path": ["skill-path"],
+            "refusal": ["fake-refusal"],
+        },
+    }
+    d.update(over)
+    return config_from_dict(d)
+
+
+def cfg_fact(value, adopted=False):
+    """固定取值的假 judge 配置：全部事实判 value、禁止事实按 adopted。"""
+    return fake_config(operators={
+        "keyword": {"impl": "keyword"}, "skill-path": {"impl": "skill-path"},
+        "fake-fact": {"impl": "fake-fact", "value": value},
+        "fake-forbid": {"impl": "fake-forbid", "adopted": adopted},
+        "fake-refusal": {"impl": "fake-refusal"},
+        "fake-precond": {"impl": "fake-precond"},
+    })
+
+
+# ---------------------------------------------------------------- 会话构造
+
+def fact(id, kind="required", text="", keywords=(), turn=None, group=None, evidence=None):
+    return {"id": id, "kind": kind, "text": text, "keywords": list(keywords), "turn": turn,
+            "group": group, "evidence": evidence}
+
+
+def turn(output="答", skills=(), ask_user=0, status="ok", index=None, source="live"):
+    return {"index": index, "source": source, "input": "q", "output": output, "status": status,
+            "observations": {"skills": [{"name": s, "ok": True} for s in skills], "tools": [],
+                             "tool_errors": [], "usage": {"steps": 1, "tokens": {}},
+                             "ask_user": {"count": ask_user, "auto": False}, "model": None}}
+
+
+def mk_record(**over):
+    base = {
+        "schema": 3, "run_id": "r-test", "uid": "ec-1#0", "mode": "natural", "trial": 1, "status": "ok",
+        "failed_turn": None, "evalset_version": "v1",
+        "turns": [turn(output="答：规则是收齐尾款后才能电放。", skills=("trade-documents",))],
+        "case": {
+            "id": "ec-1", "uid": "ec-1#0", "dim": "错误知识纠正", "answerable": True,
+            "facts": [
+                fact("F1", "required", "未收尾款不应电放"),
+                fact("X1", "forbidden", "未收尾款也可以先电放", evidence="R1"),
+            ],
+            "preconditions": [], "path": [],
+        },
+    }
+    base.update(over)
+    for i, t in enumerate(base["turns"], 1):
+        if t.get("index") is None:
+            t["index"] = i
+    return base
+
+
+def make_run(tmp: Path, name: str, records: list[dict], snapshot: dict | None = None,
+             run_id: str | None = None, routing: dict | None = None) -> Path:
+    """落一个 run 目录：results.jsonl + run.json。"""
+    d = tmp / name
+    d.mkdir(parents=True)
+    (d / "results.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+                                     encoding="utf-8")
+    run_json = {"run_id": run_id or name,
+                "snapshot": snapshot or {"skills_mode": "default-roots", "evalset": {"sha256": "a"}},
+                "profile": {"content": {"routing": routing or {}}}}
+    (d / "run.json").write_text(json.dumps(run_json, ensure_ascii=False), encoding="utf-8")
+    return d

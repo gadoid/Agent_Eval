@@ -1,184 +1,183 @@
-"""scoring v2 测试：前提有效性、F/E/X 四级、组、路径约束、归因、Wilson、对比与绊线。"""
-import json
-import sys
-from pathlib import Path
-
-import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scoring"))
-
-import scoring as sc  # noqa: E402
-from scoring import Judges, JudgesMeta, score_episode, score_run, compare_runs, wilson  # noqa: E402
+"""新旧对拍（方案 §12 步骤 1 验收）：同一份 results.jsonl 下，旧 score_episode 与
+新管线（拆条 → 链 → 有效结论 → 口径）的会话结论与参与计分的条目结论全部一致。
+假 judge 算子（tests.helpers）行为等价于旧版测试的 mk_judges 默认值。"""
+from scoring.chain import judge_episode
+from scoring.cli import conclusions
+from scoring.policy import EpisodeVerdict, policy_from_dict
+from scoring.views import ability_view, attribution_view, wilson
+from tests import legacy_scoring_reference as legacy
+from tests.helpers import cfg_fact, fact, fake_config, mk_record, turn
 
 
-def mk_judges(fact=None, forbidden=None, refusal=None, precond=None):
-    return Judges(
-        fact=fact or (lambda t, a: sc.HIT if t in a else sc.MISSING),
-        forbidden=forbidden or (lambda t, a: t in a),
-        refusal=refusal or (lambda a: "不知道" in a),
-        precond=precond or (lambda t, a: True),
+def run_old(record, judges=None):
+    j = judges or legacy.Judges(
+        fact=lambda t, a: legacy.HIT if t in a else legacy.MISSING,
+        forbidden=lambda t, a: t in a,
+        refusal=lambda a: "不知道" in a,
+        precond=lambda t, a: True,
+    )
+    return legacy.score_episode(record, j)
+
+
+def run_new(record, cfg=None, policy_dict=None):
+    cfg = cfg or fake_config()
+    policy = policy_from_dict(policy_dict or {})
+    rows = judge_episode(record, cfg, "r-test").rows
+    return conclusions([record], rows, [], policy)[0]
+
+
+def assert_parity(record, cfg=None, judges=None):
+    old, new = run_old(record, judges), run_new(record, cfg)
+    assert new.status == old.status, (old.status, new.status)
+    assert new.facts == old.facts, (old.facts, new.facts)
+    assert new.expected_hit == old.expected_hit
+    assert new.forbidden_adopted == old.forbidden_adopted
+    assert new.precondition == old.precondition
+    assert new.path == old.path
+    assert (new.by_rule, new.by_judge) == (old.by_rule, old.by_judge)
+    return new
+
+
+def judges_fixed(fact_value, forbidden=False):
+    return legacy.Judges(
+        fact=lambda t, a: fact_value,
+        forbidden=lambda t, a: forbidden,
+        refusal=lambda a: "不知道" in a,
+        precond=lambda t, a: True,
     )
 
 
-def record(**over):
-    base = {
-        "schema": 3, "uid": "ec-1#0", "mode": "natural", "trial": 1, "status": "ok",
-        "failed_turn": None, "evalset_version": "v1",
-        "turns": [
-            {"index": 1, "source": "live", "input": "q1", "output": "答：规则是收齐尾款后电放。", "status": "ok",
-             "observations": {"skills": [{"name": "trade-documents", "ok": True}], "tools": [], "tool_errors": [],
-                              "usage": {"steps": 1, "tokens": {}}, "ask_user": {"count": 0, "auto": False}, "model": "glm-5.3"}},
-        ],
-        "case": {
-            "id": "ec-1", "uid": "ec-1#0", "dim": "错误知识纠正", "answerable": True,
-            "facts": [
-                {"id": "F1", "kind": "required", "text": "未收尾款不应电放", "keywords": [], "turn": None, "group": None, "evidence": None},
-                {"id": "X1", "kind": "forbidden", "text": "未收尾款也可以先电放", "keywords": [], "turn": None, "group": None, "evidence": "R1"},
-            ],
-            "preconditions": [], "path": [],
-        },
-    }
-    base.update(over)
-    return base
+# ---------------------------------------------------------------- 对拍：七条路径（步骤 1 验收）
 
-
-# ---------------------------------------------------------------- 前提与事实
-
-def test_precondition_invalid_not_scored_as_fail():
-    case = record()["case"]
-    case["preconditions"] = [{"id": "P1", "turn": 1, "text": "答复为可以电放", "injections": []}]
-    rec = record(case=case)
-    j = mk_judges(precond=lambda t, a: False)
-    v = score_episode(rec, j)
-    assert v.status == "invalid" and "前提不成立" in (v.invalid_reason or "")
-
-
-def test_fact_levels_and_veto():
-    j = mk_judges(fact=lambda t, a: sc.HIT)
-    assert score_episode(record(), j).status == "pass"
-    # X 被采信 → 一票否决
-    j = mk_judges(fact=lambda t, a: sc.HIT, forbidden=lambda t, a: True)
-    v = score_episode(record(), j)
-    assert v.status == "fail" and v.vetoed
-    # F 判"错" → fail
-    j = mk_judges(fact=lambda t, a: sc.CONTRA)
-    v = score_episode(record(), j)
-    assert v.status == "fail" and sc.CONTRA in v.facts.values()
-
-
-def test_keyword_rule_with_negation_window():
-    rec = record(case=dict(record()["case"], facts=[
-        {"id": "F1", "kind": "required", "text": "提单", "keywords": ["正本提单"], "turn": None, "group": None, "evidence": None}]))
+def test_parity_keyword_hit():
+    rec = mk_record(case=dict(mk_record()["case"], facts=[fact("F1", text="提单", keywords=["正本提单"])]))
     rec["turns"][0]["output"] = "需要正本提单"
-    assert score_episode(rec, mk_judges()).facts["F1"] == sc.HIT          # 规则直接判对
+    v = assert_parity(rec)
+    assert v.status == "pass" and v.facts["F1"] == "对" and v.by_rule == 1
+
+
+def test_parity_keyword_negation_falls_to_judge():
+    rec = mk_record(case=dict(mk_record()["case"], facts=[fact("F1", text="提单", keywords=["正本提单"])]))
     rec["turns"][0]["output"] = "并非正本提单，副本即可"
-    v = score_episode(rec, mk_judges(fact=lambda t, a: sc.MISSING))
-    assert v.facts["F1"] == sc.MISSING                                    # 否定语境不认，交 judge
+    v = assert_parity(rec)                      # 否定语境不认 → 交 judge（"提单"在回答中 → 对）
+    assert v.facts["F1"] == "对" and v.by_judge == 1
+    rec2 = mk_record(case=dict(mk_record()["case"], facts=[fact("F1", text="应当直接电放")]))
+    v2 = assert_parity(rec2)
+    assert v2.status == "fail" and v2.facts["F1"] == "未提及"
 
 
-def test_group_satisfied_by_any_member():
-    case = record()["case"]
-    case["facts"] = [
-        {"id": "F1", "kind": "required", "text": "甲说法", "keywords": [], "turn": None, "group": "G1", "evidence": None},
-        {"id": "F2", "kind": "required", "text": "乙说法", "keywords": [], "turn": None, "group": "G1", "evidence": None},
-    ]
-    j = mk_judges(fact=lambda t, a: sc.HIT if t == "乙说法" else sc.MISSING)
-    v = score_episode(record(case=case), j)
-    assert v.status == "pass"                                              # 同组满足其一
+def test_parity_group_any_member():
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲说法", group="G1"), fact("F2", text="乙说法", group="G1")])
+    rec = mk_record(case=case)
+    rec["turns"][0]["output"] = "答：乙说法成立。"
+    v = assert_parity(rec)
+    assert v.status == "pass"                    # 同组满足其一
+    assert v.facts == {"F1": "未提及", "F2": "对"}
 
 
-def test_answerable_false_refusal():
-    case = record()["case"]
-    case["answerable"] = False
-    v = score_episode(record(case=case, turns=[dict(record()["turns"][0], output="知识库中没有相关记录，不知道")]), mk_judges())
-    assert v.status == "pass"
-    v = score_episode(record(case=case), mk_judges())
-    assert v.status == "fail"
+def test_parity_forbidden_veto():
+    rec = mk_record()
+    rec["turns"][0]["output"] = "答：未收尾款不应电放。未收尾款也可以先电放。"
+    v = assert_parity(rec)
+    assert v.status == "fail" and v.forbidden_adopted == {"X1": True}
 
 
-# ---------------------------------------------------------------- 路径约束（CASE-STRUCTURE §2.10）
+def test_parity_precond_invalid():
+    case = mk_record()["case"]
+    case["preconditions"] = [{"id": "P1", "turn": 1, "text": "答复为可以电放", "injections": []}]
+    rec = mk_record(case=case)
+    cfg = fake_config(operators={
+        "keyword": {"impl": "keyword"}, "skill-path": {"impl": "skill-path"},
+        "fake-fact": {"impl": "fake-fact"},
+        "fake-forbid": {"impl": "fake-forbid"}, "fake-refusal": {"impl": "fake-refusal"},
+        "fake-precond": {"impl": "fake-precond", "hold": False},
+    })
+    judges = legacy.Judges(fact=lambda t, a: legacy.HIT if t in a else legacy.MISSING,
+                           forbidden=lambda t, a: t in a, refusal=lambda a: False, precond=lambda t, a: False)
+    v = assert_parity(rec, cfg=cfg, judges=judges)
+    assert v.status == "invalid" and "前提不成立" in v.invalid_reason
+    assert v.facts == {}                         # 未参与计分的条目不进结论
 
-def rec_with_skills(skills_per_turn, case=None):
-    rec = record(case=case) if case is not None else record()
-    rec["turns"] = [
-        {"index": i + 1, "source": "live", "input": "q", "output": "答", "status": "ok",
-         "observations": {"skills": [{"name": s, "ok": True} for s in ss], "tools": [], "tool_errors": [],
-                          "usage": {"steps": 1, "tokens": {}}, "ask_user": {"count": 0, "auto": False}, "model": None}}
-        for i, ss in enumerate(skills_per_turn)
-    ]
-    return rec
 
-
-def test_path_must_loaded_by_turn_n_and_forbid():
-    case = record()["case"]
+def test_parity_path_semantics():
+    case = mk_record()["case"]
     case["path"] = [{"type": "must", "action": {"kind": "load_skill", "skill": "trade-documents"}, "turn": 1}]
-    assert score_episode(rec_with_skills([["trade-documents"], []], case), mk_judges(), {}).path == "ok"
-    # 第 1 轮没加载、第 2 轮才加载：截至第 1 轮未加载 → 违反
-    v = score_episode(rec_with_skills([[], ["trade-documents"]], case), mk_judges(), {})
-    assert v.path == "violate" and v.status == "fail"
-    # 未写轮次 = 截至最后一轮已加载过即可
-    case["path"] = [{"type": "must", "action": {"kind": "load_skill", "skill": "trade-documents"}}]
-    assert score_episode(rec_with_skills([[], ["trade-documents"]], case), mk_judges(), {}).path == "ok"
-    # 禁止：任何一轮加载即违反
+    case["facts"] = [fact("F1", text="未收尾款不应电放", turn=1)]
+    rec = mk_record(case=case, turns=[turn(output="答", skills=()), turn(output="答：未收尾款不应电放。", skills=("trade-documents",))])
+    v = assert_parity(rec)
+    assert v.status == "fail" and v.path == "violate"      # 第 1 轮没加载、第 2 轮才加载 → 违反
+    rec2 = mk_record(case=case, turns=[turn(output="答：未收尾款不应电放。", skills=("trade-documents",)), turn(output="好")])
+    assert assert_parity(rec2).status == "pass"
     case["path"] = [{"type": "forbid", "action": {"kind": "load_skill", "skill": "trade-finance"}}]
-    assert score_episode(rec_with_skills([[], ["trade-finance"]], case), mk_judges(), {}).path == "violate"
-    # forced 不判定
-    forced = rec_with_skills([[]], case)
-    forced["mode"] = "forced"
-    assert score_episode(forced, mk_judges(), {}).path == "n/a"
+    rec3 = mk_record(case=case, turns=[turn(output="答：未收尾款不应电放。", skills=("trade-finance",))])
+    assert assert_parity(rec3).path == "violate"           # 禁止：任何一轮加载即违反
+    rec4 = mk_record(case=case, mode="forced", turns=[turn(output="答：未收尾款不应电放。", skills=("trade-finance",))])
+    v4 = assert_parity(rec4)
+    assert v4.path == "n/a" and v4.status == "pass"        # forced 不判路径
 
 
-# ---------------------------------------------------------------- 归因与聚合
-
-def test_attribution_three_way():
-    mk = lambda loaded, other, status: type("V", (), {})()
-    verdicts = []
-    # 未加载 / 误加载 / 加载但答错 / 加载且通过
-    for tgt, other, st in [(False, False, "fail"), (False, True, "fail"), (True, False, "fail"), (True, False, "pass")]:
-        verdicts.append(type("V", (), {"mode": "natural", "status": st, "target_loaded": tgt, "other_loaded": other,
-                                       "uid": "u", "trial": 1, "by_rule": 0, "ask_user": 0})())
-    at = sc.attribution_view(verdicts)
-    assert at["n"] == 4 and at["not_loaded"] == 0.25 and at["mis_loaded"] == 0.25
-    assert at["loaded_wrong"] == 0.25
+def test_parity_refusal():
+    case = mk_record()["case"]
+    case["answerable"] = False
+    case["facts"] = []
+    ok = mk_record(case=case, turns=[turn(output="知识库中没有相关记录，不知道")])
+    v = assert_parity(ok)
+    assert v.status == "pass" and v.by_judge == 1
+    bad = mk_record(case=case)
+    assert assert_parity(bad).status == "fail"
 
 
-def test_wilson_and_run_aggregation():
+def test_parity_run_error_and_no_output():
+    rec = mk_record(status="error", failed_turn=1)
+    assert assert_parity(rec).status == "error"
+    assert assert_parity(mk_record(turns=[])).status == "error"
+
+
+def test_parity_fact_contra_and_expected():
+    rec = mk_record(case=dict(mk_record()["case"], facts=[
+        fact("F1", text="未收尾款不应电放"), fact("E1", "expected", "指出规则出处")]))
+    v = assert_parity(rec, cfg=cfg_fact("错"), judges=judges_fixed(legacy.CONTRA))
+    assert v.status == "fail" and v.facts["F1"] == "错" and v.expected_hit == {"E1": False}
+    v2 = assert_parity(rec, cfg=cfg_fact("对"), judges=judges_fixed(legacy.HIT))
+    assert v2.status == "pass" and v2.expected_hit == {"E1": True}
+
+
+def test_parity_multi_turn_pick():
+    """轮次定位：写了轮次取该轮，未写取最后一轮。"""
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲", turn=1), fact("F2", text="乙")])
+    rec = mk_record(case=case, turns=[turn(output="甲"), turn(output="乙")])
+    v = assert_parity(rec)
+    assert v.facts == {"F1": "对", "F2": "对"} and v.status == "pass"
+
+
+# ---------------------------------------------------------------- 迁移后的聚合单测
+
+def test_wilson():
     assert wilson(0, 0) == (0.0, 0.0)
     lo, hi = wilson(8, 10)
     assert 0.4 < lo < 0.8 and 0.8 < hi <= 1.0
-    records = [record(mode="forced"), record(mode="forced"), record(mode="forced", status="error", failed_turn=1)]
-    report = score_run(records, mk_judges(), None, JudgesMeta(model="test-judge"))
-    assert report["judgment_snapshot"]["rule_version"] == sc.RULE_VERSION
-    cell = report["views"]["ability"]["错误知识纠正|forced"]
-    assert cell["n"] == 2 and cell["headline"] is True
-    assert report["views"]["ability"]["错误知识纠正|forced"]["error"] == 1
 
 
-# ---------------------------------------------------------------- 对比与绊线
+def test_run_aggregation_headline_and_error():
+    cfg = cfg_fact("对")
+    records = [mk_record(mode="forced"), mk_record(mode="forced"),
+               mk_record(mode="forced", status="error", failed_turn=1)]
+    policy = policy_from_dict({})
+    rows = []
+    for r in records:
+        rows.extend(judge_episode(r, cfg, "r").rows)
+    verdicts = conclusions(records, rows, [], policy)
+    cell = ability_view(verdicts, policy)["错误知识纠正|forced"]
+    assert cell["n"] == 2 and cell["pass"] == 2 and cell["headline"] is True
+    assert cell["error"] == 1
 
-def _mk_run(tmp: Path, name: str, rows: list[dict], snapshot: dict, anchors_pass: bool):
-    d = tmp / name
-    d.mkdir(parents=True)
-    (d / "results.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
-    (d / "run.json").write_text(json.dumps({"snapshot": snapshot, "profile": {"content": {"routing": {}}}}, ensure_ascii=False), encoding="utf-8")
-    return str(d)
 
-
-def test_compare_and_tripwire(tmp_path):
-    snap = {"skills_mode": "isolated", "skills_base": "x", "evalset": {"sha256": "a"}}
-    def rows(anchor_pass: bool):
-        out = []
-        for uid in ["kr-1#0", "kr-2#0"]:
-            for t in (1, 2):
-                out.append({"uid": uid, "mode": "natural", "trial": t, "status": "ok" if (uid != "kr-1#0" or anchor_pass) else "error", "anchor": uid == "kr-1#0"})
-        return out
-    a = _mk_run(tmp_path, "a", rows(True), snap, True)
-    b = _mk_run(tmp_path, "b", rows(False), snap, False)
-    rep = compare_runs(a, b)
-    assert rep["blocked"] is None
-    assert rep["anchor_tripwires"] == ["kr-1#0"]          # 上 run 全过、本 run 全败，trials≥2
-    assert "kr-1#0" in rep["paired"]
-    # skills_mode 不同 → 拒绝比较
-    snap2 = dict(snap, skills_mode="default-roots")
-    c = _mk_run(tmp_path, "c", rows(True), snap2, True)
-    assert compare_runs(a, c)["blocked"] is not None
+def test_attribution_three_way():
+    verdicts = [EpisodeVerdict(uid="u", mode="natural", trial=1, dim="d", status=st,
+                               target_loaded=tgt, other_loaded=other)
+                for tgt, other, st in [(False, False, "fail"), (False, True, "fail"),
+                                       (True, False, "fail"), (True, False, "pass")]]
+    at = attribution_view(verdicts)
+    assert at["n"] == 4 and at["not_loaded"] == 0.25 and at["mis_loaded"] == 0.25 and at["loaded_wrong"] == 0.25

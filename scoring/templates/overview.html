@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}总览 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<h1>总览</h1>
+{% if not per_run %}<p>root 下没有含 results.jsonl 的 run。确认目录后点右上角"重新扫描"。</p>{% endif %}
+{% for r in per_run %}
+<div class="card">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <b>{{ r.info.run_id }}</b>
+    <span class="badge">{{ r.info.evalset }}</span>
+    <span class="badge">{{ r.info.profile }}</span>
+    {% for k, n in r.counts.items() %}<span class="badge {{ 'ok' if k=='pass' else ('bad' if k in ('fail','error') else 'mid') }}">{{ k }} {{ n }}</span>{% endfor %}
+    {% if not r.scored %}<span class="badge mid">未判定（先跑 python -m scoring score）</span>{% endif %}
+    {% if r.provisional %}<span class="prov">临时（有未决条目被排除，先过复核队列）</span>{% endif %}
+    <span style="flex:1"></span>
+    <a href="/run/{{ r.info.run_id }}">会话列表</a>
+    <a href="/queue?run_id={{ r.info.run_id }}">复核队列</a>
+    <a href="/voided/{{ r.info.run_id }}">作废改判</a>
+    <a href="/export/{{ r.info.run_id }}/episodes.csv">episodes.csv</a>
+    <a href="/export/{{ r.info.run_id }}/items.csv">items.csv</a>
+    <button onclick="rescore('{{ r.info.run_id }}',this)">口径重算</button>
+  </div>
+  {% if r.ability %}
+  <table style="margin-top:8px">
+    <tr><th>维度|干预</th><th>通过</th><th>区间</th><th>前提成立率</th><th>未决</th><th>无效</th><th>错误</th><th>直接/反问后</th></tr>
+    {% for cell, m in r.ability.items() %}
+    <tr>
+      <td>{{ cell }}{% if m.headline %} <span class="badge ok">主口径</span>{% endif %}</td>
+      <td>{{ m.pass }}/{{ m.n }}{% if m.pass_rate is not none %} = {{ m.pass_rate }}{% endif %}{% if r.provisional %} <span class="prov">临时</span>{% endif %}</td>
+      <td>{{ m.pass_ci[0] }} ~ {{ m.pass_ci[1] }}</td>
+      <td>{{ m.precond_rate }}</td>
+      <td>{{ m.undecided }}</td><td>{{ m.invalid }}</td><td>{{ m.error }}</td>
+      <td>{{ m.pass_direct[0] }}/{{ m.pass_direct[1] }} · {{ m.pass_after_ask[0] }}/{{ m.pass_after_ask[1] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}
