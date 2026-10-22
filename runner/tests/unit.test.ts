@@ -181,3 +181,22 @@ describe('评测集与规划', () => {
     expect(planEpisodes(rows, p, ALL, 'x', { modes: ['natural'], trials: 1, dims: ['错误知识纠正'], skillsMode: 'isolated' }).episodes).toHaveLength(1)
   })
 })
+
+describe('dsh-kernel splitDshBin（引号兼容）', () => {
+  it('无引号时按空白拆分（与原行为一致）', async () => {
+    const { splitDshBin } = await import('../lib/vendor/dsh-kernel.js')
+    expect(splitDshBin('dsh --profile headless')).toEqual({ bin: 'dsh', prefixArgs: ['--profile', 'headless'] })
+    expect(splitDshBin('  npx   -y  dsh ')).toEqual({ bin: 'npx', prefixArgs: ['-y', 'dsh'] })
+  })
+  it('双引号包裹的带空格 exe 路径不拆散', async () => {
+    const { splitDshBin } = await import('../lib/vendor/dsh-kernel.js')
+    const bin = '"D:/dsh/DeepSeek Harness.exe" --expose-internals D:/dsh/resources/app.asar/dsh/cli.js'
+    const cmd = splitDshBin(bin)
+    expect(cmd.bin).toBe('D:/dsh/DeepSeek Harness.exe')
+    expect(cmd.prefixArgs).toEqual(['--expose-internals', 'D:/dsh/resources/app.asar/dsh/cli.js'])
+  })
+  it('空配置报错', async () => {
+    const { splitDshBin } = await import('../lib/vendor/dsh-kernel.js')
+    expect(() => splitDshBin('   ')).toThrow(/empty/)
+  })
+})

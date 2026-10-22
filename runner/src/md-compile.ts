@@ -27,7 +27,10 @@ export async function buildEvalsetFromMd(
   await mkdir(distDir, { recursive: true })
   const out = join(distDir, `evalset-${version}.jsonl`)
   const paths = cases.map((c) => resolve(c))
-  for (const py of ['python3', 'python']) {
+  // win32 上 python3 常是 Microsoft Store 空壳别名（非 ENOENT 的失败、空 stderr），
+  // 先试真解释器 python；其余平台维持 python3 优先。
+  const candidates = process.platform === 'win32' ? ['python', 'python3'] : ['python3', 'python']
+  for (const py of candidates) {
     try {
       const { stdout } = await run(
         py,

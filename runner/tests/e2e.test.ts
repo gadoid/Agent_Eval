@@ -12,12 +12,16 @@ import { findSessionFiles, inspectSession } from '../lib/inspect.js'
 import { parseProfile } from '../lib/profile.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const FAKE_DSH = `${process.execPath} ${join(here, 'fake-dsh.mjs')}`
+// exe 路径带空格时（如 C:\Program Files\nodejs）必须双引号包裹，splitDshBin 支持引号拆分；
+// 外层再套 YAML 单引号，避免 YAML 把内层双引号当作字符串边界。
+const FAKE_DSH = `"${process.execPath}" ${join(here, 'fake-dsh.mjs')}`
+// win32 上 python3 常是 Microsoft Store 空壳别名，先试真解释器 python
+const PY = process.platform === 'win32' ? 'python' : 'python3'
 const REPO = resolve(here, '..', '..')
 
 const profileYaml = (timeout = 10000) => `id: fake-v1
 dsh:
-  bin: ${FAKE_DSH}
+  bin: '${FAKE_DSH}'
   profile: headless
   timeout_ms: ${String(timeout)}
 routing:
@@ -100,7 +104,7 @@ describe('命令行端到端：md 用例 → evalset.jsonl → results.jsonl', (
       join(extra, 'mt-0901.md'),
       '---\nid: mt-0901\ndim: 多轮上下文召回\nstatus: structured\n---\n\n## 对话记录\n用户：客户自己报关，提单号 COSU6281734。\n助手：收到。\n用户：这单融资要哪些单据？\n\n## 关键条件\n- 上下文：报关方\n\n## 必要事实\n- F1：放行后的报关单 【关键词：放行后的报关单】\n',
     )
-    execFileSync('python3', [join(REPO, 'evalset', 'md2case.py'), 'build', join(REPO, 'evalset', 'cases', 'order_intake'), join(REPO, 'evalset', 'examples', 'multi_turn'), extra, '-o', evalset, '--version', 'v0-draft', '--include', 'structured,admitted'])
+    execFileSync(PY, [join(REPO, 'evalset', 'md2case.py'), 'build', join(REPO, 'evalset', 'cases', 'order_intake'), join(REPO, 'evalset', 'examples', 'multi_turn'), extra, '-o', evalset, '--version', 'v0-draft', '--include', 'structured,admitted'])
     profilePath = join(tmp, 'profile.yaml')
     await writeFile(profilePath, profileYaml())
   })

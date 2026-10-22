@@ -1,0 +1,12 @@
+# 本地 dsh 客户端链路（tools/setup-dsh-local.mjs 生成）：账号态（deepseek-account）。
+id: dsh-local-account
+dsh:
+  bin: '"D:\dsh\DeepSeek Harness.exe" --expose-internals D:\dsh\resources\app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
+  profile: evalheadless
+  home: C:/Users/Codfish_PC/.dsh
+  env:
+    ELECTRON_RUN_AS_NODE: "1"
+  timeout_ms: 600000
+skills_mode: default-roots
+skill_tool: skill
+routing: {}

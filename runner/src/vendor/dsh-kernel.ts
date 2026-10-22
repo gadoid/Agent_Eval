@@ -16,11 +16,16 @@ export interface DshCommand {
 }
 
 /**
- * 把 dsh_bin 配置拆成 argv（按空白拆分，不走 shell，不支持引号——
- * 带空格的路径请改用 DSH_BIN 指向无空格路径或包装脚本）。
+ * 把 dsh_bin 配置拆成 argv。支持双引号包裹的带空格路径（如
+ * `"D:/dsh/DeepSeek Harness.exe" --expose-internals …`）——本仓库相对上游的扩展；
+ * 无引号时行为与上游一致：按空白拆分。不走 shell。
  */
 export function splitDshBin(dshBin: string): DshCommand {
-  const parts = dshBin.trim().split(/\s+/).filter(Boolean)
+  const parts: string[] = []
+  const re = /"([^"]*)"|(\S+)/g
+  for (const m of dshBin.trim().matchAll(re)) {
+    parts.push(m[1] ?? m[2])
+  }
   if (parts.length === 0) {
     throw new Error(`${PREFIX}: dsh_bin is empty`)
   }
