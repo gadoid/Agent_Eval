@@ -1,0 +1,18 @@
+# 一个 Profile 对应一种被测配置；比较两种配置就是用同一份评测集各跑一次。
+id: v1-baseline
+description: DSH 默认 headless profile，加载进单资料审核 skill
+model: deepseek-v4-flash        # 仅记录，实际模型由 dsh profile 的配置决定
+
+dsh:
+  # bin: dsh                    # 缺省用环境变量 DSH_BIN 或 PATH 中的 dsh；也可写 npx -y @deepseek-ai/dsh
+  profile: headless
+  timeout_ms: 600000
+  # mirror_sessions: <目录>     # 可选：每段会话结束后把 session 日志自动镜像到该目录
+  #                              #（如 dsh/eline 客户端会话树），客户端里可直接审阅评测对话；out/ 下原件不变
+
+skill_tool: skill               # 模型加载 skill 时调用的工具名
+
+# 业务主题 -> skill。评测集只写业务主题，skill 拆分或合并时只改这里。
+routing:
+  进单资料审核: [order-intake]
+  信用证结算: [lc-settlement]

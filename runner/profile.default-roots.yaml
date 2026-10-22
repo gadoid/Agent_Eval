@@ -1,0 +1,15 @@
+id: eline-glm53-defaultroots
+description: 过渡期 Profile（P0-1 验证通过前）：默认 skill 配置，ec 维度在规划期跳过
+model: glm-5.3
+dsh:
+  bin: D:/eline-ai/eline.exe --expose-internals D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
+  profile: evalheadless
+  home: C:/Users/jiaoshouxiang/.eline
+  env:
+    ELECTRON_RUN_AS_NODE: "1"   # ElineAI 自带链路要求：eline.exe 以 Node 模式执行 asar 内的 dsh CLI
+    DSH_BUNDLED_SKILL_DIR: "D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-web-app/skills/trade-expert"   # 产品 21 个外贸 skill 的单一事实源（asar 内，随产品版本）   # ElineAI 自带链路要求：eline.exe 以 Node 模式执行 asar 内的 dsh CLI   # 凭据与 profile 所在（.dsh 的同名 profile 已被改为 zhipu 直连）
+  timeout_ms: 600000
+skills_mode: default-roots
+skill_tool: skill
+routing:
+  进单资料审核: [trade-documents]

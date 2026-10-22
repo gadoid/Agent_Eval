@@ -1,0 +1,27 @@
+{
+  "name": "skill-eval-runner",
+  "version": "0.1.0",
+  "description": "评测执行器：读入 evalset.jsonl 与 profile.yaml，驱动 DSH 无头运行，采集最终回答与 skill 加载信号，输出 results.jsonl",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "bin": {
+    "skill-eval": "lib/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "playwright": "^1.64.0",
+    "yaml": "2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  }
+}

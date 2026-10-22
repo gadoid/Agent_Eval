@@ -1,0 +1,31 @@
+# P0-2 盘点（p0-2-inventory.mjs 生成）
+exported_at: 2026-10-22T03:40:22.991Z
+agent_version: dsh 0.2.0-rc.2
+roots:
+  - path: C:/Users/jiaoshouxiang/.dsh/skills
+    manifest_sha256: c2934bd46443523dc4a29bcd6e355b70b15ef61734cb4567a9881577b3fe044d
+  - path: C:/Users/jiaoshouxiang/.eline/skills
+    manifest_sha256: 027523c06d1c5dc7dbfcba99418e40a61ea3b93b196542eef5acbf79d155a6cf
+skills:
+  - {name: diagnose-windows-sandbox-acl, root: bundled?, file: null, sha256: null}   # 各根未找到，疑为 CLI 内置
+  - {name: trade-company, root: "C:/Users/jiaoshouxiang/.eline/skills", file: "trade-company.md", sha256: 5e4de2c16ca3de2830c457a769e4977c37a5fd68cccc904eec76da6d4d4dfedc}
+  - {name: trade-contract, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-contract.md", sha256: 506314a9d02815ba929d3135056645ccf7db8809c2325694fede5b32997ff309}
+  - {name: trade-customs, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-customs.md", sha256: 27d335e9b257dc38a510b219094c2962e8db4e754f71bd0d0182236476874b9f}
+  - {name: trade-documents, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-documents.md", sha256: c783ddb55988487a9bd14d894d62be9a20780e814357948a3d40e1badeab8f75}
+  - {name: trade-email-templates, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-email-templates.md", sha256: f8356759501ffa3804a0042512f3c77c1e76ae4c02d36de92deb6fd63d9bed65}
+  - {name: trade-faq, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-faq.md", sha256: 3a76f10ac9ecea0dbb9560e07d0eae6c4c67146b4d9da158525af284f34bc4e6}
+  - {name: trade-finance, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-finance.md", sha256: 6312e738c048a94fe45f7d9e38d468f72234171d717d1c0ddc47328c00466820}
+  - {name: trade-finance-policy, root: "C:/Users/jiaoshouxiang/.eline/skills", file: "trade-finance-policy.md", sha256: a5fa871266f4ac7f6452cb59fdda73e547516c0bff6fa000375550f2d82dc268}
+  - {name: trade-glossary, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-glossary.md", sha256: a61f99abb15772fc36d18af8d8ed743a7ca6b1ca47cc4aa919b99a98b6033b5f}
+  - {name: trade-incoterms, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-incoterms.md", sha256: 334c3bd7683f6c9712751ab073b8b002543f35da44fc44f2b22a1c7136dc496c}
+  - {name: trade-lead-gen, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-lead-gen.md", sha256: 50bdff4849b2312b2fd551cda5788976a016eb36e7a5546373a9568656e09fc5}
+  - {name: trade-logistics, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-logistics.md", sha256: 70b172da89a820e5c503d60ecf2b73728b2eb5e9e0dacd852330981592173c28}
+  - {name: trade-negotiation, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-negotiation.md", sha256: 570da523e1c209d2465852093b61d137349690c79e699a0859329259e9f02231}
+  - {name: trade-payment, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-payment.md", sha256: 4ec14c3b481a03b40677c8a4456be3344718fcbf5939395e888668aaa9698ede}
+  - {name: trade-process, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-process.md", sha256: e408ed42467c47b006f7e6c0627dd6d5f444c2279128812926d45ae52163f9cb}
+  - {name: trade-products, root: "C:/Users/jiaoshouxiang/.eline/skills", file: "trade-products.md", sha256: c5ce282a4d0bb28a41681b053b5ca584bfe0d3c7847012c85f92057db769f90a}
+  - {name: trade-qc-supply-chain, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-qc-supply-chain.md", sha256: a4db516b380c2cad0d440ba4ecff10d2531341c7a803a82147b6680c625b0be6}
+  - {name: trade-regional-markets, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-regional-markets.md", sha256: 5fbeb377095565a04c6710ef9ba34e3c4edbe2105f1a42f2224e8226a627b8e4}
+  - {name: trade-regulations, root: "C:/Users/jiaoshouxiang/.eline/skills", file: "trade-regulations.md", sha256: bd81db613680e9e19a2d84bd5f3c2575622857652a6f49a4b20b47c55e84a40b}
+  - {name: trade-risk, root: "C:/Users/jiaoshouxiang/.dsh/skills", file: "trade-risk.md", sha256: 6bc03315db065c03de899376792ea655c6da917b92f4fbd121a5254d8339a732}
+  - {name: trade-yhr-system, root: "C:/Users/jiaoshouxiang/.eline/skills", file: "trade-yhr-system.md", sha256: 756627373a86c9e513128566f597614d30821efa55d40e4a4618a3769a2038ae}

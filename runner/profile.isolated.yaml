@@ -1,0 +1,21 @@
+id: eline-glm53-isolated
+description: P0 完成后启用：副本物化 + 注入 + 环境快照（基底=盘点出的生产可见根，.dsh 优先）
+model: glm-5.3
+dsh:
+  bin: D:/eline-ai/eline.exe --expose-internals D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
+  profile: evalheadless
+  home: C:/Users/jiaoshouxiang/.eline
+  env:
+    ELECTRON_RUN_AS_NODE: "1"   # ElineAI 自带链路要求：eline.exe 以 Node 模式执行 asar 内的 dsh CLI   # 凭据与 profile 所在（.dsh 的同名 profile 已被改为 zhipu 直连）
+  timeout_ms: 600000
+skills_mode: isolated
+skills_roots:
+  - C:/Users/jiaoshouxiang/.dsh/skills        # CLI 通道实际生效根（base directory 实证）
+  - C:/Users/jiaoshouxiang/.eline/skills      # 盘点确认生产可见的补充根（5 个独有 skill）
+skills_inventory: D:/Agent_Eval/runner/skills-inventory.yaml
+budget:
+  max_tokens: 5000000
+  max_hours: 4
+skill_tool: skill
+routing:
+  进单资料审核: [trade-documents]

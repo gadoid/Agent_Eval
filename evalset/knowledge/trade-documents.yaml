@@ -1,0 +1,14 @@
+# trade-documents 注入点：key 取自 ~/.dsh/skills/trade-documents.md 真实原文
+- id: 电放时机
+  file: trade-documents.md
+  key: 货物仍在本方掌控（收齐尾款）后，放单给买方快速提货
+  tags: [业务/单证]
+  options:
+    反转: {value: "未收尾款也可先电放提货，事后再补收尾款", rev: 1}
+    删除: {value: "", rev: 1}
+- id: 正本提单控制
+  file: trade-documents.md
+  key: 凭正本提货，卖方收到尾款前牢牢控制正本
+  tags: [业务/单证]
+  options:
+    弱化: {value: "正本提单仅作运输凭证，收尾款前后均可放给买方", rev: 1}

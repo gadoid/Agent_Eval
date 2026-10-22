@@ -1,0 +1,56 @@
+# md2case v2 段落映射与词表（规范见 doc/CASE-STRUCTURE.md）
+# type 对应 md2case.py 的解析器；attrs 为该段落允许的行尾【属性】；
+# group 相同的段落互斥（输入三选一）。
+
+sections:
+  问题:
+    {field: input, type: question, group: input}
+  对话:
+    {field: input, type: dialog, group: input}
+  对话记录:
+    {field: input, type: transcript, group: input}
+  关键条件:
+    {field: conditions, type: conditions, attrs: [对象, 轮次, 关键词]}
+  注入:
+    {field: injections_ref, type: injections, prefix: J}
+  前提:
+    {field: preconditions, type: preconditions, prefix: P, attrs: [轮次, 注入]}
+  必要事实:
+    {field: facts, type: facts, kind: required, prefix: F, attrs: [关键词, 轮次, 组, 证据, 外部], append: true}
+  期望事实:
+    {field: facts, type: facts, kind: expected, prefix: E, attrs: [关键词, 轮次, 组, 证据, 外部], append: true}
+  禁止事实:
+    {field: facts, type: facts, kind: forbidden, prefix: X, attrs: [轮次, 证据, 外部], append: true}
+  路径:
+    {field: path, type: path, attrs: [轮次]}
+  证据:
+    {field: evidence_ref, type: evidence, prefix: R}
+  参考答案:
+    {field: reference_answer, type: text}
+  变体:
+    {field: variants, type: variants, prefix: V, attrs: [轮次, 改写, 整段]}
+  备注:
+    {field: note, type: text}
+
+required: [input, conditions, facts]        # input 组三选一；facts 含必要事实
+min_turns_by_dim: {多轮上下文召回: 2}
+required_by_dim:
+  错误知识纠正: [injections_ref]              # 禁止事实由 md2case 显式检查（同一 facts 字段）
+
+dims:                                       # 维度 → id 前缀（dim 必须与 id 前缀对应）
+  知识召回: kr
+  多轮上下文召回: mt
+  错误知识纠正: ec
+  同义请求一致性: sc
+  工具调用: tc
+multi_turn_dims: [多轮上下文召回]           # 该维度至少 2 轮；任何用例最多 5 轮（md2case 硬约束）
+
+rewrites: [口语, 极简, 语序, 诱导]           # 【改写】合法值；诱导不计入同义一致性统计
+
+tags:                                       # 标签词表；用例只写 场景/难点/来源，业务/ 由注入点继承
+  业务: [收汇, 资方对应, 退税, 单证, 合同, 保函, 舱单, 融资单据]
+  场景: [用户更正, 多对象, 跨skill, 首轮追问]
+  难点: [规则反转, 清单完整, 数值推算, 抗诱导]
+  来源: [人工构造, 生成, 现场记录]
+
+statuses: [draft, structured, reviewed, admitted, retired]

@@ -1,0 +1,13 @@
+# 依赖与构建产物（npm install / npm run build 重新生成）
+runner/node_modules/
+runner/lib/
+__pycache__/
+.pytest_cache/
+
+# 运行产出：session 日志含业务数据，不进仓库（见 doc/07-使用手册.md §5.1）
+runner/out/
+
+# 本机临时文件
+*.log
+.DS_Store
+Thumbs.db
