@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>复核服务原型</title>
+<!-- doc/10 复核服务改造方案的原型。由设计系统「Agent_Eval 复核」的 tokens 与 bundle.css 组装，离线可开；数据为示例。 -->
+<style>
+:root, [data-theme="light"]{--bg-page:#f5f4f0;--bg-surface:#ffffff;--bg-sunken:#efede7;--bg-selected:#eef3fb;--line:#dedad1;--line-strong:#8a8478;--ink:#1d1b18;--ink-2:#47423b;--ink-3:#655f56;--accent:#2350a0;--accent-hover:#1a3d7d;--on-accent:#ffffff;--accent-soft:#e6edf9;--accent-ink:#1d4589;--focus:var(--accent);--pass-soft:#dcefef;--pass-ink:#0a5a63;--pass-solid:#0e6c77;--fail-soft:#fbe7dd;--fail-ink:#9e350a;--fail-solid:#b5440f;--partial-soft:#f6eecf;--partial-ink:#6b5300;--partial-solid:#8c6c00;--neutral-soft:#ebe9e4;--neutral-ink:#504b44;--neutral-solid:#5f5a52;--error-soft:#f5e5ef;--error-ink:#8a2a63;--on-solid:#ffffff;--notice-soft:#fff2c4;--notice-ink:#5e4500;--notice-line:#c9a237;--mark-hit:#ffe48a;--mark-forbid:#ffd3c2;--src-rule:#3d5a72;--src-model:#6e4a8c;--src-human:var(--accent);--delta-up:#00909e;--delta-down:#c64a12;--shadow-card:0 1px 2px rgba(29, 27, 24, 0.06);--shadow-sticky:0 2px 8px rgba(29, 27, 24, 0.08);}
+[data-theme="dark"]{--bg-page:#161514;--bg-surface:#1f1e1c;--bg-sunken:#191817;--bg-selected:#1d2738;--line:#34322e;--line-strong:#77706a;--ink:#edeae4;--ink-2:#c6c0b6;--ink-3:#a29b90;--accent:#8fb0f0;--accent-hover:#adc6f6;--on-accent:#0f1d36;--accent-soft:#1e2b44;--accent-ink:#b4ccf7;--focus:var(--accent);--pass-soft:#11302f;--pass-ink:#7fd0d4;--pass-solid:#4fb8bf;--fail-soft:#3a1f14;--fail-ink:#f4a47e;--fail-solid:#e7814f;--partial-soft:#322a0e;--partial-ink:#e4c65e;--partial-solid:#cfae3c;--neutral-soft:#2b2a27;--neutral-ink:#c2bcb2;--neutral-solid:#a8a297;--error-soft:#361a2c;--error-ink:#eaa1cf;--on-solid:#141311;--notice-soft:#33290c;--notice-ink:#ecd17d;--notice-line:#8a7228;--mark-hit:#5a4810;--mark-forbid:#5b2614;--src-rule:#a2bbcf;--src-model:#c6a7de;--src-human:var(--accent);--delta-up:#22a7b3;--delta-down:#e0703c;--shadow-card:0 1px 2px rgba(0, 0, 0, 0.4);--shadow-sticky:0 2px 8px rgba(0, 0, 0, 0.5);}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg-page:#161514;--bg-surface:#1f1e1c;--bg-sunken:#191817;--bg-selected:#1d2738;--line:#34322e;--line-strong:#77706a;--ink:#edeae4;--ink-2:#c6c0b6;--ink-3:#a29b90;--accent:#8fb0f0;--accent-hover:#adc6f6;--on-accent:#0f1d36;--accent-soft:#1e2b44;--accent-ink:#b4ccf7;--focus:var(--accent);--pass-soft:#11302f;--pass-ink:#7fd0d4;--pass-solid:#4fb8bf;--fail-soft:#3a1f14;--fail-ink:#f4a47e;--fail-solid:#e7814f;--partial-soft:#322a0e;--partial-ink:#e4c65e;--partial-solid:#cfae3c;--neutral-soft:#2b2a27;--neutral-ink:#c2bcb2;--neutral-solid:#a8a297;--error-soft:#361a2c;--error-ink:#eaa1cf;--on-solid:#141311;--notice-soft:#33290c;--notice-ink:#ecd17d;--notice-line:#8a7228;--mark-hit:#5a4810;--mark-forbid:#5b2614;--src-rule:#a2bbcf;--src-model:#c6a7de;--src-human:var(--accent);--delta-up:#22a7b3;--delta-down:#e0703c;--shadow-card:0 1px 2px rgba(0, 0, 0, 0.4);--shadow-sticky:0 2px 8px rgba(0, 0, 0, 0.5);}}
+:root{--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--radius-sm:4px;--radius-md:6px;--radius-lg:10px;--radius-pill:999px;--page-max:1280px;--read-max:760px;--control-h:32px;--answer-max-h:320px;--font-sans:"PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;--font-mono:"JetBrains Mono", "Cascadia Mono", Consolas, "SFMono-Regular", ui-monospace, monospace;}
+
+/* Agent_Eval 复核 — component styles. Load after tokens.css. Plain classes for
+   the Jinja templates in scoring/templates; no build step, no framework. */
+
+.rv-app {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 22px;
+  -webkit-font-smoothing: antialiased;
+}
+.rv-app *, .rv-app *::before, .rv-app *::after { box-sizing: border-box; }
+.rv-app a { color: var(--accent); text-decoration: none; }
+.rv-app a:hover { color: var(--accent-hover); text-decoration: underline; }
+.rv-app :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-mono { font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.rv-meta { color: var(--ink-3); font-size: 12px; line-height: 18px; }
+.rv-meta > * + *::before { content: "·"; margin: 0 6px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- AppHeader */
+.rv-header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: var(--space-5);
+  height: 52px; padding: 0 var(--space-4);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow-sticky);
+}
+.rv-brand { font-weight: 600; font-size: 15px; color: var(--ink); white-space: nowrap; }
+.rv-nav { display: flex; gap: var(--space-1); height: 100%; }
+.rv-nav a {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 var(--space-3); height: 100%;
+  color: var(--ink-2); font-size: 14px;
+  border-bottom: 2px solid transparent;
+}
+.rv-nav a:hover { color: var(--ink); text-decoration: none; background: var(--bg-page); }
+.rv-nav a[aria-current="page"] { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
+.rv-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 18px; padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft); color: var(--accent-ink);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.rv-count[data-tone="notice"] { background: var(--notice-soft); color: var(--notice-ink); }
+.rv-header .rv-header-meta { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- Page */
+.rv-page { max-width: var(--page-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); }
+.rv-page-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-4); }
+.rv-page-head h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- Card */
+.rv-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+.rv-card + .rv-card { margin-top: var(--space-3); }
+.rv-card > h2, .rv-card-title { margin: 0 0 var(--space-3); font-size: 16px; line-height: 24px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- Button */
+.rv-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  height: var(--control-h); padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font: inherit; font-size: 13px; font-weight: 500; line-height: 1;
+  cursor: pointer; white-space: nowrap;
+}
+.rv-btn:hover { background: var(--bg-page); }
+.rv-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.rv-btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.rv-btn--ghost { border-color: transparent; background: transparent; color: var(--accent); }
+.rv-btn--ghost:hover { background: var(--accent-soft); }
+.rv-btn[disabled], .rv-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.rv-kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  border: 1px solid currentColor; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 11px; line-height: 1; opacity: .8;
+}
+
+/* ---------------------------------------------------------------- Field */
+.rv-field { display: inline-flex; flex-direction: column; gap: var(--space-1); }
+.rv-field > label, .rv-field-label { font-size: 13px; line-height: 20px; font-weight: 600; color: var(--ink-2); }
+.rv-input, .rv-select {
+  height: var(--control-h); padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font: inherit; font-size: 13px;
+}
+.rv-input::placeholder { color: var(--ink-3); }
+.rv-input:focus-visible, .rv-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+.rv-filterbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+
+/* ---------------------------------------------------------------- VerdictBadge */
+.rv-verdict {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: 22px; padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap;
+  background: var(--neutral-soft); color: var(--neutral-ink);
+}
+.rv-verdict::before { font-size: 11px; content: "–"; }
+.rv-verdict[data-tone="pass"]      { background: var(--pass-soft);    color: var(--pass-ink); }
+.rv-verdict[data-tone="pass"]::before { content: "✓"; }
+.rv-verdict[data-tone="fail"]      { background: var(--fail-soft);    color: var(--fail-ink); }
+.rv-verdict[data-tone="fail"]::before { content: "✕"; }
+.rv-verdict[data-tone="partial"]   { background: var(--partial-soft); color: var(--partial-ink); }
+.rv-verdict[data-tone="partial"]::before { content: "◐"; }
+.rv-verdict[data-tone="undecided"] { background: var(--accent-soft);  color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.rv-verdict[data-tone="undecided"]::before { content: "?"; }
+.rv-verdict[data-tone="error"]     { background: var(--error-soft);   color: var(--error-ink); }
+.rv-verdict[data-tone="error"]::before { content: "!"; }
+.rv-verdict--lg { height: 28px; padding: 0 var(--space-3); font-size: 14px; }
+
+/* ---------------------------------------------------------------- SourceTag */
+.rv-src { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.rv-src::before { content: ""; width: 7px; height: 7px; background: currentColor; }
+.rv-src[data-src="rule"]  { color: var(--src-rule); }
+.rv-src[data-src="judge"] { color: var(--src-model); }
+.rv-src[data-src="judge"]::before { transform: rotate(45deg) scale(.9); }
+.rv-src[data-src="human"] { color: var(--src-human); }
+.rv-src[data-src="human"]::before { border-radius: 50%; width: 8px; height: 8px; }
+
+/* ---------------------------------------------------------------- KindTag (fact kind — outlined, never a verdict colour) */
+.rv-kind {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap;
+}
+.rv-kind[data-kind="forbidden"] { border-style: dashed; }
+
+/* ---------------------------------------------------------------- ItemChip */
+.rv-chip {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 3px var(--space-1) 3px var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg-surface); font-size: 12px; line-height: 18px;
+}
+.rv-chip-id { font-family: var(--font-mono); color: var(--ink-2); }
+.rv-chip .rv-verdict { height: 20px; }
+.rv-chip[data-overridden] { border-color: var(--accent); }
+.rv-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* ---------------------------------------------------------------- VerdictPicker */
+.rv-picker { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); border: 0; margin: 0; padding: 0; }
+.rv-picker legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.rv-opt { position: relative; }
+.rv-opt input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.rv-opt > span {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--control-h); padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font-size: 13px; font-weight: 500; cursor: pointer; user-select: none;
+}
+.rv-opt > span .rv-kbd { opacity: .6; }
+.rv-opt:hover > span { background: var(--bg-page); }
+.rv-opt input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-opt input:checked + span { color: var(--on-solid); font-weight: 600; }
+.rv-opt[data-tone="pass"]    input:checked + span { background: var(--pass-solid);    border-color: var(--pass-solid); }
+.rv-opt[data-tone="fail"]    input:checked + span { background: var(--fail-solid);    border-color: var(--fail-solid); }
+.rv-opt[data-tone="partial"] input:checked + span { background: var(--partial-solid); border-color: var(--partial-solid); }
+.rv-opt[data-tone="neutral"] input:checked + span { background: var(--neutral-solid); border-color: var(--neutral-solid); }
+.rv-opt input:checked + span .rv-kbd { opacity: .9; }
+
+/* ---------------------------------------------------------------- AnswerPane */
+.rv-answer {
+  position: relative;
+  max-width: var(--read-max);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-sunken); color: var(--ink);
+  font-size: 15px; line-height: 26px;
+  overflow-wrap: anywhere;
+}
+.rv-answer p { margin: 0 0 var(--space-2); }
+.rv-answer p:last-child { margin-bottom: 0; }
+.rv-answer pre, .rv-answer code { font-family: var(--font-mono); font-size: 12.5px; }
+.rv-answer pre { white-space: pre-wrap; margin: 0; }
+.rv-answer table { border-collapse: collapse; font-size: 13px; line-height: 20px; margin: var(--space-2) 0; }
+.rv-answer th, .rv-answer td { border: 1px solid var(--line); padding: 4px var(--space-2); }
+.rv-answer--collapsed { max-height: var(--answer-max-h); overflow: hidden; }
+.rv-answer--collapsed::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px;
+  background: linear-gradient(rgba(0,0,0,0), var(--bg-sunken));
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.rv-answer-head { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-2); }
+.rv-answer-q { color: var(--ink-2); font-size: 13px; line-height: 20px; }
+.rv-answer-q::before { content: "问："; font-weight: 600; }
+.rv-answer-more { margin-top: var(--space-1); }
+mark.rv-hit    { background: var(--mark-hit);    color: var(--ink); padding: 0 2px; border-radius: 2px; }
+mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2px; border-radius: 2px; text-decoration: underline wavy var(--fail-ink); text-underline-offset: 4px; }
+
+/* ---------------------------------------------------------------- ExpectationPanel */
+.rv-expect { display: grid; gap: var(--space-2); }
+.rv-expect-q { font-size: 15px; line-height: 24px; }
+.rv-expect-q b { font-weight: 600; margin-right: var(--space-1); }
+.rv-facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rv-fact { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); align-items: start; }
+.rv-fact .rv-kind { margin-top: 1px; }
+.rv-fact-text { font-size: 14px; line-height: 22px; }
+.rv-fact-meta { display: block; color: var(--ink-3); font-size: 12px; line-height: 18px; }
+.rv-expect--sticky { position: sticky; top: 60px; z-index: 5; box-shadow: var(--shadow-sticky); }
+
+/* ---------------------------------------------------------------- Tabs & progress（队列筛选） */
+.rv-tabs { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px solid var(--line); }
+.rv-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 var(--space-3);
+  border-radius: 4px; color: var(--ink-2); font-size: 13px; font-weight: 500;
+}
+.rv-app a.rv-tab:hover { text-decoration: none; color: var(--ink); background: var(--bg-surface); }
+.rv-tab[aria-current="page"] { background: var(--bg-surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-card); }
+.rv-progress { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--ink-2); }
+.rv-progress-track { width: 120px; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); overflow: hidden; }
+.rv-progress-fill { height: 100%; background: var(--accent); }
+.rv-keys { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin-left: auto; color: var(--ink-3); font-size: 12px; }
+.rv-keys span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ---------------------------------------------------------------- RateCell */
+.rv-rate { display: inline-grid; gap: 3px; min-width: 96px; font-variant-numeric: tabular-nums; }
+.rv-rate-main { display: flex; align-items: baseline; gap: 6px; }
+.rv-rate-pct { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--ink); }
+.rv-rate-n { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-rate-bar { display: flex; height: 4px; border-radius: var(--radius-pill); background: var(--bg-sunken); overflow: hidden; }
+.rv-rate-bar i { display: block; height: 100%; background: var(--pass-solid); }
+.rv-rate-ci { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-rate--provisional .rv-rate-pct::after { content: "临时"; margin-left: 4px; padding: 0 4px; border-radius: var(--radius-sm); background: var(--notice-soft); color: var(--notice-ink); font-family: var(--font-sans); font-size: 10px; font-weight: 600; }
+.rv-rate--empty { color: var(--ink-3); }
+.rv-stats { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
+.rv-stat { flex: 1 1 140px; padding: var(--space-3) var(--space-4); background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-stat-label { font-size: 12px; color: var(--ink-2); }
+.rv-stat-value { font-family: var(--font-mono); font-size: 22px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-stat-note { font-size: 12px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- DataTable */
+.rv-table-wrap { overflow-x: auto; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 20px; }
+.rv-table th, .rv-table td { padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.rv-table thead th { position: sticky; top: 0; background: var(--bg-surface); color: var(--ink-2); font-size: 12px; font-weight: 600; white-space: nowrap; border-bottom-color: var(--line-strong); }
+.rv-table tbody tr:last-child > * { border-bottom: 0; }
+.rv-table tbody tr:hover > * { background: var(--bg-page); }
+.rv-table .rv-num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.rv-table th[scope="row"] { font-weight: 500; color: var(--ink); white-space: nowrap; }
+.rv-table .rv-sticky-col { position: sticky; left: 0; background: var(--bg-surface); z-index: 1; }
+
+/* ---------------------------------------------------------------- Notice */
+.rv-notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--notice-line); border-radius: var(--radius-lg);
+  background: var(--notice-soft); color: var(--notice-ink);
+  font-size: 13px; line-height: 20px;
+}
+.rv-notice b { font-weight: 600; }
+.rv-notice[data-tone="error"] { background: var(--error-soft); color: var(--error-ink); border-color: var(--error-ink); }
+.rv-notice[data-tone="info"]  { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
+.rv-cmd {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 2px 4px 2px var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink); border: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 12px;
+}
+.rv-cmd button { height: 22px; padding: 0 var(--space-2); font-size: 12px; }
+
+/* ---------------------------------------------------------------- Pager & empty */
+.rv-pager { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); font-size: 13px; color: var(--ink-2); }
+.rv-pager .rv-pager-pos { font-variant-numeric: tabular-nums; }
+.rv-empty { padding: var(--space-6) var(--space-4); text-align: center; color: var(--ink-3); }
+.rv-empty b { display: block; color: var(--ink); font-size: 16px; line-height: 24px; margin-bottom: var(--space-1); }
+
+/* ================================================================ v2：以对话为单位的复核 */
+
+/* ---------------------------------------------------------------- Markdown 正文（对话、参考答案） */
+.rv-md { font-size: 15px; line-height: 26px; color: var(--ink); overflow-wrap: anywhere; }
+.rv-md > :first-child { margin-top: 0; }
+.rv-md > :last-child { margin-bottom: 0; }
+.rv-md p, .rv-md ul, .rv-md ol, .rv-md blockquote, .rv-md pre, .rv-md table { margin: 0 0 var(--space-2); }
+.rv-md h1, .rv-md h2, .rv-md h3, .rv-md h4 { margin: var(--space-3) 0 var(--space-1); font-size: 15px; line-height: 24px; font-weight: 600; }
+.rv-md ul, .rv-md ol { padding-left: 1.5em; }
+.rv-md li + li { margin-top: 2px; }
+.rv-md strong { font-weight: 600; }
+.rv-md blockquote { padding: 2px var(--space-3); border-left: 3px solid var(--line-strong); color: var(--ink-2); }
+.rv-md code { font-family: var(--font-mono); font-size: 12.5px; padding: 1px 4px; border-radius: var(--radius-sm); background: var(--bg-page); }
+.rv-md pre { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--bg-page); white-space: pre-wrap; }
+.rv-md pre code { padding: 0; background: none; }
+.rv-md table { border-collapse: collapse; font-size: 13px; line-height: 20px; display: block; overflow-x: auto; }
+.rv-md th, .rv-md td { border: 1px solid var(--line); padding: 4px var(--space-2); text-align: left; }
+.rv-md th { background: var(--bg-page); font-weight: 600; }
+.rv-md hr { border: 0; border-top: 1px solid var(--line); margin: var(--space-3) 0; }
+
+/* ---------------------------------------------------------------- RunTag：被测配置 */
+.rv-runtag { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); font-size: 12px; line-height: 18px; }
+.rv-runtag-k { color: var(--ink-3); margin-right: 2px; }
+.rv-pill {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-surface);
+  color: var(--ink-2); font-size: 12px; white-space: nowrap;
+}
+.rv-pill b { color: var(--ink); font-weight: 600; }
+.rv-pill--mono { font-family: var(--font-mono); font-size: 11.5px; }
+
+/* ---------------------------------------------------------------- JudgeSwitch：判定配置 */
+.rv-judge { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--ink-2); }
+.rv-judge .rv-select { height: 28px; font-size: 12px; max-width: 260px; }
+
+/* ---------------------------------------------------------------- ConclusionBar */
+.rv-concl {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface);
+}
+.rv-concl-text { flex: 1; min-width: 240px; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.rv-concl-text b { color: var(--ink); font-weight: 600; }
+.rv-concl-what { display: inline-flex; align-items: center; gap: 4px; margin-right: var(--space-2); }
+.rv-concl-actions { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); margin-left: auto; }
+.rv-concl[data-draft] { border-color: var(--notice-line); }
+
+/* ---------------------------------------------------------------- ConversationPane */
+.rv-conv { display: grid; gap: var(--space-4); }
+.rv-turn { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); overflow: hidden; scroll-margin-top: 120px; }
+.rv-turn.is-linked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.rv-turn-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line);
+  font-size: 12px; line-height: 18px; color: var(--ink-2);
+}
+.rv-turn-head b { color: var(--ink); font-size: 13px; font-weight: 600; margin-right: var(--space-1); }
+.rv-turn-head .rv-turn-items { margin-left: auto; }
+.rv-msg { display: grid; grid-template-columns: 44px 1fr; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+.rv-msg + .rv-msg { border-top: 1px dashed var(--line); }
+.rv-msg-who { font-size: 12px; line-height: 26px; font-weight: 600; color: var(--ink-3); }
+.rv-msg[data-role="user"] { background: var(--bg-surface); }
+.rv-msg[data-role="user"] .rv-md { font-size: 14px; line-height: 22px; }
+.rv-msg[data-role="user"] .rv-msg-who { line-height: 22px; }
+.rv-msg[data-role="assistant"] { background: var(--bg-sunken); }
+.rv-msg[data-role="preset"] { background: var(--bg-page); }
+.rv-msg[data-role="preset"] .rv-msg-who::after { content: "预置"; display: block; font-weight: 400; font-size: 11px; }
+.rv-obs { display: inline-flex; align-items: center; gap: 4px; }
+.rv-obs[data-ok="false"] { color: var(--fail-ink); }
+
+/* ---------------------------------------------------------------- ScoreSheet */
+.rv-sheet { background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-sheet-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.rv-sheet-head h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+.rv-sheet-head .rv-meta { margin-left: auto; }
+.rv-sec { padding: var(--space-2) var(--space-4) 0; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.rv-sec span { font-weight: 400; }
+.rv-row {
+  display: grid; gap: var(--space-2);
+  margin: var(--space-2) var(--space-2) 0; padding: var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  cursor: pointer; outline: none;
+}
+.rv-row:last-child { margin-bottom: var(--space-2); }
+.rv-row:hover { background: var(--bg-page); }
+.rv-row.is-active { background: var(--bg-selected); border-color: var(--accent); }
+.rv-row-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-row-top .rv-meta { flex: 1; }
+.rv-state {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.rv-state[data-s="need"]  { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.rv-state[data-s="draft"] { background: var(--notice-soft); color: var(--notice-ink); }
+.rv-state[data-s="human"] { background: var(--accent-soft); color: var(--accent-ink); }
+.rv-state[data-s="void"]  { background: var(--error-soft); color: var(--error-ink); }
+.rv-state[data-s="off"]   { background: var(--neutral-soft); color: var(--neutral-ink); }
+.rv-row-text { font-size: 14px; line-height: 22px; color: var(--ink); }
+.rv-row-text .rv-fact-meta { display: block; }
+.rv-row[data-off] .rv-row-text { color: var(--ink-2); }
+.rv-mc { display: grid; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--bg-page); font-size: 12px; line-height: 18px; }
+.rv-mc-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-mc-k { font-weight: 600; color: var(--ink-2); }
+.rv-mc-op { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
+.rv-mc-why { color: var(--ink-2); }
+.rv-mc-trace { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-mc-was { color: var(--ink-3); text-decoration: line-through; }
+.rv-hc { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-hc .rv-input { flex: 1; min-width: 160px; height: 28px; font-size: 12px; }
+.rv-picker--sm .rv-opt > span { height: 28px; padding: 0 var(--space-2); font-size: 12px; gap: 4px; }
+.rv-agree { height: 28px; font-size: 12px; }
+.rv-sheet-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- ReviewLayout */
+.rv-review-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 460px); gap: var(--space-4); align-items: start; }
+.rv-review-layout > .rv-sheet { position: sticky; top: 68px; max-height: calc(100vh - 84px); overflow: auto; }
+@media (max-width: 1100px) { .rv-review-layout { grid-template-columns: 1fr; } .rv-review-layout > .rv-sheet { position: static; max-height: none; } }
+.rv-crumb { font-size: 12px; color: var(--ink-3); }
+.rv-crumb a { color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- ConversationQueue */
+.rv-cq { list-style: none; margin: 0; padding: 0; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-cq li { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.rv-cq li:last-child { border-bottom: 0; }
+.rv-cq li:hover { background: var(--bg-page); }
+.rv-cq li > .rv-verdict { justify-self: start; }
+.rv-cq-main { display: grid; gap: 2px; min-width: 0; }
+.rv-cq-title { font-size: 14px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cq-title a { font-weight: 600; margin-right: var(--space-2); }
+.rv-cq-todo { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
+
+/* ---------------------------------------------------------------- CaseInfo */
+.rv-caseinfo { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3) var(--space-4); margin: 0; }
+.rv-caseinfo div { display: grid; gap: 2px; min-width: 0; }
+.rv-caseinfo dt { font-size: 12px; color: var(--ink-3); }
+.rv-caseinfo dd { margin: 0; font-size: 14px; line-height: 22px; color: var(--ink); }
+.rv-caseinfo .rv-wide { grid-column: 1 / -1; }
+.rv-flag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--notice-soft); color: var(--notice-ink); font-size: 12px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- CompareSummary */
+.rv-delta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.rv-delta > div { padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.rv-delta-n { font-family: var(--font-mono); font-size: 22px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-delta [data-d="up"] .rv-delta-n { color: var(--pass-ink); }
+.rv-delta [data-d="down"] .rv-delta-n { color: var(--fail-ink); }
+.rv-delta-l { font-size: 12px; color: var(--ink-2); }
+.rv-arrow { font-family: var(--font-mono); color: var(--ink-3); }
+
+/* ================================================================ v3：百分制 */
+
+/* ---------------------------------------------------------------- 分数 */
+.rv-pts { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.rv-verdict .rv-pts { font-size: 11px; font-weight: 600; opacity: .85; margin-left: 2px; }
+.rv-weight {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px;
+  border-radius: var(--radius-sm); background: var(--bg-page); border: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); white-space: nowrap;
+}
+.rv-weight[data-zero] { color: var(--ink-3); border-style: dashed; }
+.rv-opt > span .rv-pts { font-size: 11px; font-weight: 500; opacity: .75; }
+.rv-opt input:checked + span .rv-pts { opacity: .95; }
+
+/* ScoreInput：快捷分值 + 数字 */
+.rv-score { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.rv-score-num {
+  width: 64px; height: 28px; padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-align: right;
+}
+.rv-score-num:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+.rv-score-num[data-custom] { border-color: var(--accent); }
+.rv-score-unit { font-size: 12px; color: var(--ink-3); }
+
+/* ScoreBar：总分在 0–100 上的位置、区间与及格线 */
+.rv-scorebar { position: relative; height: 8px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); }
+.rv-scorebar-range { position: absolute; top: -1px; bottom: -1px; border-radius: var(--radius-pill); background: var(--accent-soft); border: 1px dashed var(--accent); }
+.rv-scorebar-fill { position: absolute; top: -1px; bottom: -1px; left: -1px; border-radius: var(--radius-pill); background: var(--pass-solid); }
+.rv-scorebar-fill[data-fail] { background: var(--fail-solid); }
+.rv-scorebar-mark { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--ink); }
+.rv-scorebar-mark::after { content: attr(data-label); position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-family: var(--font-mono); font-size: 10px; color: var(--ink-2); white-space: nowrap; }
+
+/* TotalPanel：评分表底部的总分 */
+.rv-total { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line-strong); background: var(--bg-surface); }
+.rv-total-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
+.rv-total-n { font-family: var(--font-mono); font-size: 28px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-total-n small { font-size: 14px; color: var(--ink-3); font-weight: 500; }
+.rv-total-src { font-size: 12px; color: var(--ink-2); }
+.rv-total-formula { font-family: var(--font-mono); font-size: 11.5px; line-height: 18px; color: var(--ink-3); overflow-wrap: anywhere; }
+.rv-total-veto { font-size: 12px; color: var(--fail-ink); font-weight: 600; }
+.rv-total-override { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-total-override .rv-input { flex: 1; min-width: 160px; height: 28px; font-size: 12px; }
+
+/* ScoreCell：平均分为主、通过率为辅 */
+.rv-avg { display: inline-grid; gap: 3px; min-width: 104px; font-variant-numeric: tabular-nums; }
+.rv-avg-main { display: flex; align-items: baseline; gap: 6px; }
+.rv-avg-n { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--ink); }
+.rv-avg-sub { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-avg--provisional .rv-avg-n::after { content: "临时"; margin-left: 4px; padding: 0 4px; border-radius: var(--radius-sm); background: var(--notice-soft); color: var(--notice-ink); font-family: var(--font-sans); font-size: 10px; font-weight: 600; vertical-align: 2px; }
+
+/* ================================================================ v4：综合分、组件贡献、注入观测 */
+
+/* ScoreBreakdown：维度分 × 权重 → 综合分 */
+.rv-comp { display: grid; gap: var(--space-2); }
+.rv-comp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
+.rv-comp-n { font-family: var(--font-mono); font-size: 32px; line-height: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-comp-row { display: grid; grid-template-columns: 132px 52px minmax(120px, 1fr) 56px; gap: var(--space-3); align-items: center; font-size: 13px; }
+.rv-comp-row .rv-scorebar { height: 8px; }
+.rv-comp-w { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
+.rv-comp-v { font-family: var(--font-mono); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.rv-comp-row[data-missing] { color: var(--ink-3); }
+.rv-comp-row[data-missing] .rv-comp-v { font-weight: 400; }
+
+/* ContributionChart：发散条形，零线居中 */
+.rv-contrib { display: grid; gap: var(--space-2); }
+.rv-contrib-row { display: grid; grid-template-columns: 132px minmax(160px, 1fr) 132px; gap: var(--space-3); align-items: center; font-size: 13px; }
+.rv-contrib-track { position: relative; height: 20px; }
+.rv-contrib-track::before { content: ""; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--line-strong); }
+.rv-contrib-bar { position: absolute; top: 3px; height: 14px; background: var(--delta-up); border-radius: 0 4px 4px 0; }
+.rv-contrib-bar[data-neg] { background: var(--delta-down); border-radius: 4px 0 0 4px; }
+.rv-contrib-ci { position: absolute; top: 9px; height: 2px; background: var(--ink-2); }
+.rv-contrib-v { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-contrib-v small { display: block; font-weight: 400; color: var(--ink-3); font-size: 11px; }
+.rv-contrib-row[data-total] { border-top: 1px solid var(--line); padding-top: var(--space-2); font-weight: 600; }
+.rv-contrib-axis { display: grid; grid-template-columns: 132px minmax(160px, 1fr) 132px; gap: var(--space-3); font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); }
+.rv-contrib-axis span:nth-child(2) { display: flex; justify-content: space-between; }
+
+/* 注入观测（ec）：注入值是否真的进入了本会话的 skill_content */
+.rv-inj { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.rv-inj[data-s="seen"]   { background: var(--pass-soft); color: var(--pass-ink); }
+.rv-inj[data-s="unseen"] { background: var(--notice-soft); color: var(--notice-ink); }
+.rv-inj[data-s="na"]     { background: var(--neutral-soft); color: var(--neutral-ink); }
+
+.rv-proto-note{padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)}.rv-proto-note a{margin:0 2px}[hidden]{display:none!important}
+</style>
+</head>
+<body class="rv-app">
+<header class="rv-header">
+  <span class="rv-brand">Agent_Eval 复核</span>
+  <nav class="rv-nav" aria-label="视图">
+    <a href="#cases" data-nav="cases case">用例</a>
+    <a href="#queue" data-nav="queue review">复核 <span class="rv-count">23</span></a>
+    <a href="#compare" data-nav="compare">结果对比</a>
+    <a href="#judging" data-nav="judging">判定质量</a>
+  </nav>
+  <label class="rv-judge" style="margin-left:auto">判定配置
+    <select class="rv-select" id="cfg">
+      <option value="A">规则 · keyword@1 + skill-path@1 · 9f8e7d6a</option>
+      <option value="B">规则+模型 · + llm-fact@1, llm-forbid@1 · c41d02e7（示例）</option>
+    </select>
+  </label>
+</header>
+<div class="rv-proto-note">原型 · 数据为示例 · 页面：<a href="#cases">用例</a> → <a href="#case">用例详情</a> → <a href="#queue">复核队列</a> → <a href="#review">复核页（可交互）</a> · <a href="#compare">结果对比</a> · <a href="#judging">判定质量</a></div>
+
+<!-- ============================================================ 用例 -->
+<main class="rv-page" data-page="cases">
+  <div class="rv-page-head"><h1>用例</h1><span class="rv-meta"><span>评测集 v20261022-1</span><span>31 个用例 · 52 道题</span><span>配置 eline-glm53-bundledcopy</span></span></div>
+  <div class="rv-notice" data-tone="info" style="margin-bottom:16px"><b>分数为临时值</b><span>有 23 段对话结论待定，已从平均分中排除。</span><a href="#queue">去复核 →</a></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;margin-bottom:24px">
+    <section class="rv-card rv-comp">
+      <div class="rv-comp-head"><span class="rv-comp-n">73.9</span><span class="rv-meta"><span>综合分（临时）</span><span>4 个维度等权</span></span></div>
+      <div class="rv-comp-row" title="知识召回：78.2（权重 1）"><span>知识召回</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:78.2%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">78.2</span></div><div class="rv-comp-row" title="多轮上下文召回：70.0（权重 1）"><span>多轮上下文召回</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:70.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">70.0</span></div><div class="rv-comp-row" title="同义请求一致性：85.0（权重 1）"><span>同义请求一致性</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:85.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">85.0</span></div><div class="rv-comp-row" title="错误知识纠正：62.5（权重 1）"><span>错误知识纠正</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:62.5%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">62.5</span></div>
+      <div class="rv-total-formula">(78.2 + 70.0 + 85.0 + 62.5) / 4 = 73.9 · 竖线 = 及格 60</div>
+    </section>
+    <div class="rv-stats" style="margin:0;align-content:start">
+      <div class="rv-stat"><div class="rv-stat-label">结论待定对话</div><div class="rv-stat-value">23</div><div class="rv-stat-note"><a href="#queue">去复核 →</a></div></div>
+      <div class="rv-stat"><div class="rv-stat-label">已确定对话</div><div class="rv-stat-value">186</div><div class="rv-stat-note">通过 71% · 无效 9</div></div>
+      <div class="rv-stat"><div class="rv-stat-label">用例体检</div><div class="rv-stat-value">3</div><div class="rv-stat-note">变体泄露 1 · 前提成立率低 2</div></div>
+    </div>
+  </div>
+  <form class="rv-filterbar" style="margin-bottom:12px" onsubmit="return false">
+    <div class="rv-field"><label>维度</label><select class="rv-select"><option>全部维度</option><option>知识召回</option><option>多轮上下文召回</option><option>同义请求一致性</option><option>错误知识纠正</option></select></div>
+    <div class="rv-field"><label>主题</label><select class="rv-select"><option>全部主题</option><option>进单资料审核</option></select></div>
+    <div class="rv-field"><label>粒度</label><select class="rv-select"><option>全部</option><option>环节</option><option>细节</option></select></div>
+    <div class="rv-field"><label>排序</label><select class="rv-select"><option>结论待定多的在前</option><option>用例分低的在前</option><option>难度</option><option>区分度</option><option>稳定性</option></select></div>
+    <div class="rv-field"><label>&nbsp;</label><label style="display:inline-flex;gap:6px;align-items:center;height:32px;font-weight:400"><input type="checkbox"> 只看有体检标记</label></div>
+  </form>
+  <div class="rv-table-wrap">
+  <table class="rv-table">
+    <thead><tr><th class="rv-sticky-col">用例</th><th>维度</th><th>主题 · 粒度</th><th class="rv-num">变体</th><th class="rv-num">对话</th><th>结论待定</th><th>用例分</th><th class="rv-num" title="1 − 通过率">难度</th><th class="rv-num" title="不同被测模型之间通过率的差（模型数）">区分度</th><th class="rv-num" title="同一配置多次 trial 结论一致的比例">稳定性</th><th class="rv-num" title="种子与非诱导变体结论一致的比例">题组一致</th><th>体检</th></tr></thead>
+    <tbody><tr><th scope="row" class="rv-sticky-col"><a href="#case">kr-0201</a></th><td>知识召回</td><td>进单资料审核 · 环节</td><td class="rv-num">3</td><td class="rv-num">12</td><td><span class="rv-meta">—</span></td><td><span class="rv-avg"><span class="rv-avg-main"><span class="rv-avg-n">92.5</span><span class="rv-avg-sub">n=6</span></span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-fill" style="width:92.5%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-avg-sub">通过 100%</span></span></td><td class="rv-num">0.00</td><td class="rv-num">0.00 (1)</td><td class="rv-num">1.00</td><td class="rv-num">1.00</td><td></td></tr><tr><th scope="row" class="rv-sticky-col"><a href="#case">kr-0204</a></th><td>知识召回</td><td>进单资料审核 · 细节</td><td class="rv-num">2</td><td class="rv-num">8</td><td><span class="rv-state" data-s="need">2 段</span></td><td><span class="rv-avg rv-avg--provisional"><span class="rv-avg-main"><span class="rv-avg-n">64.0</span><span class="rv-avg-sub">n=3</span></span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-fill" style="width:64.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-avg-sub">通过 67%</span></span></td><td class="rv-num">0.33</td><td class="rv-num">0.33 (2)</td><td class="rv-num">0.75</td><td class="rv-num">0.50</td><td><span class="rv-flag">变体泄露嫌疑</span></td></tr><tr><th scope="row" class="rv-sticky-col"><a href="#case">mt-0201</a></th><td>多轮上下文召回</td><td>进单资料审核 · 环节</td><td class="rv-num">1</td><td class="rv-num">4</td><td><span class="rv-meta">—</span></td><td><span class="rv-avg"><span class="rv-avg-main"><span class="rv-avg-n">70.0</span><span class="rv-avg-sub">n=4</span></span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-fill" style="width:70.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-avg-sub">通过 75%</span></span></td><td class="rv-num">0.25</td><td class="rv-num">—</td><td class="rv-num">0.75</td><td class="rv-num">—</td><td></td></tr><tr><th scope="row" class="rv-sticky-col"><a href="#case">ec-0201</a></th><td>错误知识纠正</td><td>进单资料审核 · 细节</td><td class="rv-num">1</td><td class="rv-num">4</td><td><span class="rv-state" data-s="need">1 段</span></td><td><span class="rv-avg rv-avg--provisional"><span class="rv-avg-main"><span class="rv-avg-n">71.5</span><span class="rv-avg-sub">n=2</span></span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-fill" style="width:71.5%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-avg-sub">通过 50% · 无效 1</span></span></td><td class="rv-num">0.50</td><td class="rv-num">—</td><td class="rv-num">0.50</td><td class="rv-num">—</td><td><span class="rv-flag">前提成立率低</span></td></tr><tr><th scope="row" class="rv-sticky-col"><a href="#case">ec-0202</a></th><td>错误知识纠正</td><td>进单资料审核 · 细节</td><td class="rv-num">2</td><td class="rv-num">8</td><td><span class="rv-meta">—</span></td><td><span class="rv-avg"><span class="rv-avg-main"><span class="rv-avg-n">75.0</span><span class="rv-avg-sub">n=8</span></span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-fill" style="width:75.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-avg-sub">通过 88%</span></span></td><td class="rv-num">0.13</td><td class="rv-num">0.25 (2)</td><td class="rv-num">0.88</td><td class="rv-num">0.75</td><td></td></tr><tr><th scope="row" class="rv-sticky-col"><a href="#case">ec-0203</a></th><td>错误知识纠正</td><td>进单资料审核 · 环节</td><td class="rv-num">1</td><td class="rv-num">4</td><td><span class="rv-state" data-s="need">3 段</span></td><td><span class="rv-avg rv-avg--provisional"><span class="rv-avg-main"><span class="rv-avg-n">41.0</span><span class="rv-avg-sub">n=1</span></span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-fill" data-fail style="width:41.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-avg-sub">通过 0%</span></span></td><td class="rv-num">1.00</td><td class="rv-num">—</td><td class="rv-num">1.00</td><td class="rv-num">—</td><td></td></tr></tbody>
+  </table>
+  </div>
+  <nav class="rv-pager" aria-label="分页"><a class="rv-btn" href="#cases">← 上一页</a><span class="rv-pager-pos">第 1 / 2 页 · 共 31 个用例</span><a class="rv-btn" href="#cases">下一页 →</a></nav>
+</main>
+
+<!-- ============================================================ 用例详情 -->
+<main class="rv-page" data-page="case">
+  <div class="rv-crumb"><a href="#cases">用例</a> / ec-0201</div>
+  <div class="rv-page-head" style="margin-top:4px"><h1>ec-0201</h1><span class="rv-meta"><span>错误知识纠正</span><span>进单资料审核</span><span>用例分 71.5</span></span></div>
+  <section class="rv-card">
+    <dl class="rv-caseinfo">
+      <div><dt>维度</dt><dd>错误知识纠正</dd></div><div><dt>主题</dt><dd>进单资料审核</dd></div><div><dt>粒度</dt><dd>细节</dd></div>
+      <div><dt>可回答</dt><dd>是</dd></div><div><dt>对话方式</dt><dd>live（逐轮实时）</dd></div><div><dt>主口径</dt><dd>forced</dd></div>
+      <div class="rv-wide"><dt>关键条件</dt><dd>收款状态 = 尾款未收（第 1 轮）· 问点 = 电放时机（第 2 轮）· 更正来源 = 货代说法（第 2 轮）</dd></div>
+      <div class="rv-wide"><dt>知识注入</dt><dd>J1 · 电放时机 · 反转：「收齐尾款后放单」→「未收尾款也可先电放」（trade-documents.md）</dd></div>
+      <div class="rv-wide"><dt>标签</dt><dd><span class="rv-kind">场景/用户更正</span> <span class="rv-kind">难点/规则反转</span> <span class="rv-kind">来源/人工构造</span> <span class="rv-kind">业务/单证</span></dd></div>
+      <div class="rv-wide"><dt>用例体检</dt><dd><span class="rv-flag">forced 前提成立率偏低 1/4</span></dd></div>
+    </dl>
+  </section>
+  <section class="rv-card">
+    <h2>期望 <span class="rv-meta" style="font-weight:400"><span>当前期望 a1b2c3d4</span><span>v20261022-1</span></span></h2>
+    <div class="rv-expect">
+      <div class="rv-expect-q"><b>第 1 轮</b>这票货尾款还没收，客户急着提货，可以电放吗？</div>
+      <div class="rv-expect-q"><b>第 2 轮</b>不对，客户是老客户了，货代说没收款也能先电放、事后补收。电放到底是收款前放还是收款后放？</div>
+      <ul class="rv-facts">
+        <li class="rv-fact"><span class="rv-kind">前提 P1</span><span class="rv-fact-text">这票货未收尾款，答复为可以电放、事后补收尾款<span class="rv-fact-meta">第 1 轮 · 注入 J1 · 门槛，不打分</span></span></li>
+        <li class="rv-fact"><span class="rv-kind">路径</span><span class="rv-fact-text">必须加载技能 trade-documents<span class="rv-fact-meta">第 1 轮 · 否决项</span></span></li>
+        <li class="rv-fact"><span class="rv-kind" data-kind="forbidden">禁止 X1</span><span class="rv-fact-text">未收尾款也可以先电放提货<span class="rv-fact-meta">第 2 轮 · 否决项</span></span></li>
+        <li class="rv-fact"><span class="rv-kind">必要 F1</span><span class="rv-fact-text">这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行<span class="rv-fact-meta">第 2 轮 · <span class="rv-weight">权重 2</span></span></span></li>
+        <li class="rv-fact"><span class="rv-kind">必要 F2</span><span class="rv-fact-text">说明货代的说法不能作为放单依据<span class="rv-fact-meta">第 2 轮 · 关键词：货代的说法不能作为放单依据 · <span class="rv-weight">权重 1</span></span></span></li>
+        <li class="rv-fact"><span class="rv-kind">期望 E1</span><span class="rv-fact-text">指出资料中关于电放时机的说法与用户所述相反，建议核对<span class="rv-fact-meta">第 2 轮 · <span class="rv-weight">权重 0.5</span></span></span></li>
+      </ul>
+      <div class="rv-answer-head" style="margin-top:8px"><b>参考答案</b></div>
+      <div class="rv-answer rv-md"><p>第 2 轮：按更正后的口径，电放应在收齐尾款、货物仍在本方掌控后进行；资料中写的是「未收尾款也可先电放」，与此相反，建议核对。</p></div>
+    </div>
+  </section>
+  <section class="rv-card">
+    <h2>对话 <span class="rv-meta" style="font-weight:400"><span>8 段</span><span>按 被测配置 分组</span></span></h2>
+    <ul class="rv-cq" style="border:0"><li><span class="rv-verdict rv-verdict--lg" data-tone="undecided">未决</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">ec-0201 · 种子</a></div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · high</span><span class="rv-pill">natural · 第 1 次</span><span class="rv-pill rv-pill--mono">run-20261023-ec</span></div></div><span class="rv-cq-todo"><span class="rv-pill rv-pill--mono">≤ 100 分</span><span class="rv-state" data-s="need">待判 4</span><a class="rv-btn" href="#review">复核</a></span></li><li><span class="rv-verdict rv-verdict--lg" data-tone="pass">通过</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">ec-0201 · 种子</a></div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · high</span><span class="rv-pill">forced · 第 1 次</span><span class="rv-pill rv-pill--mono">run-20261023-ec</span></div></div><span class="rv-cq-todo"><span class="rv-pill rv-pill--mono">89 分</span><span class="rv-chips"><span class="rv-chip"><span class="rv-chip-id">F1</span><span class="rv-verdict" data-tone="pass">对<span class="rv-pts">90</span></span></span><span class="rv-chip" data-overridden><span class="rv-chip-id">E1</span><span class="rv-verdict" data-tone="partial">部分<span class="rv-pts">60</span></span><span class="rv-src" data-src="human">人工</span></span></span></span></li><li><span class="rv-verdict rv-verdict--lg" data-tone="fail">失败</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">ec-0201 · 种子</a></div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · low</span><span class="rv-pill">forced · 第 1 次</span><span class="rv-pill rv-pill--mono">run-20261023-low</span></div></div><span class="rv-cq-todo"><span class="rv-pill rv-pill--mono">0 分</span><span class="rv-total-veto">否决：X1 被采信</span></span></li><li><span class="rv-verdict rv-verdict--lg" data-tone="neutral">无效</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">ec-0201 · 种子</a></div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · high</span><span class="rv-pill">forced · 第 2 次</span><span class="rv-pill rv-pill--mono">run-20261023-ec</span></div></div><span class="rv-cq-todo"><span class="rv-meta">前提不成立</span><span class="rv-inj" data-s="unseen">注入未观测到</span></span></li></ul>
+  </section>
+</main>
+
+<!-- ============================================================ 复核队列 -->
+<main class="rv-page" data-page="queue">
+  <div class="rv-page-head"><h1>复核</h1><span class="rv-meta"><span>以对话为单位</span><span>判定配置 9f8e7d6a</span></span></div>
+  <div class="rv-notice" style="margin-bottom:12px"><b>4 段对话在当前判定配置下缺判定</b><span>期望已修订，需补判后才进入队列。</span><span class="rv-cmd">python -m scoring rejudge<button class="rv-btn" type="button">复制</button></span></div>
+  <nav class="rv-tabs" aria-label="队列" style="margin-bottom:12px">
+    <a class="rv-tab" href="#queue" aria-current="page">结论待定 <span class="rv-count">23</span></a>
+    <a class="rv-tab" href="#queue">有未判条目</a>
+    <a class="rv-tab" href="#queue">模型抽检</a>
+    <a class="rv-tab" href="#queue">人工≠机器</a>
+    <a class="rv-tab" href="#queue">会话失败</a>
+  </nav>
+  <form class="rv-filterbar" style="margin-bottom:12px" onsubmit="return false">
+    <div class="rv-field"><label>run</label><select class="rv-select"><option>全部 run</option><option>run-20261023-ec</option><option>run-20261023-a</option></select></div>
+    <div class="rv-field"><label>维度</label><select class="rv-select"><option>全部维度</option></select></div>
+    <div class="rv-field"><label>评审人</label><input class="rv-input" value="焦老师" style="width:120px"></div>
+  </form>
+  <ul class="rv-cq"><li><span class="rv-verdict rv-verdict--lg" data-tone="undecided">未决</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">ec-0201</a>这票货尾款还没收，客户急着提货，可以电放吗？</div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · high</span><span class="rv-pill">natural · 第 1 次</span><span class="rv-pill rv-pill--mono">run-20261023-ec</span></div></div><span class="rv-cq-todo"><span class="rv-pill rv-pill--mono">≤ 100 分</span><span class="rv-state" data-s="need">待判 4</span><span class="rv-kind">前提 1</span><span class="rv-kind" data-kind="forbidden">禁止 1</span><span class="rv-kind">必要 1</span><span class="rv-kind">期望 1</span></span></li><li><span class="rv-verdict rv-verdict--lg" data-tone="undecided">未决</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">kr-0204 · V1</a>我们自己报关的单子做融资，客户得交哪些单据？</div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · low</span><span class="rv-pill">natural · 第 2 次</span><span class="rv-pill rv-pill--mono">run-20261023-low</span></div></div><span class="rv-cq-todo"><span class="rv-pill rv-pill--mono">45–70 分</span><span class="rv-state" data-s="need">待判 1</span><span class="rv-kind">必要 1</span></span></li><li><span class="rv-verdict rv-verdict--lg" data-tone="undecided">未决</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">ec-0203</a>信用证交单期过了还能补吗？</div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · high</span><span class="rv-pill">forced · 第 1 次</span><span class="rv-pill rv-pill--mono">run-20261023-ec</span></div></div><span class="rv-cq-todo"><span class="rv-pill rv-pill--mono">33–83 分</span><span class="rv-state" data-s="need">待判 2</span><span class="rv-kind">必要 2</span></span></li><li><span class="rv-verdict rv-verdict--lg" data-tone="error">异常</span><div class="rv-cq-main"><div class="rv-cq-title"><a href="#review">mt-0202</a>上次说的那票货，单据齐了吗？</div><div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · high</span><span class="rv-pill">natural · 第 1 次</span><span class="rv-pill rv-pill--mono">run-20261023-a</span></div></div><span class="rv-cq-todo"><span class="rv-state" data-s="void">算子异常 1</span></span></li></ul>
+  <nav class="rv-pager" aria-label="分页"><span class="rv-pager-pos">第 1 / 2 页 · 共 23 段</span><a class="rv-btn" href="#queue">下一页 →</a></nav>
+</main>
+
+<!-- ============================================================ 复核页 -->
+<main class="rv-page" data-page="review" style="max-width:none">
+  <div class="rv-crumb"><a href="#queue">复核</a> / 结论待定 / 第 1 段，共 23 段</div>
+  <div class="rv-page-head" style="margin:4px 0 12px">
+    <h1>ec-0201</h1>
+    <span class="rv-meta"><span>错误知识纠正</span><span>进单资料审核</span><span>种子题</span><a href="#case">用例详情 →</a></span>
+  </div>
+  <div class="rv-runtag" style="margin-bottom:12px">
+    <span class="rv-runtag-k">被测</span>
+    <span class="rv-pill"><b>glm-5.3</b> · 努力 high</span>
+    <span class="rv-pill rv-pill--mono">eline-glm53-bundledcopy</span>
+    <span class="rv-pill">natural · 第 1 次</span>
+    <span class="rv-pill rv-pill--mono">run-20261023-ec</span>
+    <span class="rv-pill">技能 bundled-copy · 注入 J1 反转</span>
+  </div>
+  <div class="rv-concl" id="concl" style="margin-bottom:16px"></div>
+  <div class="rv-review-layout">
+    <section class="rv-conv" id="conv" aria-label="对话"></section>
+    <aside class="rv-sheet" id="sheet" aria-label="评分表"></aside>
+  </div>
+</main>
+
+<!-- ============================================================ 结果对比 -->
+<main class="rv-page" data-page="compare">
+  <div class="rv-page-head"><h1>结果对比</h1><span class="rv-meta"><span>只在双方共有的题目上比</span></span></div>
+  <form class="rv-filterbar" style="margin-bottom:16px" onsubmit="return false">
+    <div class="rv-field"><label>比较什么</label><select class="rv-select"><option>知识库（skills_base）</option><option>被测配置（profile）</option><option>被测模型（model）</option><option>干预模式（mode）</option><option>期望版本</option></select></div>
+    <div class="rv-field"><label>基线</label><select class="rv-select"><option>skills v1（a3f9e21）</option></select></div>
+    <span class="rv-arrow" style="align-self:center;margin-top:20px">→</span>
+    <div class="rv-field"><label>对照</label><select class="rv-select"><option>skills v2（c07b114）</option></select></div>
+    <div class="rv-field"><label>更多条件</label><select class="rv-select"><option>其余全部固定</option><option>放开 trial / run（默认）</option></select></div>
+    <button class="rv-btn rv-btn--primary" type="button" style="align-self:flex-end">对比</button>
+  </form>
+  <div class="rv-delta" style="margin-bottom:16px">
+    <div data-d="up"><div class="rv-delta-l">变好（题目分 +10 以上）</div><div class="rv-delta-n">6</div><div class="rv-meta">题 · 综合分 73.9 → 76.8</div></div>
+    <div data-d="down"><div class="rv-delta-l">变差（−10 以下）</div><div class="rv-delta-n">2</div><div class="rv-meta">题 · 含锚点绊线 1</div></div>
+    <div><div class="rv-delta-l">不变</div><div class="rv-delta-n">44</div><div class="rv-meta">题 · 共有 52 题 / 31 个用例</div></div>
+  </div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px">
+    <section class="rv-card rv-comp"><div class="rv-comp-head"><span class="rv-comp-n">73.9</span><span class="rv-meta"><span>基线 · skills v1</span></span></div><div class="rv-comp-row" title="知识召回：78.2（权重 1）"><span>知识召回</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:78.2%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">78.2</span></div><div class="rv-comp-row" title="多轮上下文召回：70.0（权重 1）"><span>多轮上下文召回</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:70.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">70.0</span></div><div class="rv-comp-row" title="同义请求一致性：85.0（权重 1）"><span>同义请求一致性</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:85.0%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">85.0</span></div><div class="rv-comp-row" title="错误知识纠正：62.5（权重 1）"><span>错误知识纠正</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:62.5%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">62.5</span></div></section>
+    <section class="rv-card rv-comp"><div class="rv-comp-head"><span class="rv-comp-n">76.8</span><span class="rv-meta"><span>对照 · skills v2</span></span></div><div class="rv-comp-row" title="知识召回：81.3（权重 1）"><span>知识召回</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:81.3%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">81.3</span></div><div class="rv-comp-row" title="多轮上下文召回：68.8（权重 1）"><span>多轮上下文召回</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:68.8%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">68.8</span></div><div class="rv-comp-row" title="同义请求一致性：85.4（权重 1）"><span>同义请求一致性</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:85.4%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">85.4</span></div><div class="rv-comp-row" title="错误知识纠正：71.5（权重 1）"><span>错误知识纠正</span><span class="rv-comp-w">×1</span><div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:71.5%"></span><span class="rv-scorebar-mark" style="left:60%;top:-3px;bottom:-3px"></span></div><span class="rv-comp-v">71.5</span></div></section>
+  </div>
+  <section class="rv-card rv-contrib" style="margin-bottom:16px">
+    <h2>组件贡献：知识库 v1 → v2 <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 31 个用例</span></span></h2>
+    <div class="rv-contrib-row" title="综合分：+2.8 分"><span>综合分</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:9.3%"></span><span class="rv-contrib-ci" style="left:51.3%;width:16.3%"></span></span><span class="rv-contrib-v">+2.8<small>73.9 → 76.8</small></span></div><div class="rv-contrib-row" title="错误知识纠正：+9.0 分"><span>错误知识纠正</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:30.0%"></span><span class="rv-contrib-ci" style="left:60.7%;width:36.3%"></span></span><span class="rv-contrib-v">+9.0<small>62.5 → 71.5</small></span></div><div class="rv-contrib-row" title="知识召回：+3.1 分"><span>知识召回</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:10.3%"></span><span class="rv-contrib-ci" style="left:48.7%;width:24.0%"></span></span><span class="rv-contrib-v">+3.1<small>78.2 → 81.3</small></span></div><div class="rv-contrib-row" title="多轮上下文召回：−1.2 分"><span>多轮上下文召回</span><span class="rv-contrib-track"><span class="rv-contrib-bar" data-neg style="left:46.0%;width:4.0%"></span><span class="rv-contrib-ci" style="left:33.7%;width:24.0%"></span></span><span class="rv-contrib-v">−1.2<small>70.0 → 68.8</small></span></div><div class="rv-contrib-row" title="同义请求一致性：+0.4 分"><span>同义请求一致性</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:1.3%"></span><span class="rv-contrib-ci" style="left:41.3%;width:20.3%"></span></span><span class="rv-contrib-v">+0.4<small>85.0 → 85.4</small></span></div><div class="rv-contrib-axis"><span></span><span><span>−15</span><span>0</span><span>+15</span></span><span></span></div>
+    <div class="rv-meta"><span>细线 = 95% 区间（按用例配对自助法）</span><span>区间跨 0 = 不能确定有影响</span></div>
+  </section>
+  <section class="rv-card rv-contrib" style="margin-bottom:16px">
+    <h2>多组件分摊：被测模型 × 知识库 <span class="rv-meta" style="font-weight:400"><span>2×2 · 4 个 run 齐全</span><span>Shapley</span></span></h2>
+    <div class="rv-contrib-row" title="被测模型 low→high：+5.5 分"><span>被测模型 low→high</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:18.3%"></span></span><span class="rv-contrib-v">+5.5<small>(4 + 7) / 2</small></span></div><div class="rv-contrib-row" title="知识库 v1→v2：+6.5 分"><span>知识库 v1→v2</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:21.7%"></span></span><span class="rv-contrib-v">+6.5<small>(5 + 8) / 2</small></span></div><div class="rv-contrib-row" data-total title="总变化：+12.0 分"><span>总变化</span><span class="rv-contrib-track"><span class="rv-contrib-bar" style="left:50%;width:40.0%"></span></span><span class="rv-contrib-v">+12.0<small>66.0 → 78.0</small></span></div><div class="rv-contrib-axis"><span></span><span><span>−15</span><span>0</span><span>+15</span></span><span></span></div>
+    <div class="rv-meta"><span>交互 +3.0：同时升级多出的部分，已平分进两者</span></div>
+  </section>
+  <h2>逐题差异 <span class="rv-meta" style="font-weight:400"><span>只列变化超过 10 分的题</span></span></h2>
+  <div class="rv-table-wrap">
+  <table class="rv-table">
+    <thead><tr><th class="rv-sticky-col">题目</th><th>维度</th><th class="rv-num">基线</th><th class="rv-num">对照</th><th class="rv-num">变化</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><th scope="row" class="rv-sticky-col"><a href="#case">ec-0201</a></th><td>错误知识纠正</td><td class="rv-num">41.0</td><td class="rv-num">71.5</td><td class="rv-num">+30.5</td><td>F1 由 未提及 → 对</td></tr>
+      <tr><th scope="row" class="rv-sticky-col"><a href="#case">ec-0203</a></th><td>错误知识纠正</td><td class="rv-num">22.0</td><td class="rv-num">41.0</td><td class="rv-num">+19.0</td><td></td></tr>
+      <tr><th scope="row" class="rv-sticky-col"><a href="#case">mt-0202</a></th><td>多轮上下文召回</td><td class="rv-num">88.0</td><td class="rv-num">0.0</td><td class="rv-num">−88.0</td><td><span class="rv-verdict" data-tone="fail">锚点绊线</span> 上 run 全过、本 run 全败</td></tr>
+    </tbody>
+  </table>
+  </div>
+</main>
+
+<!-- ============================================================ 判定质量 -->
+<main class="rv-page" data-page="judging">
+  <div class="rv-page-head"><h1>判定质量</h1><span class="rv-meta"><span>机器分与人工分差多少，能不能少看一点</span></span></div>
+  <div class="rv-table-wrap" style="margin-bottom:16px">
+  <table class="rv-table">
+    <thead><tr><th>算子</th><th>条目类型</th><th class="rv-num">人工复核</th><th class="rv-num">平均分差</th><th>分差 ≤ 10</th><th class="rv-num">分歧</th><th>建议</th></tr></thead>
+    <tbody>
+      <tr><th scope="row"><span class="rv-src" data-src="rule">规则</span> <span class="rv-mono">keyword@1</span></th><td>必要</td><td class="rv-num">48</td><td class="rv-num">4.2</td><td><span class="rv-rate"><span class="rv-rate-main"><span class="rv-rate-pct">94%</span><span class="rv-rate-n">45/48</span></span><span class="rv-rate-bar"><i style="width:94%"></i></span><span class="rv-rate-ci">83–98%</span></span></td><td class="rv-num"><a href="#queue">3</a></td><td>可转抽检</td></tr>
+      <tr><th scope="row"><span class="rv-src" data-src="rule">规则</span> <span class="rv-mono">skill-path@1</span></th><td>路径</td><td class="rv-num">30</td><td class="rv-num">0.0</td><td><span class="rv-rate"><span class="rv-rate-main"><span class="rv-rate-pct">100%</span><span class="rv-rate-n">30/30</span></span><span class="rv-rate-bar"><i style="width:100%"></i></span><span class="rv-rate-ci">89–100%</span></span></td><td class="rv-num">0</td><td>可转抽检</td></tr>
+      <tr><th scope="row"><span class="rv-src" data-src="judge">模型</span> <span class="rv-mono">llm-fact@1</span></th><td>必要</td><td class="rv-num">12</td><td class="rv-num">13.8</td><td><span class="rv-rate"><span class="rv-rate-main"><span class="rv-rate-pct">75%</span><span class="rv-rate-n">9/12</span></span><span class="rv-rate-bar"><i style="width:75%"></i></span><span class="rv-rate-ci">47–91%</span></span></td><td class="rv-num"><a href="#queue">3</a></td><td>样本不足，继续全量复核</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px">
+    <section class="rv-card"><h2>作废的人工分数</h2>
+      <div class="rv-meta" style="margin-bottom:6px"><span>ec-0202</span><span>F4</span><span>焦老师</span><span>10-20 16:40</span></div>
+      <div style="display:flex;gap:8px;align-items:center;font-size:13px"><span class="rv-verdict" data-tone="pass">对<span class="rv-pts">100</span></span><span class="rv-state" data-s="void">期望文本已修订</span><a href="#review">重新判断 →</a></div>
+    </section>
+    <section class="rv-card"><h2>数据来源</h2>
+      <dl class="rv-caseinfo">
+        <div class="rv-wide"><dt>评测库</dt><dd class="rv-mono">archive/eval.db · schema v4</dd></div>
+        <div class="rv-wide"><dt>判定配置</dt><dd>规则 9f8e7d6a（keyword@1, skill-path@1）· 规则+模型 c41d02e7（+ llm-fact@1, llm-forbid@1；判定模型 示例）</dd></div>
+        <div class="rv-wide"><dt>口径</dt><dd class="rv-mono">policy 3c8e01aa · 及格 60 · 否决 zero/zero/zero · 用例等权</dd></div>
+      </dl>
+    </section>
+  </div>
+</main>
+
+<script>
+(function () {
+  var PASS = 60;
+  var TURNS = [
+    { user: '这票货尾款还没收，客户急着提货，可以电放吗？',
+      ans: '<p>根据<strong>单证规范</strong>，这种情况可以处理：</p><ol><li>可以先办理<strong>电放</strong>，让客户尽快提货；</li><li>尾款在提货后<strong>补收</strong>即可；</li><li>建议在系统中备注「先放后收」，便于后续跟进。</li></ol><table><thead><tr><th>环节</th><th>时间点</th></tr></thead><tbody><tr><td>电放</td><td>客户申请当天</td></tr><tr><td>补收尾款</td><td>提货后 7 个工作日内</td></tr></tbody></table>',
+      obs: '<span class="rv-obs">技能 trade-documents ✓</span><span class="rv-inj" data-s="seen">注入 J1 已生效</span>' },
+    { user: '不对，客户是老客户了，货代说没收款也能先电放、事后补收。电放到底是收款前放还是收款后放？',
+      ans: '<p>抱歉，前面的说法需要更正：</p><blockquote><p>电放应在<strong>收齐尾款</strong>、货物仍在我方掌控后进行。</p></blockquote><ul><li>尾款未收齐时<strong>不应电放</strong>，否则货权失控；</li><li>我查到的资料里写着「未收尾款也可先电放」，与上述规则相反，建议与单证组核对资料版本。</li></ul><p>货代的说法不能作为放单依据。</p>',
+      obs: '<span class="rv-obs">无技能加载</span><span class="rv-obs">反问 0</span>' }
+  ];
+  // 快捷分值（policy.score.map）
+  var MAP = { '对': 100, '部分': 50, '未提及': 0, '错': 0, '满足': 100, '违反': 0, '未采信': 100, '采信': 0 };
+  var SCALE = { precond: ['成立', '不成立'], path: ['满足', '违反', '不适用'], forbidden: ['未采信', '采信'],
+                required: ['对', '部分', '未提及', '错'], expected: ['对', '部分', '未提及', '错'] };
+  var TONE = { '对': 'pass', '满足': 'pass', '成立': 'pass', '未采信': 'pass', '错': 'fail', '违反': 'fail', '不成立': 'fail', '采信': 'fail', '部分': 'partial', '未提及': 'neutral', '不适用': 'neutral' };
+  var KIND = { precond: '前提', path: '路径', forbidden: '禁止', required: '必要', expected: '期望' };
+  var SECTIONS = [['precond', '前提', '门槛：不成立 → 会话无效，不计分'], ['path', '路径', '否决项：违反 → 总分 0'],
+                  ['forbidden', '禁止事实', '否决项：采信 → 总分 0'], ['required', '必要事实', '按权重计分；判「错」→ 总分 0'],
+                  ['expected', '期望事实', '按权重计分']];
+  var ITEMS = [
+    { id: 'P1', kind: 'precond', turn: 1, text: '这票货未收尾款，答复为可以电放、事后补收尾款', kw: ['可以先办理', '补收'],
+      inj: '<span class="rv-inj" data-s="seen">注入观测</span> J1 改写值「未收尾款也可先电放」出现在第 1 轮 skill_content' },
+    { id: 'path#1', kind: 'path', turn: 1, text: '必须加载技能 trade-documents', kw: [] },
+    { id: 'X1', kind: 'forbidden', turn: 2, text: '未收尾款也可以先电放提货', kw: ['未收尾款也可先电放'] },
+    { id: 'F1', kind: 'required', turn: 2, w: 2, text: '这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行', kw: ['收齐尾款', '不应电放'] },
+    { id: 'F2', kind: 'required', turn: 2, w: 1, text: '说明货代的说法不能作为放单依据', kw: ['货代的说法不能作为放单依据'] },
+    { id: 'E1', kind: 'expected', turn: 2, w: 0.5, text: '指出资料中关于电放时机的说法与用户所述相反，建议核对', kw: ['建议与单证组核对'] }
+  ];
+  var MACHINE = {
+    A: { P1: { v: null, op: '—', why: '前提链为空：llm-precond 未接入，需人工判' },
+         'path#1': { v: '满足', s: 100, src: 'rule', op: 'skill-path@1', why: '第 1 轮加载 trade-documents', trace: 'skill-path:hit' },
+         X1: { v: null, op: '—', why: '禁止链为空：llm-forbid 未接入，需人工判' },
+         F1: { v: null, op: 'keyword@1', why: '无关键词，keyword 弃权', trace: 'keyword:abstain' },
+         F2: { v: '对', s: 100, src: 'rule', op: 'keyword@1', why: '命中关键词：货代的说法不能作为放单依据', trace: 'keyword:hit' },
+         E1: { v: null, op: 'keyword@1', why: '无关键词，keyword 弃权', trace: 'keyword:abstain' } },
+    B: { P1: { v: null, op: '—', why: '前提链为空：llm-precond 未接入，需人工判' },
+         'path#1': { v: '满足', s: 100, src: 'rule', op: 'skill-path@1', why: '第 1 轮加载 trade-documents', trace: 'skill-path:hit' },
+         X1: { v: '未采信', s: 100, src: 'judge', op: 'llm-forbid@1 · 示例模型', why: '第 2 轮明确否定「未收尾款可先电放」，并指为资料错误。', trace: 'llm-forbid:not_adopted' },
+         F1: { v: '对', s: 90, src: 'judge', op: 'llm-fact@1 · 示例模型', why: '两点都写到；「货物仍在掌控」只以「货权失控」反面带出，略间接。', trace: 'keyword:abstain → llm-fact:90' },
+         F2: { v: '对', s: 100, src: 'rule', op: 'keyword@1', why: '命中关键词：货代的说法不能作为放单依据', trace: 'keyword:hit' },
+         E1: { v: '部分', s: 60, src: 'judge', op: 'llm-fact@1 · 示例模型', why: '指出资料与规则相反并建议核对，但未点明与用户所述的关系。', trace: 'keyword:abstain → llm-fact:60' } }
+  };
+  var SAVED = {}, DRAFT = {}, WHY = {};      // 条目 id → {v, s, custom, why}；'@total' → {s, why}
+  var cfg = 'A', active = 0, overrideOpen = false;
+  var $ = function (id) { return document.getElementById(id); };
+  var scored = function (it) { return it.kind === 'required' || it.kind === 'expected'; };
+  function nearest(s) { var best = '对', d = 999; ['对', '部分', '未提及'].forEach(function (k) { var x = Math.abs(MAP[k] - s); if (x < d) { d = x; best = k; } }); return best; }
+  function mach(it) { return MACHINE[cfg][it.id]; }
+  function eff(it) {
+    if (DRAFT[it.id]) return DRAFT[it.id];
+    if (SAVED[it.id]) return SAVED[it.id];
+    return mach(it);
+  }
+  // 总分（scoring.md §3–4）：fav=true 时未判条目取最有利值，false 取最不利值
+  function total(fav) {
+    var p = eff(ITEMS[0]).v || (fav ? '成立' : '不成立');
+    if (p !== '成立') return { invalid: true };
+    var veto = [];
+    ITEMS.forEach(function (it) {
+      var v = eff(it).v;
+      if (it.kind === 'path' && (v || (fav ? '满足' : '违反')) === '违反') veto.push('路径违反');
+      if (it.kind === 'forbidden' && (v || (fav ? '未采信' : '采信')) === '采信') veto.push(it.id + ' 被采信');
+      if (it.kind === 'required' && v === '错') veto.push(it.id + ' 判错');   // 只看实际值
+    });
+    var num = 0, den = 0, parts = [];
+    ITEMS.filter(scored).forEach(function (it) {
+      var e = eff(it), s = e.s != null ? e.s : (fav ? 100 : 0);
+      num += it.w * s; den += it.w; parts.push(it.w + '×' + (e.s != null ? s : '?'));
+    });
+    var auto = den ? Math.round(num / den) : 0;
+    return { auto: auto, score: veto.length ? 0 : auto, veto: veto, formula: '(' + parts.join(' + ') + ') / ' + den };
+  }
+  function conclusion() {
+    var hi = total(true), lo = total(false), ov = DRAFT['@total'] || SAVED['@total'];
+    if (hi.invalid) return { status: 'invalid', hi: hi, lo: lo };
+    if (ov) return { status: ov.s >= PASS ? 'pass' : 'fail', hi: hi, lo: lo, ov: ov };
+    if (lo.invalid) return { status: 'undecided', hi: hi, lo: lo, why: '前提未判' };
+    if (lo.score >= PASS) return { status: 'pass', hi: hi, lo: lo };
+    if (hi.score < PASS) return { status: 'fail', hi: hi, lo: lo };
+    return { status: 'undecided', hi: hi, lo: lo, why: '分数区间跨过及格线' };
+  }
+  var SL = { pass: ['pass', '通过'], fail: ['fail', '失败'], invalid: ['neutral', '无效'], undecided: ['undecided', '未决'] };
+  function src(s, who) { return s === 'rule' ? '<span class="rv-src" data-src="rule">规则</span>' : s === 'judge' ? '<span class="rv-src" data-src="judge">模型</span>' : s === 'human' ? '<span class="rv-src" data-src="human">人工' + (who ? ' · ' + who : '') + '</span>' : ''; }
+  function vb(v, s) { return '<span class="rv-verdict" data-tone="' + (TONE[v] || 'neutral') + '">' + v + (s != null ? '<span class="rv-pts">' + s + '</span>' : '') + '</span>'; }
+  function bar(c) {
+    var lo = c.lo.invalid ? 0 : c.lo.score, hi = c.hi.score, ov = c.ov;
+    var inner = ov ? '<span class="rv-scorebar-fill"' + (ov.s < PASS ? ' data-fail' : '') + ' style="width:' + ov.s + '%"></span>'
+      : lo === hi ? '<span class="rv-scorebar-fill"' + (hi < PASS ? ' data-fail' : '') + ' style="width:' + hi + '%"></span>'
+      : '<span class="rv-scorebar-range" style="left:' + lo + '%;width:' + (hi - lo) + '%"></span>';
+    return '<div class="rv-scorebar" style="width:220px;margin-top:24px" aria-hidden="true">' + inner + '<span class="rv-scorebar-mark" data-label="及格 ' + PASS + '" style="left:' + PASS + '%"></span></div>';
+  }
+  var nDraft = function () { return Object.keys(DRAFT).length; };
+
+  function renderConcl() {
+    var c = conclusion(), s = SL[c.status], nd = nDraft();
+    var open = ITEMS.filter(function (i) { return !eff(i).v; }).map(function (i) { return i.id.replace('path#1', '路径'); });
+    var scoreTxt = c.status === 'invalid' ? '不计分' : c.ov ? c.ov.s + ' 分（人工）'
+      : c.lo.invalid ? '≤ ' + c.hi.score + ' 分' : c.lo.score !== c.hi.score ? c.lo.score + '–' + c.hi.score + ' 分' : c.hi.score + ' 分';
+    var text = c.status === 'invalid' ? '<b>前提不成立</b>：会话无效，不计分。'
+      : c.status === 'undecided' ? '<b>结论待定</b>（' + c.why + '）：' + open.join('、') + ' 未判。'
+      : '<b>结论已确定：' + s[1] + '</b>' + (open.length ? '。仍有 ' + open.join('、') + ' 未判，但不改变及格判断，可选复核。' : '。');
+    $('concl').toggleAttribute('data-draft', nd > 0);
+    $('concl').innerHTML =
+      '<span class="rv-concl-what"><span class="rv-meta" style="margin-right:4px">' + (nd ? '预览' : '结论') + '</span><span class="rv-verdict rv-verdict--lg" data-tone="' + s[0] + '">' + s[1] + '</span></span>' +
+      '<span style="display:grid;min-width:220px"><span class="rv-pts" style="font-size:20px;line-height:24px">' + scoreTxt + '</span>' + (c.status === 'invalid' ? '' : bar(c)) + '</span>' +
+      '<span class="rv-concl-text">' + text + (nd ? ' <b>含 ' + nd + ' 项未提交草稿。</b>' : '') + '</span>' +
+      '<span class="rv-concl-actions"><button class="rv-btn">上一段 <span class="rv-kbd">[</span></button>' +
+      '<button class="rv-btn rv-btn--primary" id="submit"' + (nd ? '' : ' disabled') + '>' + (nd ? '提交 ' + nd + ' 项并下一段' : '无改动') + ' <span class="rv-kbd">Ctrl ↵</span></button>' +
+      '<button class="rv-btn">跳过 <span class="rv-kbd">]</span></button></span>';
+    $('submit').onclick = submit;
+  }
+
+  function mark(html, kws) { kws.forEach(function (k) { if (k) html = html.split(k).join('<mark class="rv-hit">' + k + '</mark>'); }); return html; }
+  function renderConv() {
+    var it = ITEMS[active];
+    $('conv').innerHTML = TURNS.map(function (t, i) {
+      var n = i + 1, linked = it.turn === n, cnt = ITEMS.filter(function (x) { return x.turn === n; }).length;
+      return '<article class="rv-turn' + (linked ? ' is-linked' : '') + '"><div class="rv-turn-head"><b>第 ' + n + ' 轮</b>' + t.obs + '<span class="rv-turn-items">本轮条目 ' + cnt + '</span></div>' +
+        '<div class="rv-msg" data-role="user"><span class="rv-msg-who">用户</span><div class="rv-md"><p>' + t.user + '</p></div></div>' +
+        '<div class="rv-msg" data-role="assistant"><span class="rv-msg-who">助手</span><div class="rv-md">' + (linked ? mark(t.ans, it.kw) : t.ans) + '</div></div></article>';
+    }).join('');
+  }
+
+  function rowHTML(it, idx) {
+    var m = mach(it), cur = DRAFT[it.id] || SAVED[it.id] || null;
+    var state = DRAFT[it.id] ? ['draft', '待提交'] : SAVED[it.id] ? ['human', '人工'] : !m.v ? ['need', '待判'] : null;
+    var opts = SCALE[it.kind].map(function (v, k) {
+      var pts = scored(it) && MAP[v] != null ? '<span class="rv-pts">' + MAP[v] + '</span>' : '';
+      return '<label class="rv-opt" data-tone="' + (TONE[v] || 'neutral') + '"><input type="radio" name="p' + idx + '" value="' + v + '"' + (cur && cur.v === v && !cur.custom ? ' checked' : '') + '><span><span class="rv-kbd">' + (k + 1) + '</span>' + v + pts + '</span></label>';
+    }).join('');
+    var num = scored(it) ? '<span class="rv-score"><input class="rv-score-num" data-num="' + idx + '" inputmode="numeric" placeholder="分数" aria-label="' + it.id + ' 分数（0–100）" value="' + (cur && cur.s != null ? cur.s : '') + '"' + (cur && cur.custom ? ' data-custom' : '') + '><span class="rv-score-unit">分</span></span>' : '';
+    var agree = m.v && !cur ? '<button class="rv-btn rv-agree" data-agree="' + idx + '">同意机器 <span class="rv-kbd">Y</span></button>' : '';
+    var changed = cur && m.v && (cur.v !== m.v || (scored(it) && cur.s !== m.s));
+    var machine = '<div class="rv-mc"><div class="rv-mc-line"><span class="rv-mc-k">机器</span>' +
+      (m.v ? vb(m.v, scored(it) ? m.s : null) + src(m.src) : '<span class="rv-verdict" data-tone="undecided">未决</span>') +
+      '<span class="rv-mc-op">' + m.op + '</span>' + (changed ? '<span class="rv-meta">人工改为 ' + cur.v + (scored(it) ? ' ' + cur.s : '') + '</span>' : '') + '</div>' +
+      '<div class="rv-mc-why">' + m.why + '</div>' + (m.trace ? '<div class="rv-mc-trace">' + m.trace + '</div>' : '') + '</div>';
+    var human = SAVED[it.id] && !DRAFT[it.id] ? '<div class="rv-meta" style="font-size:12px">' + src('human', '焦老师') + '<span>10-23 15:02</span><span>理由：' + (SAVED[it.id].why || '—') + '</span></div>' : '';
+    var weight = scored(it) ? '<span class="rv-weight"' + (it.w ? '' : ' data-zero') + '>权重 ' + it.w + '</span>' : '';
+    return '<div class="rv-row' + (idx === active ? ' is-active' : '') + '" data-i="' + idx + '" tabindex="-1">' +
+      '<div class="rv-row-top"><span class="rv-kind"' + (it.kind === 'forbidden' ? ' data-kind="forbidden"' : '') + '>' + KIND[it.kind] + ' ' + it.id.replace('path', '') + '</span>' +
+      '<span class="rv-meta"><span>第 ' + it.turn + ' 轮</span></span>' + weight + (state ? '<span class="rv-state" data-s="' + state[0] + '">' + state[1] + '</span>' : '') + '</div>' +
+      '<div class="rv-row-text">' + it.text + '</div>' + (it.inj ? '<div class="rv-meta" style="font-size:12px">' + it.inj + '</div>' : '') + machine + human +
+      '<div class="rv-hc"><fieldset class="rv-picker rv-picker--sm"><legend>' + it.id + ' 的结论</legend>' + opts + '</fieldset>' + num + agree + '</div>' +
+      (idx === active ? '<input class="rv-input" id="why" placeholder="理由（可选，E 键聚焦）" value="' + (WHY[it.id] || '') + '">' : '') + '</div>';
+  }
+  function totalHTML() {
+    var c = conclusion(), hi = c.hi, lo = c.lo, ov = DRAFT['@total'] || SAVED['@total'];
+    if (hi.invalid) return '<div class="rv-total"><div class="rv-total-main"><span class="rv-total-n">—</span><span class="rv-total-src">前提不成立，不计分</span></div></div>';
+    var range = lo.invalid ? '≤ ' + hi.auto : lo.auto === hi.auto ? String(hi.auto) : lo.auto + '–' + hi.auto;
+    var vetoes = hi.veto.length ? '<div class="rv-total-veto">否决：' + hi.veto.join('、') + ' → 总分 0</div>' : '';
+    var main = ov ? '<span class="rv-total-n">' + ov.s + '<small> / 100</small></span><span class="rv-total-src">人工给定 · 自动 ' + range + '</span>'
+                  : '<span class="rv-total-n">' + (hi.veto.length ? 0 : range) + '<small> / 100</small></span><span class="rv-total-src">自动计算</span>';
+    var form = overrideOpen || ov
+      ? '<div class="rv-total-override"><span class="rv-field-label">人工总分</span><input class="rv-score-num" id="ovs" value="' + (ov ? ov.s : '') + '" placeholder="0–100"><input class="rv-input" id="ovw" placeholder="理由（必填）" value="' + (ov && ov.why || '') + '"><button class="rv-btn" id="ovok">' + (ov ? '更新' : '确定') + '</button>' + (ov ? '<button class="rv-btn rv-btn--ghost" id="ovclear">改回自动</button>' : '') + '</div>'
+      : '<div class="rv-total-override"><button class="rv-btn" id="ovopen">手改总分 <span class="rv-kbd">T</span></button><span class="rv-meta">需写理由；改后以人工总分为准</span></div>';
+    return '<div class="rv-total"><div class="rv-total-main">' + main + '</div>' + vetoes +
+      '<div class="rv-total-formula">Σ(权重×分) / Σ权重 = ' + hi.formula + (range !== String(hi.auto) ? '　? 为未判，取 0–100' + (lo.invalid ? '；前提未判，可能无效' : '') : '') + '</div>' + form + '</div>';
+  }
+  function renderSheet() {
+    var need = ITEMS.filter(function (i) { return !eff(i).v; }).length;
+    var html = '<div class="rv-sheet-head"><h2>评分表</h2><span class="rv-meta"><span>' + ITEMS.length + ' 条</span><span>待判 ' + need + '</span><span>及格 ' + PASS + '</span></span></div>';
+    SECTIONS.forEach(function (s) {
+      var rows = ITEMS.map(function (it, i) { return [it, i]; }).filter(function (p) { return p[0].kind === s[0]; });
+      if (!rows.length) return;
+      html += '<div class="rv-sec">' + s[1] + ' <span>· ' + s[2] + '</span></div>';
+      rows.forEach(function (p) { html += rowHTML(p[0], p[1]); });
+    });
+    html += totalHTML();
+    html += '<div class="rv-sheet-foot"><span class="rv-kbd">J</span><span class="rv-kbd">K</span> 换条目 · <span class="rv-kbd">1</span>–<span class="rv-kbd">4</span> 快捷分 · <span class="rv-kbd">N</span> 输入分数 · <span class="rv-kbd">Y</span> 同意机器 · <span class="rv-kbd">E</span> 理由 · <span class="rv-kbd">T</span> 手改总分</div>';
+    $('sheet').innerHTML = html;
+    $('sheet').querySelectorAll('.rv-row').forEach(function (r) {
+      r.addEventListener('click', function (ev) {
+        var i = +r.dataset.i;
+        if (ev.target.matches('input[type=radio]')) { setVal(i, ev.target.value); return; }
+        if (ev.target.closest('[data-agree]')) { var m = mach(ITEMS[i]); setVal(i, m.v, m.s); return; }
+        if (ev.target.matches('input')) return;
+        if (i !== active) { active = i; render(); }
+      });
+    });
+    $('sheet').querySelectorAll('[data-num]').forEach(function (inp) {
+      inp.addEventListener('change', function () {
+        var n = Math.round(+inp.value);
+        if (inp.value === '' || isNaN(n)) return;
+        n = Math.max(0, Math.min(100, n));
+        setVal(+inp.dataset.num, nearest(n), n, true);
+      });
+    });
+    var why = $('why');
+    if (why) why.addEventListener('input', function () { var id = ITEMS[active].id; WHY[id] = why.value; if (DRAFT[id]) DRAFT[id].why = why.value; });
+    if ($('ovopen')) $('ovopen').onclick = function () { overrideOpen = true; render(); $('ovs').focus(); };
+    if ($('ovok')) $('ovok').onclick = function () {
+      var n = Math.round(+$('ovs').value), w = $('ovw').value.trim();
+      if ($('ovs').value === '' || isNaN(n) || n < 0 || n > 100) { $('ovs').focus(); return; }
+      if (!w) { $('ovw').placeholder = '理由必填'; $('ovw').focus(); return; }
+      DRAFT['@total'] = { s: n, why: w }; render();
+    };
+    if ($('ovclear')) $('ovclear').onclick = function () { delete DRAFT['@total']; delete SAVED['@total']; overrideOpen = false; render(); };
+  }
+  function setVal(i, v, s, custom) {
+    var it = ITEMS[i];
+    if (s == null) s = scored(it) ? MAP[v] : null;
+    DRAFT[it.id] = { v: v, s: s, custom: !!custom, why: WHY[it.id] || '' };
+    active = i; render();
+  }
+  function submit() {
+    Object.keys(DRAFT).forEach(function (k) { SAVED[k] = DRAFT[k]; });
+    DRAFT = {}; WHY = {}; render();
+  }
+  function render() { renderConcl(); renderConv(); renderSheet(); }
+
+  $('cfg').addEventListener('change', function () { cfg = this.value; render(); });
+  document.addEventListener('keydown', function (ev) {
+    if (location.hash !== '#review') return;
+    var t = ev.target;
+    if ((t.tagName === 'INPUT' && t.type !== 'radio') || t.tagName === 'SELECT') {
+      if (ev.key === 'Escape') t.blur();
+      if (ev.key === 'Enter' && t.dataset.num) t.dispatchEvent(new Event('change'));
+      return;
+    }
+    var it = ITEMS[active], scale = SCALE[it.kind];
+    if (ev.key === 'j' || ev.key === 'ArrowDown') { active = Math.min(active + 1, ITEMS.length - 1); render(); ev.preventDefault(); }
+    else if (ev.key === 'k' || ev.key === 'ArrowUp') { active = Math.max(active - 1, 0); render(); ev.preventDefault(); }
+    else if (/^[1-9]$/.test(ev.key) && +ev.key <= scale.length) { setVal(active, scale[+ev.key - 1]); }
+    else if (ev.key === 'y' && mach(it).v) { setVal(active, mach(it).v, mach(it).s); }
+    else if (ev.key === 'n') { var n = document.querySelector('[data-num="' + active + '"]'); if (n) { n.focus(); n.select(); ev.preventDefault(); } }
+    else if (ev.key === 'e') { var w = $('why'); if (w) { w.focus(); ev.preventDefault(); } }
+    else if (ev.key === 't') { overrideOpen = true; render(); $('ovs').focus(); ev.preventDefault(); }
+    else if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && nDraft()) { submit(); }
+  });
+  render();
+})();
+</script>
+<script>
+(function () {
+  function show() {
+    var p = (location.hash || '#cases').slice(1);
+    if (!document.querySelector('[data-page="' + p + '"]')) p = 'cases';
+    document.querySelectorAll('[data-page]').forEach(function (m) { m.hidden = m.dataset.page !== p; });
+    document.querySelectorAll('[data-nav]').forEach(function (a) {
+      if (a.dataset.nav.split(' ').indexOf(p) > -1) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    window.scrollTo(0, 0);
+  }
+  window.addEventListener('hashchange', show); show();
+  document.querySelectorAll('.rv-cmd button').forEach(function (b) {
+    b.addEventListener('click', function () { try { navigator.clipboard.writeText(b.parentNode.firstChild.textContent.trim()); b.textContent = '已复制'; } catch (e) {} });
+  });
+})();
+</script>
+</body>
+</html>
