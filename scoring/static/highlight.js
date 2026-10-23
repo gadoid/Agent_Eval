@@ -1,6 +1,7 @@
-/* 关键词标注：在容器内的文本节点上包 <mark class="rv-hit">，不破坏 HTML 结构。 */
+/* 关键词标注：在容器内的文本节点上包 <mark>，不破坏 HTML 结构。
+ * cls 指定 mark 类名（rv-hit 普通 / rv-forbid 禁止事实）。 */
 (function () {
-  function markText(node, kw) {
+  function markText(node, kw, cls) {
     var rest = [node];
     while (rest.length) {
       var n = rest.pop();
@@ -12,7 +13,7 @@
         if (!hit) continue;
         var at = text.indexOf(hit);
         var mark = document.createElement('mark');
-        mark.className = 'rv-hit';
+        mark.className = cls;
         mark.textContent = hit;
         var after = n.splitText(at);
         after.textContent = after.textContent.slice(hit.length);
@@ -23,9 +24,9 @@
       }
     }
   }
-  window.rvMark = function (root, keywords) {
+  window.rvMark = function (root, keywords, cls) {
     if (!root || !keywords || !keywords.length) return;
-    markText(root, keywords.filter(Boolean));
+    markText(root, keywords.filter(Boolean), cls || 'rv-hit');
   };
   /* 复制按钮（rejudge 命令等，局域网 http 剪贴板不可用时退化为选中文字） */
   document.addEventListener('DOMContentLoaded', function () {

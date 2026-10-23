@@ -38,7 +38,7 @@
       <div class="rv-stat"><div class="rv-stat-label">结论待定对话</div><div class="rv-stat-value">{{ nav_count }}</div><div class="rv-stat-note"><a href="/review?tab=undecided">去复核 →</a></div></div>
       <div class="rv-stat"><div class="rv-stat-label">待重判</div><div class="rv-stat-value">{{ pending_rejudge }}</div>
         <div class="rv-stat-note">{% if pending_rejudge %}<span class="rv-cmd">python -m scoring rejudge<button type="button">复制</button></span>{% else %}无{% endif %}</div></div>
-      <div class="rv-stat"><div class="rv-stat-label">用例体检</div><div class="rv-stat-value">{{ table | selectattr('flags') | list | length }}</div><div class="rv-stat-note">变体泄露 / 全部采样无效</div></div>
+      <div class="rv-stat"><div class="rv-stat-label">用例体检</div><div class="rv-stat-value">{{ table | selectattr('flags') | list | length }}</div><div class="rv-stat-note">变体泄露 / 采样无效 / 注入 found&gt;1 / forced 前提偏低</div></div>
     </div>
   </div>
   {% endif %}

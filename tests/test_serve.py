@@ -83,6 +83,11 @@ def test_review_page(served_plain):
     assert "答：规则是收齐尾款后才能电放。" in r.text        # 对话全文，不再 [:400] 截断
     assert 'data-review-body' in r.text and answer_id in r.text
     assert "手改总分" in r.text
+    # tojson 不转义双引号（Jinja2 明确不支持双引号属性）：data-* 必须单引号，否则
+    # 属性被截断、评分表脚本启动即崩（data-concl 变成裸 "{"）
+    assert "data-concl='{\"" in r.text and "data-scale='[\"" in r.text
+    assert "data-map='{}'" in r.text                        # 非计分行 map 为空对象
+    assert 'data-concl="{' not in r.text
 
 
 def test_review_page_markdown_and_static(served_plain):
@@ -187,6 +192,88 @@ def test_mismatch_and_failed_tabs(served):
     assert a["qkey"].split("|")[0] in mm and quote(a["answer_id"]) in mm   # 一行一段对话，链接按 answer_id 编码
 
 
+def test_review_urls_escape_hash(tmp_path):
+    """P0：uid 带 #（如 ec-1#0）→ 复核页 prev/next 与提交返回的 next 都必须转义，
+    否则 # 后被当锚点截断，跳到「答案不存在」。"""
+    db = str(tmp_path / "hash.db")
+    records = [mk_record(uid="ec-1#0"), mk_record(uid="ec-2#0")]
+    run_dir = make_run(tmp_path, "hx", records, run_id="hx")
+    assert cli.main(["specs", "import", dist_jsonl(tmp_path), "--db", db]) == 0
+    assert cli.main(["score", str(run_dir), "--db", db]) == 0
+    client = TestClient(create_app(db))
+    s = Store(db)
+    aids = sorted(a["answer_id"] for a in s.answers())
+    s.close()
+    assert all("#" in a for a in aids)
+    page = client.get(f"/review/{quote(aids[0])}").text
+    assert "%23" in page and "data-next=" in page              # 跳过链接已编码
+    ok = client.post("/api/reviews", json={"answer_id": aids[0], "reviewer": "t",
+                                           "entries": [{"item_id": "F1", "value": "对"},
+                                                       {"item_id": "X1", "value": "未采信"}]})
+    assert ok.status_code == 200
+    nxt = ok.json()["next"]
+    assert "%23" in nxt and nxt != "/review?tab=undecided"     # 落到下一段，且 # 已转义
+    assert client.get(nxt).status_code == 200                  # 该 URL 可直接访问
+
+
+def test_submit_total_only(served_plain):
+    """P1：只手改人工总分（无条目草稿）也能提交；后端本就支持 entries=[] + total。"""
+    client, db = served_plain
+    s = Store(db)
+    answer_id = s.answers()[0]["answer_id"]
+    s.close()
+    ok = client.post("/api/reviews", json={"answer_id": answer_id, "reviewer": "t",
+                                           "entries": [], "total": {"score": 70, "reason": "总体到位"}})
+    assert ok.status_code == 200
+    j = ok.json()
+    assert j["score"] == 70 and j["score_source"] == "human" and j["status"] == "pass"
+
+
+def test_review_rejects_score_on_veto_kind(served_plain):
+    """P2：前提/路径/禁止条目是门槛与否决项，不记条目分，人工打分带分数应拒绝。"""
+    client, db = served_plain
+    s = Store(db)
+    answer_id = s.answers()[0]["answer_id"]
+    s.close()
+    bad = client.post("/api/reviews", json={"answer_id": answer_id, "reviewer": "t",
+                                            "entries": [{"item_id": "X1", "value": "未采信", "score": 50}]})
+    assert bad.status_code == 400 and "不记条目分" in bad.json()["error"]
+
+
+def test_review_page_keeps_saved_human_values(served_plain):
+    """P1：复核页加载后已存人工值仍在服务端渲染里（radio 预选 / 分数 / 理由回填），
+    前端 refreshRows 不再清掉（review.js 以 initial 兜底）。"""
+    client, db = served_plain
+    s = Store(db)
+    answer_id = s.answers()[0]["answer_id"]
+    s.close()
+    ok = client.post("/api/reviews", json={"answer_id": answer_id, "reviewer": "焦老师",
+                                           "entries": [{"item_id": "F1", "value": "部分", "score": 30,
+                                                        "reason": "只答了一半"}]})
+    assert ok.status_code == 200
+    page = client.get(f"/review/{quote(answer_id)}").text
+    assert 'value="30.0"' in page and "只答了一半" in page    # 分数（浮点渲染）与理由回填
+    assert "焦老师" in page                                      # 人工记录展示
+
+
+def test_review_queue_first_input_skips_prefill(served_plain):
+    """P1：runner 写 source='prefill'（非 'preset'）——队列首句取真实首问，
+    复核页对话里预置轮仍展示（data-role=preset 样式）。"""
+    client, db = served_plain
+    s = Store(db)
+    answer_id = s.answers()[0]["answer_id"]
+    rec = json.loads(s.answer(answer_id)["record_json"])
+    rec["turns"] = [{"index": 0, "source": "prefill", "input": "预置的历史提问", "output": "旧回答",
+                     "status": "ok", "observations": {}}] + rec["turns"]
+    s._exec("UPDATE answers SET record_json=? WHERE answer_id=?",
+            (json.dumps(rec, ensure_ascii=False), answer_id))
+    s.close()
+    q = client.get("/review?tab=undecided").text
+    assert "预置的历史提问" not in q                              # 队列首句跳过预置轮
+    page = client.get(f"/review/{quote(answer_id)}").text
+    assert 'data-role="preset"' in page and "预置的历史提问" in page   # 对话区仍显示（标预置）
+
+
 def test_legacy_redirects(served):
     client, db, _, _ = served
     s = Store(db)
@@ -215,20 +302,26 @@ def test_overview_matches_export_report(served, tmp_path):
     assert f"{cell['score_mean']}" in page                 # 均分同源
 
 
-def test_compare_scores_page(served):
-    """分数对比：护栏拦截（mode 不一致）、放行后出组件贡献。"""
+def test_compare_scores_page(served, tmp_path):
+    """分数对比：放行后出组件贡献；mode 混合不再拦截（按 headline_mode 逐维度取数，
+    无主口径会话的一侧按单侧排除）；其他处理条件不一致仍拦截。"""
     client, db, tmp_path, ops = served
-    run2 = make_run(tmp_path, "demo2", [mk_record()], run_id="demo2",
+    run2 = make_run(tmp_path, "demo2", [mk_record(mode="forced")], run_id="demo2",
                     snapshot={"skills_mode": "default-roots", "evalset": {"sha256": "a"},
                               "models_observed": ["glm-4"]})
     assert cli.main(["score", str(run2), "--operators", ops, "--db", db]) == 0
     run3 = make_run(tmp_path, "demo3", [mk_record(mode="forced")], run_id="demo3",
                     snapshot={"skills_mode": "default-roots", "evalset": {"sha256": "a"}})
     assert cli.main(["score", str(run3), "--operators", ops, "--db", db]) == 0
-    ok = client.get("/compare?axis=run&base=demo&target=demo2&any=mode,model")
+    ok = client.get("/compare?axis=run&base=demo3&target=demo2&any=model")
     assert ok.status_code == 200 and "组件贡献" in ok.text and "综合分" in ok.text
-    blocked = client.get("/compare?axis=run&base=demo&target=demo3&any=model")
-    assert "已拒绝比较" in blocked.text and "mode" in blocked.text
+    # demo 全 natural、demo3 全 forced：mode 放行后按主口径逐题取数——
+    # ec 主口径 forced 只在 demo3 侧 → 该题按「两侧干预模式不一致」排除，不再拦截整页
+    mixed = client.get("/compare?axis=run&base=demo&target=demo3&any=model")
+    assert mixed.status_code == 200 and "已拒绝比较" not in mixed.text
+    assert "两侧干预模式不一致" in mixed.text
+    blocked = client.get("/compare?axis=run&base=demo3&target=demo2")
+    assert "已拒绝比较" in blocked.text and "model" in blocked.text
 
 
 def test_judging_page(served):
@@ -330,3 +423,21 @@ def test_synthetic_scale_performance(tmp_path):
     # 复核页渲染 10 条判定行与对话
     rp = client.get(f"/review/{first}").text
     assert rp.count("rv-row") >= 10 and "评分表" in rp
+    # 提交接口 < 1s：追加 + 同事务重算 + 下一段定位（免全量 record 解析）
+    t0 = time.time()
+    r = client.post("/api/reviews", json={"answer_id": "big/case0#0-natural-t1", "reviewer": "t",
+                                          "entries": [{"item_id": "F1", "value": "对"}]})
+    elapsed = time.time() - t0
+    assert r.status_code == 200 and elapsed < 1.0, f"提交响应 {elapsed:.2f}s 超过 1s"
+    assert "%23" in r.json()["next"]
+
+    # 带 base/target 的对比页（含组件贡献与自助法区间）< 1s：用较小合成库
+    # （共有题 × B=1000 自助法的开销与题目数成正比，1 万答案库不在页面 1s 线内考核）
+    small_db = tmp_path / "mid.db"
+    _build_big_db(small_db, n_q=120, n_per=10)
+    mid = TestClient(create_app(str(small_db)))
+    t0 = time.time()
+    r = mid.get("/compare?axis=trial&base=1&target=2")
+    elapsed = time.time() - t0
+    assert r.status_code == 200 and "组件贡献" in r.text
+    assert elapsed < 1.0, f"对比页（base/target）响应 {elapsed:.2f}s 超过 1s"

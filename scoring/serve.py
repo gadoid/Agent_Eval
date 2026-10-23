@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -182,12 +183,19 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             by_case.setdefault(q["case_id"] or q["uid"], []).append(q)
         conv_counts: dict[str, dict] = {}
         leak_cases: set[str] = set()
+        inj_cases: set[str] = set()
+        forced_sts: dict[str, list[str]] = {}
         for r in cfg_rows:
-            c = conv_counts.setdefault(r["case_id"], {"n": 0, "undecided": 0})
+            cid = r["case_id"]
+            c = conv_counts.setdefault(cid, {"n": 0, "undecided": 0})
             c["n"] += 1
             c["undecided"] += r["c_status"] == "undecided"
-            if r["case_id"] not in leak_cases and json.loads(r.get("variant_leak_json") or "[]"):
-                leak_cases.add(r["case_id"])
+            if cid not in leak_cases and json.loads(r.get("variant_leak_json") or "[]"):
+                leak_cases.add(cid)
+            if r.get("injection_found_gt1"):
+                inj_cases.add(cid)
+            if r["mode"] == "forced" and r["c_status"]:
+                forced_sts.setdefault(cid, []).append(r["c_status"])
         table = []
         for case, members in by_case.items():
             cs = summary["cases"].get(case, {})
@@ -196,16 +204,26 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                 flags.append("变体泄露嫌疑")
             if cs.get("all_unscored"):
                 flags.append("全部采样无效")
-            st = stats.get(members[0]["qkey"], {})
+            if case in inj_cases:
+                flags.append("注入 found>1")
+            sts = forced_sts.get(case) or []
+            if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5:
+                flags.append("forced 前提成立率偏低")
+            member_stats = [stats.get(q["qkey"], {}) for q in members]
+            diffs = [s["difficulty"] for s in member_stats if s.get("difficulty") is not None]
+            discs = [s["discrimination"] for s in member_stats if s.get("discrimination") is not None]
+            st = member_stats[0] if member_stats else {}
             table.append({
                 "case_id": case, "dim": members[0]["dim"], "topic": members[0]["topic"],
                 "variants": len(members), "convs": conv_counts.get(case, {"n": 0})["n"],
                 "undecided": conv_counts.get(case, {}).get("undecided", 0),
                 "score": cs.get("score"), "score_n": cs.get("n"),
                 "score_provisional": cs.get("provisional"),
-                "difficulty": st.get("difficulty"), "discrimination": st.get("discrimination"),
-                "models_n": st.get("models_n"), "stability": st.get("stability"),
-                "group_consistency": st.get("group_consistency"), "flags": flags})
+                "difficulty": round(sum(diffs) / len(diffs), 4) if diffs else None,
+                "discrimination": round(sum(discs) / len(discs), 4) if discs else None,
+                "models_n": max((s.get("models_n") or 0) for s in member_stats) if member_stats else 0,
+                "stability": st.get("stability"), "group_consistency": st.get("group_consistency"),
+                "flags": flags})
         table.sort(key=lambda t: ({"pending": -(t["undecided"] or 0), "score": (t["score"] if t["score"] is not None else 999),
                                    "difficulty": -(t["difficulty"] or -1)}.get(sort, 0), t["case_id"]))
         if flag_only:
@@ -282,13 +300,15 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             return render(request, "error.html", message=str(e))
         if tab not in TAB_LABELS:
             tab = "undecided"
-        convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6)
+        convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6,
+                                              first_input=False)
         ids = [c["answer_id"] for c in convs]
         prev_url = next_url = ""
         if answer_id in ids:
             i = ids.index(answer_id)
-            prev_url = f"/review/{ids[i - 1]}?tab={tab}" if i > 0 else ""
-            next_url = f"/review/{ids[i + 1]}?tab={tab}" if i + 1 < len(ids) else ""
+            # uid 带 #（如 ec-0201#0），拼 URL 必须转义，否则被浏览器当锚点截断
+            prev_url = f"/review/{quote(ids[i - 1], safe='/')}?tab={tab}" if i > 0 else ""
+            next_url = f"/review/{quote(ids[i + 1], safe='/')}?tab={tab}" if i + 1 < len(ids) else ""
             pos, total = i + 1, len(ids)
         else:
             pos, total = 0, 0
@@ -317,22 +337,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         if factors and not error:
             try:
                 facs = [f.strip() for f in factors.split(",") if f.strip()]
-                combos = {}
-                cells = {}
-                def level_pair(f):
-                    vals = sorted({views.attr_value(r, f) for r in rs})
-                    if len(vals) != 2:
-                        raise ValueError(f"组件 {f} 需要恰好两个取值（现有 {len(vals)} 个：{vals[:4]}）")
-                    return vals
-                pairs = {f: level_pair(f) for f in facs}
-                for i in range(2 ** len(facs)):
-                    on = [facs[j] for j in range(len(facs)) if i >> j & 1]
-                    sel = rs
-                    for f in facs:
-                        want = pairs[f][1] if f in on else pairs[f][0]
-                        sel = [r for r in sel if views.attr_value(r, f) == want]
-                    dims = views.dimension_scores(sel, policy)
-                    cells[frozenset(on)] = views.composite(dims, policy).get("score")
+                cells, shared = views.shapley_cells(rs, facs, policy)
                 shap = views.shapley(cells, facs)
             except ValueError as e:
                 error = str(e)
@@ -394,12 +399,20 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             return JSONResponse({"error": str(e)}, status_code=400)
         _nav_cache.clear()
         tab = "undecided"
-        convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6)
-        ids = [x["answer_id"] for x in convs if x["answer_id"] != body.answer_id]
+        convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6,
+                                              first_input=False)
+        ids = [x["answer_id"] for x in convs]
+        # 跳转跟随当前位置：从本段在队列中的位置向后取下一段（绕回、跳过自己），
+        # 不固定回到队首——从其他标签（如模型抽检）进来提交后不被带离
+        if body.answer_id in ids:
+            i = ids.index(body.answer_id)
+            rest = ids[i + 1:] + ids[:i]
+        else:
+            rest = ids
         return {**{k: c.get(k) for k in ("status", "reason", "score", "score_min", "score_max",
                                          "auto_score", "score_source")},
                 "detail": c.get("detail"),
-                "next": f"/review/{ids[0]}?tab={tab}" if ids else "/review?tab=undecided"}
+                "next": f"/review/{quote(rest[0], safe='/')}?tab={tab}" if rest else "/review?tab=undecided"}
 
     @app.post("/api/review")
     async def review_compat(body: dict):

@@ -28,11 +28,12 @@
   <div class="rv-notice" data-tone="error"><b>已拒绝比较</b><span>{{ rep.blocked }}</span></div>
   {% elif rep %}
   <div class="rv-delta" style="margin-bottom:16px">
-    {% set ups = rep.questions | selectattr('delta') | selectattr('delta', 'ge', 10) | list %}
-    {% set downs = rep.questions | selectattr('delta') | selectattr('delta', 'le', -10) | list %}
-    <div data-d="up"><div class="rv-delta-l">变好（题目分 +10 以上）</div><div class="rv-delta-n">{{ ups|length }}</div>
+    {% set dth = policy.score.compare_delta|f1 %}
+    {% set ups = rep.questions | selectattr('delta', 'gt', policy.score.compare_delta) | list %}
+    {% set downs = rep.questions | selectattr('delta', 'lt', -policy.score.compare_delta) | list %}
+    <div data-d="up"><div class="rv-delta-l">变好（题目分 +{{ dth }} 以上）</div><div class="rv-delta-n">{{ ups|length }}</div>
       <div class="rv-meta"><span>题</span></div></div>
-    <div data-d="down"><div class="rv-delta-l">变差（−10 以下）</div><div class="rv-delta-n">{{ downs|length }}</div>
+    <div data-d="down"><div class="rv-delta-l">变差（−{{ dth }} 以下）</div><div class="rv-delta-n">{{ downs|length }}</div>
       <div class="rv-meta"><span>题</span>{% if rep.anchor_tripwires %}<span>含锚点绊线 {{ rep.anchor_tripwires|length }}</span>{% endif %}</div></div>
     <div><div class="rv-delta-l">不变</div><div class="rv-delta-n">{{ rep.n_shared - rep.questions|length }}</div>
       <div class="rv-meta"><span>题</span><span>共有 {{ rep.n_shared }} 题 / {{ rep.n_shared_cases }} 用例</span></div></div>

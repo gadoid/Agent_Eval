@@ -145,3 +145,74 @@ def test_shapley_doc_sample():
     assert res["total"] == 12.0
     missing = views.shapley({frozenset(): 66.0}, ["model", "skills_base"])
     assert missing["missing"] and any("model" in m for m in missing["missing"])
+
+
+# ---------------------------------------------------------------- 评审整改回归（2026-10）
+
+def test_question_scores_provisional_on_unconverged():
+    """P1：结论已定但区间未收敛（pass / score=None）与 error 的会话被排除出均分，
+    题目分与维度分要标临时；invalid 是合规排除，不算。"""
+    policy = policy_from_dict({})
+    r90 = _srow("q1|a", "c1", "知识召回", 90, mode="natural")
+    rows = [r90, {**r90, "trial": 2, "c_score": None, "c_status": "pass"}]
+    qs = views.question_scores(rows, policy)
+    assert qs["q1|a"]["score"] == 90 and qs["q1|a"]["n"] == 1
+    assert qs["q1|a"]["provisional"] is True
+    rows_err = [r90, {**r90, "trial": 2, "c_score": None, "c_status": "error"}]
+    assert views.question_scores(rows_err, policy)["q1|a"]["provisional"] is True
+    rows_inv = [r90, _srow("q1|a", "c1", "知识召回", -1, mode="natural", trial=3)]
+    assert views.question_scores(rows_inv, policy)["q1|a"]["provisional"] is False
+    dims = views.dimension_scores(rows, policy)
+    assert dims["知识召回"]["provisional"] is True
+
+
+def test_dim_delta_respects_resample_multiplicity():
+    """P1：配对自助法重采样含重复用例时要按重数计——[c1, c2, c2] 的对照均值是
+    (80+50+50)/3 = 60（不是集合意义上的 65）。per_case 值为 [Σ分, 条数]。"""
+    per_case = {"v1": {"c1": {"知识召回": [20.0, 1]}, "c2": {"知识召回": [20.0, 1]}},
+                "v2": {"c1": {"知识召回": [80.0, 1]}, "c2": {"知识召回": [50.0, 1]}}}
+    assert views._dim_delta(["c1", "c2", "c2"], "知识召回", per_case, "v1", "v2") == 40.0
+    assert views._dim_delta(["c1", "c2"], "知识召回", per_case, "v1", "v2") == 45.0
+
+
+def test_compare_scores_selects_headline_mode_per_question():
+    """P1：mode 放开时同一 qkey 的 natural 与 forced 不混算——两侧都有主口径
+    （ec → forced）只取主口径；一侧没有则该题按两侧 mode 不一致排除。"""
+    policy = policy_from_dict({})
+    rows = [
+        _srow("q1|a", "c1", "错误知识纠正", 90, mode="forced", skills_base="v1"),
+        _srow("q1|a", "c1", "错误知识纠正", 50, mode="forced", skills_base="v2"),
+        _srow("q1|a", "c1", "错误知识纠正", 70, mode="natural", skills_base="v1"),  # 非主口径混入
+    ]
+    rep = views.compare_scores(rows, axis="skills_base", base="v1", target="v2", policy=policy)
+    assert rep["n_shared"] == 1
+    assert rep["metrics"]["v1"]["dims"]["错误知识纠正"]["score"] == 90     # 不与 natural 70 平均
+    assert rep["metrics"]["v2"]["dims"]["错误知识纠正"]["score"] == 50
+    mismatched = [
+        _srow("q2|a", "c2", "错误知识纠正", 80, mode="natural", skills_base="v1"),
+        _srow("q2|a", "c2", "错误知识纠正", 90, mode="forced", skills_base="v2"),
+    ]
+    rep2 = views.compare_scores(mismatched, axis="skills_base", base="v1", target="v2", policy=policy)
+    assert rep2["n_shared"] == 0
+    assert any("两侧干预模式不一致" in e["reason"] for e in rep2["excluded_qkeys"])
+
+
+def test_shapley_cells_aligned_on_shared_questions():
+    """P1：各格只在共有题目上算分（单侧题不出现在任何格），mode 不作组件时逐题
+    按主口径选 mode——各格综合分出自同一题集，Shapley 才可比。"""
+    policy = policy_from_dict({})
+    rows = (
+        [_srow("q1|a", "c1", "知识召回", 80, mode="natural", skills_base="v1"),
+         _srow("q1|a", "c1", "知识召回", 40, mode="natural", skills_base="v2")]
+        + [_srow("q2|a", "c2", "多轮上下文召回", 60, mode="natural", skills_base="v1")]   # 单侧题
+        # ec 主口径 forced：v1 侧混入 natural 70，不与 forced 90 平均
+        + [_srow("q3|a", "c3", "错误知识纠正", 90, mode="forced", skills_base="v1"),
+           _srow("q3|a", "c3", "错误知识纠正", 70, mode="natural", skills_base="v1"),
+           _srow("q3|a", "c3", "错误知识纠正", 50, mode="forced", skills_base="v2")]
+    )
+    cells, shared = views.shapley_cells(rows, ["skills_base"], policy)
+    assert shared == {"q1|a", "q3|a"}
+    assert cells[frozenset()] == round((80 + 90) / 2, 1)      # v1：q1 80 + q3 主口径 90
+    assert cells[frozenset({"skills_base"})] == round((40 + 50) / 2, 1)
+    res = views.shapley(cells, ["skills_base"])
+    assert res["total"] == round(45.0 - 85.0, 1)

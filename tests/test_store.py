@@ -600,3 +600,16 @@ def test_cache_round_trips_score(store):
     from scoring.operators import Verdict
     store.cache_put("k", Verdict("对", "judge", "llm-fact@1", reason="r", score=90))
     assert store.cache_get("k").score == 90
+
+
+def test_spot_sampling_stable_per_answer():
+    """P2：抽检抽样按 answer_id 独立哈希——某段退出候选不影响其余段的选中与否
+    （顺序消费共享随机流会整体漂移）。"""
+    from scoring.store import _spot_picked
+    ids = [f"r/a{i}-natural-t1" for i in range(200)]
+    picked = {a for a in ids if _spot_picked(a, 0.3)}
+    assert 0.1 < len(picked) / len(ids) < 0.6          # 比例大致合理（固定哈希，确定性）
+    for a in ids[:50]:
+        assert _spot_picked(a, 0.3) == (a in picked)   # 逐段独立、可复现
+    assert all(_spot_picked(a, 1.0) for a in ids[:10])
+    assert not any(_spot_picked(a, 0.0) for a in ids[:10])

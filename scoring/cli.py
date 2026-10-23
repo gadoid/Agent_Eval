@@ -297,28 +297,19 @@ def cmd_compare(args) -> int:
 
 
 def _print_shapley(store, cfg, policy, rows, args) -> None:
-    """--factors a,b：全因子各格综合分 + Shapley 分摊（缺格列出需补跑组合）。"""
+    """--factors a,b：全因子各格综合分 + Shapley 分摊（缺格列出需补跑组合）。
+    各格取共有题目、按 headline_mode 口径（views.shapley_cells），与对比页同源。"""
     facs = [f.strip() for f in args.factors.split(",") if f.strip()]
-    pairs = {}
-    for f in facs:
-        vals = sorted({views.attr_value(r, f) for r in rows})
-        if len(vals) != 2:
-            print(f"组件 {f} 需要恰好两个取值（现有 {len(vals)} 个：{vals[:4]}），跳过分摊")
-            return
-        pairs[f] = vals
-    cells = {}
-    for i in range(2 ** len(facs)):
-        on = [facs[j] for j in range(len(facs)) if i >> j & 1]
-        sel = rows
-        for f in facs:
-            want = pairs[f][1] if f in on else pairs[f][0]
-            sel = [r for r in sel if views.attr_value(r, f) == want]
-        dims = views.dimension_scores(sel, policy)
-        cells[frozenset(on)] = views.composite(dims, policy).get("score")
+    try:
+        cells, shared = views.shapley_cells(rows, facs, policy)
+    except ValueError as e:
+        print(f"{e}，跳过分摊")
+        return
     res = views.shapley(cells, facs)
     if res.get("missing"):
         print("缺组合，不能分摊；需补跑：" + "；".join(res["missing"]))
         return
+    print(f"  （{len(shared)} 个共有题目）")
     for label, val in res["cells"].items():
         print(f"  {label:<24} 综合分 {val}")
     for f, val in res["phi"].items():

@@ -242,6 +242,13 @@ def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _spot_picked(answer_id: str, ratio: float) -> bool:
+    """抽检抽样（按 answer_id 独立哈希）：某段被人工判过退出候选后，其余段的
+    选中与否不变（顺序消费共享随机流的抽样会整体漂移）。"""
+    import random
+    return random.Random(f"spot:{answer_id}").random() < ratio
+
+
 def answer_id_of(run_id: str, episode_id: str) -> str:
     return f"{run_id}/{episode_id}"
 
@@ -611,6 +618,8 @@ class Store:
                 raise StoreError(f"取值不合法：{item_id} = {value!r}")
             if score is not None and not _valid_score(score):
                 raise StoreError(f"分数应为 0–100：{item_id} = {score!r}")
+            if score is not None and vrow["kind"] in ("precond", "path", "forbidden"):
+                raise StoreError(f"前提/路径/禁止条目不记条目分（无权重），不能带分数：{item_id}")
             out.append((item_id, value, None if score is None else float(score), e.get("reason") or "",
                         vrow["item_sha"], vrow["answer_sha"]))
         if total is not None:
@@ -626,7 +635,8 @@ class Store:
     def submit_reviews(self, answer_id: str, entries: list[dict], total: dict | None, reviewer: str,
                        judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str) -> dict:
         """一段对话的批量人工打分（复核服务改造方案 §6.4）：全部校验 → 同一事务追加 →
-        重算一次该答案的结论。任一条不合法则整体不写入。返回结论行。"""
+        重算一次该答案的结论。任一条不合法则整体不写入；重算失败时追加的记录一并
+        回滚，不留人工记录 + 旧结论的中间态。返回结论行。"""
         rows = self._validate_entries(answer_id, entries, total, judge_fp, chain_sha)
         ts = now()
         with self.lock, self.conn:
@@ -635,7 +645,8 @@ class Store:
                     "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at, score)"
                     " VALUES(?,?,?,?,?,?,?,?,?)",
                     (answer_id, item_id, item_sha, ans_sha, value, reason, reviewer, ts, score))
-        self.recompute_conclusion(answer_id, judge_fp, chain_sha, policy, policy_sha)
+            v = self._conclude(answer_id, judge_fp, chain_sha, policy)
+            self._write_conclusion(self.conn, answer_id, judge_fp, chain_sha, policy_sha, v)
         return self.conclusion(answer_id, judge_fp, chain_sha, policy_sha) or {}
 
     def preview_conclusion(self, answer_id: str, entries: list[dict], total: dict | None,
@@ -873,16 +884,23 @@ class Store:
         override = self.total_override(reviews, judge_fp, conversation_sha(ctx))
         return session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses, override=override)
 
+    @staticmethod
+    def _write_conclusion(conn, answer_id: str, judge_fp: str, chain_sha: str,
+                          policy_sha: str, v: EpisodeVerdict) -> None:
+        """物化一条结论行（不开事务，供 submit_reviews 在同一事务内复用）。"""
+        conn.execute("INSERT OR REPLACE INTO conclusions(answer_id, judge_fp, chain_sha, policy_sha, status, reason,"
+                     " detail_json, score, score_min, score_max, auto_score, score_source)"
+                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (answer_id, judge_fp, chain_sha, policy_sha, v.status,
+                      v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False),
+                      v.score, v.score_min, v.score_max, v.auto_score, v.score_source))
+
     def recompute_conclusion(self, answer_id: str, judge_fp: str, chain_sha: str,
                              policy: Policy, policy_sha: str) -> str:
         """重算并物化一个 (答案, 期望, 链配置, 口径) 的会话结论与会话分（不调用任何算子）。"""
         v = self._conclude(answer_id, judge_fp, chain_sha, policy)
-        self._exec("INSERT OR REPLACE INTO conclusions(answer_id, judge_fp, chain_sha, policy_sha, status, reason,"
-                   " detail_json, score, score_min, score_max, auto_score, score_source)"
-                   " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                   (answer_id, judge_fp, chain_sha, policy_sha, v.status,
-                    v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False),
-                    v.score, v.score_min, v.score_max, v.auto_score, v.score_source))
+        with self.lock, self.conn:
+            self._write_conclusion(self.conn, answer_id, judge_fp, chain_sha, policy_sha, v)
         return v.status
 
     def rescore(self, policy: Policy, policy_sha: str, current_chain_sha: str | None = None) -> int:
@@ -982,10 +1000,12 @@ class Store:
 
     def review_conversations(self, chain_sha: str, policy: Policy, policy_sha: str,
                              tab: str = "undecided", run_id: str | None = None, dim: str | None = None,
-                             spot_ratio: float = 0.1, page: int = 0, size: int = 20) -> tuple[list[dict], dict]:
+                             spot_ratio: float = 0.1, page: int = 0, size: int = 20,
+                             first_input: bool = True) -> tuple[list[dict], dict]:
         """复核队列（以对话为单位，五个标签）：SQL 聚合 + 分页。
         undecided=结论待定（区间跨及格线/前提未判，含判定异常）；unjudged=结论已定仍有未判；
-        spot=模型判过且无人工（固定种子按比例抽样）；mismatch=人工≠机器；failed=会话失败。"""
+        spot=模型判过且无人工（按比例抽样）；mismatch=人工≠机器；failed=会话失败。
+        first_input=False 供复核页取上/下一段：免解析全部 record（大库性能）。"""
         rows = self.answer_view_rows(chain_sha, policy_sha)
         if run_id:
             rows = [r for r in rows if r["run_id"] == run_id]
@@ -1028,9 +1048,7 @@ class Store:
         tabs = {t: sum(1 for c in convs if c[f"_{t}"]) for t in self.REVIEW_TABS}
         selected = [c for c in convs if c[f"_{tab}"]]
         if tab == "spot" and spot_ratio < 1:
-            import random as _random
-            rng = _random.Random(20261023)
-            selected = [c for c in selected if rng.random() < spot_ratio]
+            selected = [c for c in selected if _spot_picked(c["answer_id"], spot_ratio)]
         if tab == "undecided":
             def near(c):
                 lo, hi = c["_range"]
@@ -1048,9 +1066,12 @@ class Store:
             c = dict(c)
             c.pop("_undecided", None), c.pop("_unjudged", None), c.pop("_spot", None)
             c.pop("_mismatch", None), c.pop("_failed", None)
-            record = json.loads((self.answer(c["answer_id"]) or {}).get("record_json") or "{}")
-            turns = [t for t in record.get("turns") or [] if t.get("source") != "preset"]
-            c["first_input"] = (turns[0].get("input") if turns else "") or ""
+            if first_input:
+                record = json.loads((self.answer(c["answer_id"]) or {}).get("record_json") or "{}")
+                # runner 写 source='prefill'（episode-runner.ts）；'preset' 为旧拼写，兼容
+                turns = [t for t in record.get("turns") or []
+                         if t.get("source") not in ("prefill", "preset")]
+                c["first_input"] = (turns[0].get("input") if turns else "") or ""
             out.append(c)
         return out, {"tabs": tabs, "total": total, "page": page}
 

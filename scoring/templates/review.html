@@ -11,9 +11,10 @@
                  'parts': (c.detail.parts if c and c.detail else []) or []} %}
 <main class="rv-page" style="max-width:none" data-review-body
       data-answer="{{ v.answer_id }}" data-chain="{{ chain_sha }}" data-pass-mark="{{ pass_mark }}"
+      data-mode="{{ v.mode }}"
       data-next="{{ next_url }}" data-prev="{{ prev_url }}"
       data-preview-url="/api/review/preview" data-submit-url="/api/reviews"
-      data-concl="{{ concl0|tojson }}">
+      data-concl='{{ concl0|tojson }}'>
   <div class="rv-crumb"><a href="/review?tab={{ tab }}">复核</a> / {{ tab_labels[tab] }}{% if pos %} / 第 {{ pos }} 段，共 {{ total_q }} 段{% endif %}</div>
   <div class="rv-page-head" style="margin:4px 0 12px">
     <h1>{{ v.uid }}</h1>
@@ -43,7 +44,8 @@
           {% if t.ask_user %}<span class="rv-obs">反问 {{ t.ask_user }}</span>{% endif %}
           {% for e in t.tool_errors %}<span class="rv-obs" data-ok="false">{{ e.name if e.name else '工具错误' }}</span>{% endfor %}
           <span class="rv-turn-items"></span></div>
-        <div class="rv-msg" data-role="{{ 'preset' if t.source == 'preset' else 'user' }}">
+        {# runner 写 source='prefill'（预置历史），'preset' 为旧拼写，一并识别 #}
+        <div class="rv-msg" data-role="{{ 'preset' if t.source in ('preset', 'prefill') else 'user' }}">
           <span class="rv-msg-who">用户</span><div class="rv-md">{{ t.input|md }}</div></div>
         <div class="rv-msg" data-role="assistant"><span class="rv-msg-who">助手</span>
           <div class="rv-md">{{ t.output|md }}</div></div>
@@ -59,11 +61,12 @@
       {% for sec in v.sections %}
       <div class="rv-sec">{{ sec.label }} <span>· {{ sec.hint }}</span></div>
       {% for r in sec.rows %}
+      {# tojson 不转义双引号（Jinja2 文档：double-quoted attributes 例外），data-* 一律用单引号 #}
       <div class="rv-row" data-i="{{ loop.index0 }}" data-id="{{ r.id }}" data-kind="{{ r.kind }}"
            data-turn="{{ r.turn or 1 }}" data-scored="{{ '1' if r.kind in ('required', 'expected', 'refusal') else '0' }}"
-           data-scale="{{ scales.get(r.kind, [])|tojson }}"
-           data-map="{{ score_map|tojson if r.kind in ('required', 'expected', 'refusal') else '{}' }}"
-           data-kw="{{ r.keywords|tojson }}" data-machine="{{ {'value': r.machine.value if r.machine else None, 'score': r.machine.score if r.machine else None}|tojson }}"
+           data-scale='{{ scales.get(r.kind, [])|tojson }}'
+           data-map='{{ score_map|tojson if r.kind in ('required', 'expected', 'refusal') else '{}' }}'
+           data-kw='{{ r.keywords|tojson }}' data-machine='{{ {'value': r.machine.value if r.machine else None, 'score': r.machine.score if r.machine else None}|tojson }}'
            data-human="{{ '1' if r.human else '' }}">
         <div class="rv-row-top">
           <span class="rv-kind" {% if r.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ sec.label }} {{ r.id }}</span>
@@ -118,6 +121,7 @@
       <div class="rv-sheet-foot"><span class="rv-kbd">J</span><span class="rv-kbd">K</span> 换条目 ·
         <span class="rv-kbd">1</span>–<span class="rv-kbd">9</span> 快捷分 · <span class="rv-kbd">N</span> 输入分数 ·
         <span class="rv-kbd">Y</span> 同意机器 · <span class="rv-kbd">E</span> 理由 · <span class="rv-kbd">T</span> 手改总分 ·
+        <span class="rv-kbd">[</span> 上一段 · <span class="rv-kbd">]</span> 跳过 ·
         <span class="rv-kbd">Ctrl ↵</span> 提交并下一段</div>
       {% if v.voided %}
       <div class="rv-total" style="border-top:1px dashed var(--line)">
