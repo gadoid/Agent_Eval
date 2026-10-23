@@ -56,7 +56,7 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
 
   // 注入预演（isolated 才有注入可跑；default-roots 下 ec 已在规划期整体跳过）
   let rehearsal: ReadonlyMap<string, string> | undefined
-  if (profile.skills_mode === 'isolated' && profile.skills_roots && profile.skills_roots.length > 0) {
+  if (profile.skills_mode !== 'default-roots' && profile.skills_roots && profile.skills_roots.length > 0) {
     const result = await rehearseInjections(rows, profile.skills_roots)
     rehearsal = new Map(
       [...result].filter(([, v]) => !v.ok).map(([uid, v]) => [uid, `${v.reason ?? 'injection-key-missed'}（预演）`]),
@@ -155,7 +155,7 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
     ;(manifest.snapshot as Record<string, unknown>).models_observed = models
     if (models.length > 1) warnings.push(`model_drift：本 run 观测到多个模型标识（${models.join('、')}），结论需按模型分组看`)
   }
-  if (profile.skills_mode === 'isolated') {
+  if (profile.skills_mode === 'isolated' || profile.skills_mode === 'bundled-copy') {
     const baseline = snapshot.skills_base
     const mismatch = all.filter(
       (r) => r.skills_sha256 && r.skills_sha256 !== baseline && (r.injections_applied ?? []).length === 0,
@@ -184,9 +184,9 @@ async function executeOne(
   await rm(runDir, { recursive: true, force: true })
   await mkdir(workspace, { recursive: true })
 
-  const isolated = options.profile.skills_mode === 'isolated' && options.profile.skills_roots
+  const materializing = options.profile.skills_mode !== 'default-roots' && options.profile.skills_roots  // isolated | bundled-copy
   let skills: EpisodeSpec['skills']
-  if (isolated) {
+  if (materializing) {
     const mat = await materializeSkills(runDir, options.profile.skills_roots ?? [], planned.row.injections ?? [], inventory)
     if (mat.error) {
       // 物化失败（文件缺失 / key 未命中）：不降级为无注入运行，整段会话记 error
@@ -208,6 +208,9 @@ async function executeOne(
       runDir,
       workspace,
       skills,
+      env: options.profile.skills_mode === 'bundled-copy' && skills
+        ? { DSH_BUNDLED_SKILL_DIR: skills.dirs[0] as string }
+        : undefined,
       anchor: planned.anchor,
     },
     { adapter: options.adapter, profile: options.profile },

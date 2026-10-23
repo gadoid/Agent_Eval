@@ -20,7 +20,7 @@ from .items import (SCALES, build_context, episode_error, extract_items,
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -104,6 +104,76 @@ def _migrate_chain_sha(conn) -> None:
 
 # 每个版本一组步骤：字符串按 SQL 脚本执行，可调用对象收到连接
 _MIGRATIONS: dict[int, list] = {1: [_SCHEMA], 2: [_MIGRATION_2_SQL, _migrate_chain_sha]}
+
+
+def _migrate_recompute_qkeys(conn) -> None:
+    """v3 迁移（v1 库升级不完整的修复）：v2 只加了列/表，没有重算已有数据的派生值。
+
+    - R11 把 topic 加进输入指纹后，旧答案留在不含 topic 的旧 qkey 下、新答案进新
+      qkey，同一题被拆成两个。用 answers.record_json 与 specs.spec_json 的编译行
+      重算输入指纹与 qkey，改写 questions、specs、spec_versions、answers 四张表；
+      新旧 qkey 并存时按题合并（保留目标行、取更早 first_seen、当前期望缺者补之）。
+    - injection_found_gt1 / variant_leak_json 只在入库时计算，这里按 record_json 回填。
+    """
+    remap: dict[str, str] = {}
+    for row in conn.execute("SELECT answer_id, qkey, record_json FROM answers").fetchall():
+        record = json.loads(row["record_json"])
+        new_q = qkey_of(record.get("case") or {})
+        found = 1 if any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or []) else 0
+        leak = json.dumps(variant_leak_suspects([record]), ensure_ascii=False)
+        conn.execute("UPDATE answers SET qkey=?, injection_found_gt1=?, variant_leak_json=? WHERE answer_id=?",
+                     (new_q, found, leak, row["answer_id"]))
+        if row["qkey"] != new_q:
+            remap[row["qkey"]] = new_q
+    for row in conn.execute("SELECT qkey, spec_json FROM specs").fetchall():   # 从未跑过的题
+        new_q = qkey_of(json.loads(row["spec_json"]))
+        if row["qkey"] != new_q:
+            remap[row["qkey"]] = new_q
+    if not remap:
+        return
+    with conn:
+        for old_q, new_q in remap.items():
+            conn.execute("INSERT OR IGNORE INTO specs(qkey, judge_fp, spec_json, evalset_version, imported_at)"
+                         " SELECT ?, judge_fp, spec_json, evalset_version, imported_at FROM specs WHERE qkey=?",
+                         (new_q, old_q))
+            conn.execute("DELETE FROM specs WHERE qkey=?", (old_q,))
+            conn.execute("INSERT OR IGNORE INTO spec_versions(qkey, judge_fp, evalset_version, imported_at)"
+                         " SELECT ?, judge_fp, evalset_version, imported_at FROM spec_versions WHERE qkey=?",
+                         (new_q, old_q))
+            conn.execute("DELETE FROM spec_versions WHERE qkey=?", (old_q,))
+            src = conn.execute("SELECT current_judge_fp, active, first_seen FROM questions WHERE qkey=?",
+                               (old_q,)).fetchone()
+            if src is None:
+                continue
+            tgt = conn.execute("SELECT current_judge_fp, active, first_seen FROM questions WHERE qkey=?",
+                               (new_q,)).fetchone()
+            if tgt is None:
+                conn.execute("UPDATE questions SET qkey=?, input_fp=? WHERE qkey=?",
+                             (new_q, new_q.split("|", 1)[1], old_q))
+            else:
+                first_seen = min(x for x in (src["first_seen"], tgt["first_seen"]) if x) \
+                    if any((src["first_seen"], tgt["first_seen"])) else None
+                current = tgt["current_judge_fp"] or src["current_judge_fp"]
+                active = 1 if current else (tgt["active"] or src["active"])
+                conn.execute("UPDATE questions SET first_seen=?, current_judge_fp=?, active=? WHERE qkey=?",
+                             (first_seen, current, active, new_q))
+                conn.execute("DELETE FROM questions WHERE qkey=?", (old_q,))
+
+
+def _migrate_backfill_started_at(conn) -> None:
+    """v3 迁移：旧 run 的 started_at 已在 snapshot_json（run.json 全量）里，直接回填；
+    确实没有的回退导入时间（导入时间在重导时保留，不刷新）。"""
+    for row in conn.execute("SELECT run_id, snapshot_json, imported_at FROM runs WHERE started_at IS NULL").fetchall():
+        started = None
+        try:
+            started = (json.loads(row["snapshot_json"] or "{}") or {}).get("started_at")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        conn.execute("UPDATE runs SET started_at=? WHERE run_id=?",
+                     (started or row["imported_at"], row["run_id"]))
+
+
+_MIGRATIONS[3] = [_migrate_recompute_qkeys, _migrate_backfill_started_at]
 
 
 class StoreError(Exception):
@@ -281,13 +351,16 @@ class Store:
         snap = (manifest or {}).get("snapshot") or {}
         profile_id = ((manifest or {}).get("profile") or {}).get("id") or "?"
         snapshot_json = json.dumps(manifest or {}, ensure_ascii=False)
-        started_at = (manifest or {}).get("started_at") or now()
+        # started_at 只认 run.json 的真实值；缺失时存 NULL，排序时回退导入时间。
+        # 不用 now() 兜底——重导会刷新它，run 顺序随之漂移（整改清单 R8 补充）。
+        started_at = (manifest or {}).get("started_at")
         self._exec(
             "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at)"
             " VALUES(?,?,?,?,?,?,?)"
             " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
             " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
-            " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at",
+            " snapshot_json=excluded.snapshot_json,"
+            " started_at=COALESCE(excluded.started_at, runs.started_at)",
             (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at))
 
     def ingest_answer(self, record: dict, run_id: str, manifest: dict | None) -> str:
@@ -335,9 +408,10 @@ class Store:
         return [dict(r) for r in self.conn.execute(sql + " ORDER BY answer_id", tuple(args))]
 
     def runs(self) -> list[dict]:
-        """按 run 开始时间排序（R8：导入顺序会把旧 run 提前，绊线方向会判反）。"""
+        """按 run 开始时间排序（R8：导入顺序会把旧 run 提前，绊线方向会判反）。
+        started_at 缺失（无 run.json 的 run）回退导入时间——导入时间在重导时保留。"""
         return [dict(r) for r in self.conn.execute(
-            "SELECT * FROM runs ORDER BY started_at, run_id")]
+            "SELECT * FROM runs ORDER BY COALESCE(started_at, imported_at), run_id")]
 
     def run(self, run_id: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()

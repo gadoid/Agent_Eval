@@ -50,6 +50,10 @@ class Sink {
   }
 }
 
+// 命令行端到端与 bundled-copy 两个 describe 共用（后者依赖前者 beforeAll 编译的 evalset）
+let evalset: string
+let profilePath: string
+
 describe('DshAdapter（假 dsh）', () => {
   it('单轮：探测版本，读取 zstd 日志，采集回答与 skill 调用', async () => {
     const { adapter, outcomes, artifacts } = await conversation(['江苏的舱单能办吗？'])
@@ -93,8 +97,6 @@ describe('DshAdapter（假 dsh）', () => {
 })
 
 describe('命令行端到端：md 用例 → evalset.jsonl → results.jsonl', () => {
-  let evalset: string
-  let profilePath: string
   beforeAll(async () => {
     evalset = join(tmp, 'evalset.jsonl')
     // 对话记录写法、live 模式（examples 中的 mt-0003 是 prefill，会按能力跳过）
@@ -203,5 +205,49 @@ describe('--cases：markdown 直接启动', () => {
       new Sink() as never, new Sink() as never,
     )
     expect(code).toBe(1)
+  })
+})
+
+describe('bundled-copy 模式（P0-3：逐会话副本 + DSH_BUNDLED_SKILL_DIR）', () => {
+  it('ec 纳入规划；副本物化注入；逐会话 env 到达 dsh 进程', async () => {
+    // 基底根：含 ec-0201 J1 注入 key 的 trade-documents.md
+    const root = join(tmp, 'skills-root')
+    await mkdir(join(root, 'sub'), { recursive: true })
+    await writeFile(join(root, 'trade-documents.md'),
+      '# trade-documents\n\n- **电放 Telex Release**：货物仍在本方掌控（收齐尾款）后，放单给买方快速提货。\n', 'utf8')
+    const prof = join(tmp, 'bundledcopy-profile.yaml')
+    await writeFile(prof, `id: fake-bundledcopy
+dsh:
+  bin: '${FAKE_DSH}'
+  profile: headless
+  timeout_ms: 10000
+skills_mode: bundled-copy
+skills_roots: ['${root.replace(/\\/g, '/')}']
+`)
+
+    const outDir = join(tmp, 'out-bundledcopy')
+    const code = await main(
+      ['run', '--evalset', evalset, '--profile', prof, '--out', outDir,
+       '--modes', 'natural', '--trials', '1', '--only', 'ec-0201'],
+      new Sink() as never, new Sink() as never,
+    )
+    expect(code).toBe(0)
+    const records: EpisodeRecord[] = (await readFile(join(outDir, 'results.jsonl'), 'utf8'))
+      .split('\n').filter(Boolean).map((l) => JSON.parse(l))
+    expect(records).toHaveLength(1)                              // ec 没有被 isolation-not-verified 跳过
+    const rec = records[0] as EpisodeRecord
+    expect(rec.status).toBe('ok')
+    expect(rec.skills_sha256).toBeTruthy()
+    expect(rec.injections_applied?.[0]).toMatchObject({ point: '电放时机', option: '反转', found: 1 })
+    // 副本中 key 已被替换为注入值
+    const workDir = join(outDir, '.work', '0001-ec-0201-0-natural-t1')
+    const copy = await readFile(join(workDir, 'skills', '0', 'trade-documents.md'), 'utf8')
+    expect(copy).toContain('未收尾款也可先电放提货')
+    expect(copy).not.toContain('货物仍在本方掌控（收齐尾款）后，放单给买方快速提货')
+    // 逐会话 env 到达 dsh 进程（fake dsh 把 DSH_BUNDLED_SKILL_DIR 记进 state.json）
+    const states = (await import('node:fs')).readdirSync(join(workDir, 'session'), { recursive: false })
+    const sessionId = states.find((s) => String(s).startsWith('session-'))
+    const state = JSON.parse(await readFile(join(workDir, 'session', sessionId as string, 'state.json'), 'utf8'))
+    expect(state.bundledEnv).toBe(join(workDir, 'skills', '0'))
   })
 })

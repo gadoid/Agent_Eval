@@ -15,6 +15,8 @@ export interface SessionContext {
   timeoutMs: number
   /** isolated 模式：本会话 skill 副本目录（overlay 指向它，includeDefaultRoots: false） */
   skillsDirs?: readonly string[]
+  /** 逐会话环境变量覆盖（bundled-copy 模式的 DSH_BUNDLED_SKILL_DIR 等），spawn 时叠加在 process.env 之上 */
+  env?: Readonly<Record<string, string>>
 }
 
 export interface PrefillTurn {

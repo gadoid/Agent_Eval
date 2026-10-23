@@ -87,7 +87,7 @@ async function elineProfileFingerprint(profile: Profile): Promise<Snapshot['elin
 }
 
 async function skillsBaseFingerprint(profile: Profile): Promise<{ value: string; approx: boolean }> {
-  if (profile.skills_mode === 'isolated') {
+  if (profile.skills_mode === 'isolated' || profile.skills_mode === 'bundled-copy') {
     return { value: await hashTree(profile.skills_roots ?? []), approx: false }
   }
   // 过渡期：默认根清单哈希的近似（盘点存在则用盘点，否则对 CLI 用户根兜底）

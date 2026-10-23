@@ -57,8 +57,8 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
   }
 
   const skillsMode = r.skills_mode === undefined ? 'default-roots' : r.skills_mode
-  if (skillsMode !== 'default-roots' && skillsMode !== 'isolated') {
-    errors.push('skills_mode 只能是 default-roots 或 isolated')
+  if (skillsMode !== 'default-roots' && skillsMode !== 'isolated' && skillsMode !== 'bundled-copy') {
+    errors.push('skills_mode 只能是 default-roots、isolated 或 bundled-copy')
   }
   const skillsRoots: string[] = []
   if (r.skills_roots !== undefined && r.skills_roots !== null) {
@@ -68,14 +68,14 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
       skillsRoots.push(...(r.skills_roots as string[]).map((x) => x.trim()).filter(Boolean))
     }
   }
-  if (skillsMode === 'isolated' && skillsRoots.length === 0) {
-    errors.push('skills_mode: isolated 必须填写 skills_roots（P0-2 盘点结果）')
+  if ((skillsMode === 'isolated' || skillsMode === 'bundled-copy') && skillsRoots.length === 0) {
+    errors.push(`skills_mode: ${skillsMode} 必须填写 skills_roots（bundled-copy 为从产品 asar 导出的实体技能根，tools/export-skills.mjs）`)
   }
   if (r.skills_inventory !== undefined && typeof r.skills_inventory !== 'string') {
     errors.push('skills_inventory 必须是字符串（盘点结果文件路径）')
   }
   if (skillsMode === 'isolated' && r.skills_inventory === undefined) {
-    errors.push('skills_mode: isolated 必须填写 skills_inventory（P0-2 盘点结果）')
+    errors.push('skills_mode: isolated 必须填写 skills_inventory（P0-2 盘点结果；bundled-copy 单根副本不需要）')
   }
   const budget: { max_tokens?: number; max_hours?: number } = {}
   if (r.budget !== undefined && r.budget !== null) {

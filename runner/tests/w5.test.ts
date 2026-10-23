@@ -104,6 +104,13 @@ describe('Profile 新字段校验', () => {
     expect(() => parseProfile('id: a\nskills_mode: xxx\n')).toThrow(/skills_mode/)
     expect(parseProfile('id: a\n').skills_mode).toBe('default-roots')
   })
+
+  it('bundled-copy 需要 skills_roots，不需要 inventory', () => {
+    expect(() => parseProfile('id: a\nskills_mode: bundled-copy\n')).toThrow(/skills_roots/)
+    const ok = parseProfile('id: a\nskills_mode: bundled-copy\nskills_roots: [D:/eval-skills/base]\n')
+    expect(ok.skills_mode).toBe('bundled-copy')
+    expect(ok.skills_roots).toEqual(['D:/eval-skills/base'])
+  })
 })
 
 describe('锚点与 trials 提升（01 §9）', () => {

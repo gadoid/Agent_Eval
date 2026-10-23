@@ -53,7 +53,8 @@ function main() {
     const id = noid ? `raw-${uuid}` : `session-${uuid}`
     dir = join(root, id)
     mkdirSync(dir, { recursive: true })
-    state = { id, seq: 0, users: [], plain: prompt.includes('[plain]'), noid }
+    // 记录逐会话环境（bundled-copy 模式 e2e 断言 DSH_BUNDLED_SKILL_DIR 用）
+    state = { id, seq: 0, users: [], plain: prompt.includes('[plain]'), noid, bundledEnv: process.env.DSH_BUNDLED_SKILL_DIR ?? null }
   }
 
   const frame = (type, data) => JSON.stringify({ type, seq: state.seq++, time: new Date().toISOString(), data })

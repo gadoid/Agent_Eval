@@ -174,11 +174,12 @@ describe('评测集与规划', () => {
     const p = parseProfile(PROFILE)
     expect(planEpisodes(rows, p, ALL, 'x', { modes: ['natural'], trials: 1, only: ['kr-1'] }).episodes).toHaveLength(2)
     expect(planEpisodes(rows, p, ALL, 'x', { modes: ['natural'], trials: 1, only: ['kr-1#1'] }).episodes).toHaveLength(1)
-    // default-roots（过渡期）下 ec 整体跳过；isolated 才纳入（阻断项机制）
+    // default-roots（过渡期）下 ec 整体跳过；isolated / bundled-copy 纳入（阻断项机制）
     const ecSkip = planEpisodes(rows, p, ALL, 'x', { modes: ['natural'], trials: 1, dims: ['错误知识纠正'] })
     expect(ecSkip.episodes).toHaveLength(0)
     expect(ecSkip.skipped[0]?.reason).toContain('isolation-not-verified')
     expect(planEpisodes(rows, p, ALL, 'x', { modes: ['natural'], trials: 1, dims: ['错误知识纠正'], skillsMode: 'isolated' }).episodes).toHaveLength(1)
+    expect(planEpisodes(rows, p, ALL, 'x', { modes: ['natural'], trials: 1, dims: ['错误知识纠正'], skillsMode: 'bundled-copy' }).episodes).toHaveLength(1)
   })
 })
 

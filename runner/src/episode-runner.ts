@@ -17,6 +17,8 @@ export interface EpisodeSpec {
   workspace: string
   /** isolated 模式的 skill 物化结果（dirs 由适配器经 SessionContext 接线） */
   skills?: { dirs: readonly string[]; sha256: string | null; applied: AppliedInjection[] }
+  /** 逐会话环境变量覆盖（bundled-copy：DSH_BUNDLED_SKILL_DIR 指向本会话副本） */
+  env?: Readonly<Record<string, string>>
   /** 锚点会话标记 */
   anchor?: boolean
 }
@@ -60,7 +62,7 @@ export async function runEpisode(spec: EpisodeSpec, deps: EpisodeDeps): Promise<
 
   try {
     session = await deps.adapter.open(
-      { runDir: spec.runDir, workspace: spec.workspace, timeoutMs: profile.dsh.timeout_ms, skillsDirs: spec.skills?.dirs },
+      { runDir: spec.runDir, workspace: spec.workspace, timeoutMs: profile.dsh.timeout_ms, skillsDirs: spec.skills?.dirs, env: spec.env },
       history === 'prefill' ? prefilled.map((t, i) => ({ user: t.input, assistant: refs[i] ?? '' })) : undefined,
     )
     let liveIndex = 0

@@ -62,7 +62,9 @@ export type Mode = 'natural' | 'forced'
 export const MODES: readonly Mode[] = ['natural', 'forced']
 
 /** skill 环境模式：default-roots（过渡期，P0 前）或 isolated（P0 后，副本机制）；ec 维度只在 isolated 运行 */
-export type SkillsMode = 'default-roots' | 'isolated'
+/** bundled-copy：逐 episode 物化 skill 副本并经 DSH_BUNDLED_SKILL_DIR 指向它
+ * （产品 rc.6 实测有效的隔离路线，绕开 overlay；见 doc/03 §5.2 与 P0-3 验证记录） */
+export type SkillsMode = 'default-roots' | 'isolated' | 'bundled-copy'
 
 export interface Profile {
   id: string

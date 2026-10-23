@@ -1,0 +1,16 @@
+id: eline-glm53-bundledcopy
+description: ec 可运行模式（P0-3 已验证）：逐 episode 物化 skill 副本并经 DSH_BUNDLED_SKILL_DIR 指向它，注入改写只作用于本会话副本
+model: glm-5.3
+dsh:
+  bin: D:/eline-ai/eline.exe --expose-internals D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
+  profile: evalheadless
+  home: C:/Users/jiaoshouxiang/.eline
+  env:
+    ELECTRON_RUN_AS_NODE: "1"   # ElineAI 自带链路要求：eline.exe 以 Node 模式执行 asar 内的 dsh CLI
+    DSH_BUNDLED_SKILL_DIR: "D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-web-app/skills/trade-expert"   # 全局缺省（无副本时）；会话有副本时被逐会话 env 覆盖
+  timeout_ms: 600000
+skills_mode: bundled-copy
+skills_roots: [D:/Agent_Eval/.eval-skills/base]   # 从产品 asar 导出的实体技能根（ELECTRON_RUN_AS_NODE=1 D:/eline-ai/eline.exe tools/export-skills.mjs）
+skill_tool: skill
+routing:
+  进单资料审核: [trade-documents]

@@ -33,7 +33,7 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "2"
+    assert v["value"] == "3"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
     # 重复打开不重复迁移
@@ -285,3 +285,122 @@ def test_backup(store, tmp_path):
     s2 = Store(target)
     assert len(s2.answers()) == 1
     s2.close()
+
+
+# ---------------------------------------------------------------- v1 库升级（schema v3）
+
+def _old_input_fp(case: dict) -> str:
+    """v1（R11 之前）的输入指纹：不含 topic。冻结参照，只在本测试用。"""
+    import hashlib
+    payload = {
+        "history": case.get("history", "live"),
+        "turns": [t.get("content", "") for t in (case.get("turns") or []) if t.get("role") == "user"],
+        "injections": [{k: i.get(k) for k in ("point", "option", "rev", "file", "key", "value")}
+                       for i in (case.get("injections") or [])],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False)
+                          .encode("utf-8")).hexdigest()[:16]
+
+
+def _build_v1_db(path, record, run_id="r1"):
+    """按 v1 形状手工建库：questions/specs/answers 用旧算法 qkey，无 spec_versions、
+    无 answers 预计算列、无 runs.started_at。"""
+    import sqlite3
+    from scoring.store import _SCHEMA
+    case = record["case"]
+    old_q = f"{case['uid']}|{_old_input_fp(case)}"
+    fp = judge_fp_of(case)
+    conn = sqlite3.connect(str(path))
+    conn.executescript(_SCHEMA)
+    manifest = {"run_id": run_id, "started_at": "2026-10-22T06:48:21Z", "snapshot": {"skills_mode": "default-roots"}}
+    conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)",
+                 (run_id, "/x", "v1", "p1", json.dumps(manifest, ensure_ascii=False), "2026-10-23T09:00:00"))
+    conn.execute("INSERT INTO questions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (old_q, case["uid"], case.get("case_id"), case.get("variant_index", 0), None,
+                  case.get("dim"), case.get("topic"), "[]", _old_input_fp(case), fp, 1, "2026-10-22T08:00:00"))
+    conn.execute("INSERT INTO specs VALUES(?,?,?,?,?)",
+                 (old_q, fp, json.dumps(case, ensure_ascii=False), "v1", "2026-10-22T08:00:00"))
+    ep = record.get("episode_id") or f"{record['uid']}-{record['mode']}-t{record['trial']}"
+    conn.execute("INSERT INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (f"{run_id}/{ep}", old_q, run_id, ep, fp, "p1", '["glm-5.3"]', record.get("mode", "natural"),
+                  record.get("trial", 1), "default-roots", None, "v1", "ok",
+                  json.dumps(record, ensure_ascii=False)))
+    conn.execute("INSERT INTO meta VALUES('schema_version', '1')")
+    conn.commit()
+    conn.close()
+    return old_q
+
+
+def test_v1_upgrade_recompute_and_backfill(tmp_path):
+    """v1 库升级验收：题目数不变、旧/新答案同 qkey、预计算列与 started_at 回填。"""
+    from scoring.items import input_fp_of, qkey_of
+    record = mk_record()
+    record["injections_applied"] = [{"point": "电放时机", "found": 2}]
+    db_path = tmp_path / "v1.db"
+    old_q = _build_v1_db(db_path, record)
+    assert old_q != qkey_of(record["case"])          # 旧算法 qkey 不含 topic → 必然不同
+
+    store = Store(db_path)                           # 打开即完成 1→2→3 迁移
+    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "3"
+    new_q = qkey_of(record["case"])
+    qs = store.questions()
+    assert len(qs) == 1 and qs[0]["qkey"] == new_q   # 没有拆成两题
+    assert qs[0]["input_fp"] == input_fp_of(record["case"])
+    old_answer = store.answers()[0]
+    assert old_answer["qkey"] == new_q
+    assert old_answer["injection_found_gt1"] == 1    # 预计算列回填（found=2）
+    assert json.loads(old_answer["variant_leak_json"]) == []
+    r = store.run("r1")
+    assert r["started_at"] == "2026-10-22T06:48:21Z"  # 从 snapshot_json 回填
+    # 期望与版本映射随 qkey 改写
+    assert store.spec_of(new_q, old_answer["judge_fp_at_run"]) is not None
+    assert store.current_spec(new_q)[0] == old_answer["judge_fp_at_run"]
+
+    # 升级后导入同一题的新 run：落进同一个 qkey
+    rec2 = mk_record()
+    from scoring.cli import ingest_run
+    d2 = make_run(tmp_path, "r2", [rec2], run_id="r2")
+    ingest_run(store, d2)
+    assert len(store.questions()) == 1
+    assert {a["run_id"] for a in store.answers(qkey=new_q)} == {"r1", "r2"}
+    store.close()
+
+
+def test_v1_upgrade_merges_when_new_qkey_already_exists(tmp_path):
+    """v2 代码已用新算法建过同题（升级前新旧并存）：合并为一题，first_seen 取更早。"""
+    from scoring.items import qkey_of
+    record = mk_record()
+    db_path = tmp_path / "v1b.db"
+    _build_v1_db(db_path, record)
+    new_q = qkey_of(record["case"])
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("INSERT INTO questions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (new_q, record["case"]["uid"], record["case"].get("case_id"), 0, None,
+                  record["case"].get("dim"), record["case"].get("topic"), "[]",
+                  new_q.split("|", 1)[1], None, 0, "2026-10-23T10:00:00"))
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    qs = store.questions()
+    assert len(qs) == 1 and qs[0]["qkey"] == new_q
+    assert qs[0]["first_seen"] == "2026-10-22T08:00:00"      # 合并取更早
+    assert qs[0]["current_judge_fp"] == judge_fp_of(record["case"])   # 新行无当前期望 → 取旧行的
+    assert qs[0]["active"] == 1
+    store.close()
+
+
+def test_run_without_started_at_falls_back_stably(tmp_path):
+    """无 run.json started_at 的 run：排序回退导入时间，重导不刷新顺序。"""
+    from scoring.cli import ingest_run
+    d1 = make_run(tmp_path, "r1", [mk_record()], run_id="r1")
+    d2 = make_run(tmp_path, "r2", [mk_record(uid="ec-2#0")], run_id="r2")
+    store = Store(tmp_path / "s.db")
+    ingest_run(store, d1)
+    ingest_run(store, d2)
+    assert [r["run_id"] for r in store.runs()] == ["r1", "r2"]
+    ingest_run(store, d1)                             # 重导旧 run：顺序不变
+    assert [r["run_id"] for r in store.runs()] == ["r1", "r2"]
+    assert store.run("r1")["started_at"] is None      # 无真实值时存 NULL，不伪造
+    store.close()

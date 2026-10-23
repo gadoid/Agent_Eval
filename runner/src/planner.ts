@@ -125,8 +125,8 @@ export function planEpisodes(
       skipped.push({ uid: row.uid, mode: null, reason: `执行器 ${agentName} 不支持预置历史（history: prefill）` })
       continue
     }
-    if (row.dim === '错误知识纠正' && skillsMode !== 'isolated') {
-      skipped.push({ uid: row.uid, mode: null, reason: 'isolation-not-verified：P0-1/P0-2 完成前 ec 维度不运行（01 §2）' })
+    if (row.dim === '错误知识纠正' && skillsMode === 'default-roots') {
+      skipped.push({ uid: row.uid, mode: null, reason: 'isolation-not-verified：default-roots 无隔离机制，ec 不运行；bundled-copy/isolated 模式可运行（P0-3 已验证 DSH_BUNDLED_SKILL_DIR 路线）' })
       continue
     }
     const rehearsed = options.rehearsal?.get(row.uid)

@@ -10,6 +10,9 @@ runner/out/
 # 评测库：判定与人工改判含真实业务对话，不进仓库（改造方案 §14；backup/export 另存）
 archive/
 
+# 产品 asar 导出的技能根与机制验证脚本产物（产品内容拷贝，不进仓库；tools/export-skills.mjs 可重建）
+.eval-skills/
+
 # 本机临时文件
 *.log
 .DS_Store

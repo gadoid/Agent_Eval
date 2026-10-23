@@ -36,7 +36,9 @@ export class DshAdapter implements AgentAdapter {
     const overlayPath = join(context.runDir, 'overlay.patch.yml')
     await mkdir(sessionRoot, { recursive: true })
     await mkdir(context.workspace, { recursive: true })
-    const skillsOverlay = context.skillsDirs && context.skillsDirs.length > 0 ? buildSkillsOverlayEntries(context.skillsDirs) : ''
+    // bundled-copy：知识接线走逐会话 env（DSH_BUNDLED_SKILL_DIR），不写 skill overlay
+    const viaEnv = context.env?.DSH_BUNDLED_SKILL_DIR !== undefined
+    const skillsOverlay = !viaEnv && context.skillsDirs && context.skillsDirs.length > 0 ? buildSkillsOverlayEntries(context.skillsDirs) : ''
     await writeFile(overlayPath, buildOverlayYaml(sessionRoot) + skillsOverlay)
     return new DshSession(this.dsh, this.profile.dsh.profile, context, sessionRoot, overlayPath)
   }
@@ -71,7 +73,10 @@ class DshSession implements AgentSession {
 
     let proc: { code: number | null; timedOut: boolean; stderrTail: string }
     try {
-      proc = await runOne(this.dsh.bin, [...this.dsh.prefixArgs, ...args], this.context.workspace, this.context.timeoutMs)
+      const env = this.context.env && Object.keys(this.context.env).length > 0
+        ? { ...process.env, ...this.context.env }
+        : { ...process.env }
+      proc = await runOne(this.dsh.bin, [...this.dsh.prefixArgs, ...args], this.context.workspace, this.context.timeoutMs, env)
     } catch (err) {
       return failed('error', (err as Error).message, startedAt)
     }
