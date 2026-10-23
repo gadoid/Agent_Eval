@@ -97,7 +97,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     store = Store(db)
     policy, policy_sha = load_policy(policy_path or default_policy_path())
     cfg = load_operator_config(operators_path or default_operators_path())
-    chain_sha = cfg.config_sha
+    chain_sha = cfg.chain_sha
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     templates.env.filters["md"] = md_filter
     templates.env.filters["highlight"] = highlight_filter
@@ -268,21 +268,11 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         cards: list[dict] = []
         total = 0
         if filter_name == "undecided":
-            sql = """SELECT v.answer_id, v.item_id, v.kind, v.turn, v.value AS machine_value,
-                     v.source AS machine_source, v.reason AS machine_reason, v.status,
-                     q.uid, a.run_id, a.episode_id, a.mode, a.trial, a.qkey, q.current_judge_fp
-                     FROM verdicts v JOIN answers a USING(answer_id) JOIN questions q ON a.qkey=q.qkey
-                     WHERE q.current_judge_fp = v.judge_fp AND v.chain_sha = ?
-                       AND (v.status != 'ok' OR v.value IS NULL)"""
-            args: list = [chain_sha]
-            if run_id:
-                sql += " AND a.run_id = ?"
-                args.append(run_id)
-            sql += " ORDER BY v.answer_id, v.item_id"
-            vr = [dict(r) for r in store.conn.execute(sql, tuple(args))]
-            total = len(vr)
+            # R2：按有效结论取数（已有人工改判的不留队列；被短路的条目不进队列），
+            # 取数统一在 store，服务层不拼 SQL
+            vr, total = store.undecided_items(chain_sha, run_id=run_id or None, page=page, size=size)
             page = max(0, min(page, (max(total, 1) - 1) // size))
-            for r in vr[page * size:(page + 1) * size]:
+            for r in vr:
                 mat = card_material(r["answer_id"], r["current_judge_fp"], r["item_id"])
                 cards.append({"r": r, **mat, "scale": SCALES.get(r["kind"], ())})
         elif filter_name == "fail":
@@ -355,12 +345,15 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     # ---------------- 质量视图（§8：含 C5 清单与作废改判）
     @app.get("/quality")
     async def quality(request: Request):
-        rs = rows(with_records=True)
+        rs = rows()
         q = views.quality_from_db(store, rs, chain_sha)
+        # 作废改判只可能出现在有改判的答案上（避免逐答案全库扫描）
+        uid_of = {r["answer_id"]: r["uid"] for r in rs}
         voided = []
-        for r in rs:
-            for v in store.voided_reviews(r["answer_id"]):
-                voided.append({**v, "uid": r["uid"]})
+        for a_id in (r["answer_id"] for r in store.conn.execute(
+                "SELECT DISTINCT answer_id FROM reviews")):
+            for v in store.voided_reviews(a_id):
+                voided.append({**v, "uid": uid_of.get(a_id, "?")})
         return render(request, "quality.html", q=q, voided=voided[:100])
 
     return app

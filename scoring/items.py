@@ -112,11 +112,14 @@ def _sha16(payload: Any) -> str:
 
 
 def input_fp_of(case: dict) -> str:
-    """输入指纹：回答能否直接比较。改用户消息或注入 → 变；改参考答案/备注 → 不变。"""
+    """输入指纹：回答能否直接比较。改用户消息或注入 → 变；改参考答案/备注 → 不变。
+    topic 进入指纹：forced 会话的首轮 /skill名 前缀由 topic 经 Profile routing 决定，
+    topic 改了 forced 答案的实际输入就变了（整改清单 R11）。"""
     inj = [{k: i.get(k) for k in ("point", "option", "rev", "file", "key", "value")}
            for i in (case.get("injections") or [])]
     return _sha16({
         "history": case.get("history", "live"),
+        "topic": case.get("topic"),
         "turns": [t.get("content", "") for t in (case.get("turns") or []) if t.get("role") == "user"],
         "injections": inj,
     })
@@ -150,3 +153,45 @@ def item_sha_of(item: Item) -> str:
     else:
         payload = {"kind": item.kind, "text": item.attrs.get("text"), "turn": item.attrs.get("turn")}
     return _sha16(payload)
+
+
+# ---------------------------------------------------------------- 变体泄露嫌疑（C5，整改清单 R6）
+
+def variant_leak_suspects(records: list[dict]) -> list[dict]:
+    """变体泄露嫌疑清单（规则与 CASE-STRUCTURE §8 提示对齐、整改清单 R6 修订）：
+
+    - 只检查被替换的轮次：variant.scope=="turn" 查 variant.turn（未写视为最后一轮）；
+      scope=="whole" 查全部轮；变体未写 variant 时视为整题改写、查全部轮。
+    - "缺少本轮条件关键词"：只针对属于被查轮次的条件；没写轮次的条件视为属于最后一轮。
+    - "包含更早轮次条件关键词"：只针对写了轮次且早于被查轮次的条件；没写轮次的
+      条目不参与（否则单轮条件的任何后续命中都会误报）。种子（#0）不查。
+    """
+    out: list[dict] = []
+    for r in records:
+        uid = r.get("uid", "?")
+        tail = uid.rsplit("#", 1)[-1]
+        if not tail.isdigit() or int(tail) == 0:
+            continue                                     # 种子不查
+        case = r.get("case") or {}
+        conds = [c for c in (case.get("conditions") or []) if c.get("keywords")]
+        msgs = [t.get("content", "") for t in (case.get("turns") or []) if t.get("role") == "user"]
+        if not msgs:
+            continue
+        variant = case.get("variant") or {}
+        if (variant.get("scope") or "turn") == "turn":
+            t = variant.get("turn")
+            check_turns = [t] if isinstance(t, int) and 1 <= t <= len(msgs) else [len(msgs)]
+        else:
+            check_turns = list(range(1, len(msgs) + 1))
+        for n in check_turns:
+            msg = msgs[n - 1]
+            for c in conds:
+                turn = c.get("turn")
+                cond_turn = turn if isinstance(turn, int) and 1 <= turn <= len(msgs) else len(msgs)
+                if cond_turn == n and not any(kw in msg for kw in c["keywords"]):
+                    out.append({"uid": uid, "turn": n,
+                                "reason": f"第 {n} 轮缺少条件「{c.get('slot')}」关键词：{'、'.join(c['keywords'])}"})
+                if isinstance(turn, int) and turn < n and any(kw in msg for kw in c["keywords"]):
+                    out.append({"uid": uid, "turn": n,
+                                "reason": f"第 {n} 轮含更早轮次条件「{c.get('slot')}」关键词：{'、'.join(c['keywords'])}"})
+    return out

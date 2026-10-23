@@ -52,25 +52,58 @@ def _validate_inputs(op: Operator, instance_id: str) -> None:
 class OperatorConfig:
     instances: dict[str, Operator]
     chains: dict[str, list[Operator]]
-    config_sha: str = ""
+    config_sha: str = ""                                # operators.yaml 原文哈希（审计用，不参与取数）
+    chain_iids: dict[str, list[str]] = None             # 链 → 实例 id 顺序（规范化哈希用）
+    instance_specs: dict[str, dict] = None              # 实例 id → {impl, **params}
+    chain_sha: str = ""                                 # 规范化链配置哈希（verdicts/conclusions 取数键）
+
+    def __post_init__(self):
+        if self.chain_iids is None:
+            self.chain_iids = {}
+        if self.instance_specs is None:
+            self.instance_specs = {}
+
+    def canonical(self) -> dict:
+        """规范化链配置（整改清单 R4）：只含链中实际引用的实例；
+        注释、空白、未被引用的实例不影响。"""
+        used = sorted({iid for iids in self.chain_iids.values() for iid in iids})
+        return {
+            "chains": {kind: [f"{op.id}@{op.version}:{iid}"
+                              for iid, op in zip(self.chain_iids.get(kind, []), ops)]
+                       for kind, ops in self.chains.items()},
+            "instances": {iid: self.instance_specs[iid] for iid in used if iid in self.instance_specs},
+        }
+
+    def operators_of_config(self) -> list[str]:
+        """链配置的算子清单（判定配置摘要，取自链配置而非命中行）。"""
+        return sorted({f"{op.id}@{op.version}" for ops in self.chains.values() for op in ops})
+
+
+def _chain_sha_of(canonical: dict) -> str:
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True, ensure_ascii=False)
+                          .encode("utf-8")).hexdigest()
 
 
 def config_from_dict(d: dict, config_sha: str = "") -> OperatorConfig:
     if d.get("schema") != 1:
         raise ConfigError("operators 配置 schema 必须为 1")
     instances: dict[str, Operator] = {}
+    instance_specs: dict[str, dict] = {}
     for iid, spec in (d.get("operators") or {}).items():
         spec = dict(spec or {})
         impl = spec.pop("impl", None)
         if impl is None:
             raise ConfigError(f"算子实例 {iid} 缺少 impl")
         instances[iid] = _resolve_impl(impl, spec)
+        instance_specs[iid] = {"impl": impl, **spec}
         _validate_inputs(instances[iid], iid)
     chains: dict[str, list[Operator]] = {}
+    chain_iids: dict[str, list[str]] = {}
     for kind, chain in (d.get("chains") or {}).items():
         if kind not in SCALES:
             raise ConfigError(f"链配置了未知条目类型：{kind}")
         ops = []
+        iids = []
         for iid in chain or []:
             if iid not in instances:
                 raise ConfigError(f"链 {kind} 引用了不存在的算子实例：{iid}")
@@ -78,8 +111,13 @@ def config_from_dict(d: dict, config_sha: str = "") -> OperatorConfig:
             if kind not in getattr(op, "scales", {}):
                 raise ConfigError(f"算子 {iid}（{op.id}@{op.version}）的 scale 不覆盖条目类型 {kind}")
             ops.append(op)
+            iids.append(iid)
         chains[kind] = ops
-    return OperatorConfig(instances=instances, chains=chains, config_sha=config_sha)
+        chain_iids[kind] = iids
+    cfg = OperatorConfig(instances=instances, chains=chains, config_sha=config_sha,
+                         chain_iids=chain_iids, instance_specs=instance_specs)
+    cfg.chain_sha = _chain_sha_of(cfg.canonical())
+    return cfg
 
 
 def load_operator_config(path: str | Path) -> OperatorConfig:

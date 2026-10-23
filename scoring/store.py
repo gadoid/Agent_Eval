@@ -16,11 +16,11 @@ from datetime import datetime
 from pathlib import Path
 
 from .items import (SCALES, build_context, episode_error, extract_items,
-                    input_fp_of, judge_fp_of, qkey_of)
+                    input_fp_of, judge_fp_of, qkey_of, variant_leak_suspects)
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -74,7 +74,36 @@ CREATE INDEX idx_reviews_answer ON reviews(answer_id, item_id);
 CREATE INDEX idx_conclusions_key ON conclusions(judge_fp, chain_sha, policy_sha);
 """
 
-_MIGRATIONS: dict[int, str] = {1: _SCHEMA}
+_MIGRATION_2_SQL = """
+    CREATE TABLE IF NOT EXISTS spec_versions(
+      qkey TEXT, judge_fp TEXT, evalset_version TEXT, imported_at TEXT,
+      PRIMARY KEY(qkey, judge_fp, evalset_version));
+    INSERT OR IGNORE INTO spec_versions SELECT qkey, judge_fp, evalset_version, imported_at FROM specs;
+    ALTER TABLE answers ADD COLUMN injection_found_gt1 INTEGER;
+    ALTER TABLE answers ADD COLUMN variant_leak_json TEXT;
+    ALTER TABLE runs ADD COLUMN started_at TEXT;
+    ALTER TABLE reviews ADD COLUMN legacy_key TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_legacy ON reviews(legacy_key);
+    """
+
+
+def _migrate_chain_sha(conn) -> None:
+    """R4 迁移：把"当前默认 operators.yaml 原文哈希"名下的判定/结论行改写到规范化
+    chain_sha 名下（同一份配置内容一一映射）。旧配置内容产生的其他旧哈希保留原值——
+    它们不再匹配任何当前链，会按待重判处理，历史不丢。"""
+    try:
+        from .chain import default_operators_path, load_operator_config
+        cfg = load_operator_config(default_operators_path())
+        if cfg.config_sha and cfg.config_sha != cfg.chain_sha:
+            for table in ("verdicts", "conclusions"):
+                conn.execute(f"UPDATE {table} SET chain_sha=? WHERE chain_sha=?",
+                             (cfg.chain_sha, cfg.config_sha))
+    except Exception:                                   # 默认配置不可用时跳过（无行可改写）
+        pass
+
+
+# 每个版本一组步骤：字符串按 SQL 脚本执行，可调用对象收到连接
+_MIGRATIONS: dict[int, list] = {1: [_SCHEMA], 2: [_MIGRATION_2_SQL, _migrate_chain_sha]}
 
 
 class StoreError(Exception):
@@ -127,8 +156,12 @@ class Store:
                 current = int(v["value"]) if v else 0
             for version in sorted(_MIGRATIONS):
                 if version > current:
-                    self.conn.executescript(_MIGRATIONS[version])
-                    self.conn.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(version),))
+                    for step in _MIGRATIONS[version]:
+                        if callable(step):
+                            step(self.conn)
+                        else:
+                            self.conn.executescript(step)
+                    self.conn.execute("INSERT OR REPLACE INTO meta VALUES('schema_version', ?)", (str(version,)))
 
     def _exec(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
         with self.lock, self.conn:
@@ -137,8 +170,10 @@ class Store:
     # ---------------------------------------------------------------- 题目与期望（C6/C7）
 
     def upsert_question(self, case: dict, active: bool | None = None,
-                        current_judge_fp: str | None = None) -> str:
-        """按编译行登记题目。active/current_judge_fp 缺省不改动（specs import 时统一刷新）。"""
+                        current_judge_fp: str | None = None,
+                        current_if_absent: str | None = None) -> str:
+        """按编译行登记题目。active/current_judge_fp 缺省不改动（specs import 时统一刷新）；
+        current_if_absent：该题尚无当前期望时设置之并置活跃（ingest 路径，整改清单 R5）。"""
         qkey = qkey_of(case)
         variant = case.get("variant") or {}
         tags = [t.get("tag") if isinstance(t, dict) else t for t in (case.get("tags") or [])]
@@ -154,52 +189,60 @@ class Store:
         if current_judge_fp is not None:
             sets.append("current_judge_fp=?")
             args.append(current_judge_fp)
-        args.append(qkey)
         with self.lock, self.conn:
-            exists = self.conn.execute("SELECT 1 FROM questions WHERE qkey=?", (qkey,)).fetchone()
+            exists = self.conn.execute("SELECT current_judge_fp FROM questions WHERE qkey=?", (qkey,)).fetchone()
+            if exists and current_if_absent is not None and current_judge_fp is None and not exists["current_judge_fp"]:
+                sets.append("current_judge_fp=?")
+                args.append(current_if_absent)
+                if active is None:
+                    sets.append("active=?")
+                    args.append(1)
+            args.append(qkey)
             if exists:
                 self.conn.execute(f"UPDATE questions SET {', '.join(sets)} WHERE qkey=?", tuple(args))
             else:
+                fp = current_judge_fp if current_judge_fp is not None else current_if_absent
                 self.conn.execute(
                     "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic, tags_json,"
                     " input_fp, current_judge_fp, active, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (qkey, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
-                     current_judge_fp, 1 if active else 0, now()))
+                     fp, 1 if (active is None and fp) or active else 0, now()))
         return qkey
 
     def register_spec(self, qkey: str, judge_fp: str, spec_json: dict, evalset_version: str) -> None:
-        """登记一份期望（同一 qkey × judge_fp 只存一份；重复导入不覆盖先登记的版本号）。"""
-        self._exec("INSERT OR IGNORE INTO specs VALUES(?,?,?,?,?)",
-                   (qkey, judge_fp, json.dumps(spec_json, ensure_ascii=False), evalset_version, now()))
+        """登记一份期望（同一 qkey × judge_fp 只存一份，首次登记的版本标签不再改写），
+        并写版本映射 spec_versions（整改清单 R1：期望按指纹寻址，版本与期望多对多）。"""
+        ts = now()
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO specs VALUES(?,?,?,?,?)",
+                              (qkey, judge_fp, json.dumps(spec_json, ensure_ascii=False), evalset_version, ts))
+            self.conn.execute("INSERT OR IGNORE INTO spec_versions VALUES(?,?,?,?)",
+                              (qkey, judge_fp, evalset_version, ts))
 
     def import_evalset(self, rows: list[dict], version: str) -> dict:
-        """specs import：登记全部期望并成为当前期望；未出现的题保留旧期望、标记非活跃。
-        同一 (qkey, judge_fp) 已有期望时内容不变（按指纹内容寻址），但随行字段与版本
-        标签更新为本次导入——specs set-current 按版本找期望，标签必须跟随最近一次导入。"""
+        """specs import：登记全部期望并成为当前期望；未出现的题保留旧期望、标记非活跃。"""
         qkeys: dict[str, str] = {}
         with self.lock, self.conn:
             for case in rows:
                 qkey = qkey_of(case)
                 fp = judge_fp_of(case)
                 self.upsert_question(case)
-                self.conn.execute(
-                    "INSERT INTO specs(qkey, judge_fp, spec_json, evalset_version, imported_at)"
-                    " VALUES(?,?,?,?,?) ON CONFLICT(qkey, judge_fp) DO UPDATE SET"
-                    " spec_json=excluded.spec_json, evalset_version=excluded.evalset_version,"
-                    " imported_at=excluded.imported_at",
-                    (qkey, fp, json.dumps(case, ensure_ascii=False), version, now()))
+                self.register_spec(qkey, fp, case, version)
                 qkeys[qkey] = fp
-            self.conn.execute("UPDATE questions SET active=0 WHERE current_judge_fp IS NOT NULL")
+            self.conn.execute("UPDATE questions SET active=0")
             for qkey, fp in qkeys.items():
                 self.conn.execute("UPDATE questions SET active=1, current_judge_fp=? WHERE qkey=?", (fp, qkey))
         return {"questions": len(qkeys), "version": version}
 
     def set_current(self, version: str) -> int:
-        """specs set-current：把某评测集版本的期望设为当前期望。"""
+        """specs set-current：把某评测集版本的期望设为当前期望。版本不存在时抛
+        StoreError 且不做任何改动（整改清单 R1）。"""
         with self.lock, self.conn:
             rows = self.conn.execute(
-                "SELECT qkey, judge_fp FROM specs WHERE evalset_version=?", (version,)).fetchall()
-            self.conn.execute("UPDATE questions SET active=0 WHERE current_judge_fp IS NOT NULL")
+                "SELECT qkey, judge_fp FROM spec_versions WHERE evalset_version=?", (version,)).fetchall()
+            if not rows:
+                raise StoreError(f"未知评测集版本：{version}")
+            self.conn.execute("UPDATE questions SET active=0")
             for r in rows:
                 self.conn.execute("UPDATE questions SET active=1, current_judge_fp=? WHERE qkey=?",
                                   (r["judge_fp"], r["qkey"]))
@@ -238,29 +281,43 @@ class Store:
         snap = (manifest or {}).get("snapshot") or {}
         profile_id = ((manifest or {}).get("profile") or {}).get("id") or "?"
         snapshot_json = json.dumps(manifest or {}, ensure_ascii=False)
-        self._exec("INSERT OR REPLACE INTO runs VALUES(?,?,?,?,?,?)",
-                   (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now()))
+        started_at = (manifest or {}).get("started_at") or now()
+        self._exec(
+            "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at)"
+            " VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
+            " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
+            " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at",
+            (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at))
 
     def ingest_answer(self, record: dict, run_id: str, manifest: dict | None) -> str:
         """入库一条答案：完整 EpisodeRecord 随行保存（run 目录移走后仍可重判），
-        并登记执行时所用的期望。answer_id = run_id/episode_id。"""
+        并登记执行时所用的期望。answer_id = run_id/episode_id。
+        题目尚无当前期望时以执行时期望设为当前期望并置活跃（R5：空库首次 score 即可判定）。
+        注入 found>1 与变体泄露嫌疑在入库时预计算存列（R7：质量页免逐答案解析）。"""
         case = record.get("case") or {}
         qkey = qkey_of(case)
         fp = judge_fp_of(case)
-        self.upsert_question(case)
+        self.upsert_question(case, current_if_absent=fp)
         self.register_spec(qkey, fp, case, evalset_version_of(manifest))
         snap = (manifest or {}).get("snapshot") or {}
         models = snap.get("models_observed")
         episode_id = record.get("episode_id") or f"{record.get('uid', '?')}-{record.get('mode', '?')}-t{record.get('trial', 0)}"
         answer_id = answer_id_of(run_id, episode_id)
+        found_gt1 = any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or [])
+        leak_json = json.dumps(variant_leak_suspects([record]), ensure_ascii=False)
         self._exec(
-            "INSERT OR REPLACE INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id, judge_fp_at_run,"
+            " profile_id, models_json, mode, trial, skills_mode, skills_base, evalset_version,"
+            " run_status, record_json, injection_found_gt1, variant_leak_json)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
              ((manifest or {}).get("profile") or {}).get("id") or "?",
              json.dumps(models, ensure_ascii=False) if models is not None else None,
              record.get("mode", "?"), record.get("trial", 0),
              snap.get("skills_mode"), snap.get("skills_base"), evalset_version_of(manifest),
-             record.get("status", "?"), json.dumps(record, ensure_ascii=False)))
+             record.get("status", "?"), json.dumps(record, ensure_ascii=False),
+             1 if found_gt1 else 0, leak_json))
         return answer_id
 
     def answer(self, answer_id: str) -> dict | None:
@@ -278,7 +335,9 @@ class Store:
         return [dict(r) for r in self.conn.execute(sql + " ORDER BY answer_id", tuple(args))]
 
     def runs(self) -> list[dict]:
-        return [dict(r) for r in self.conn.execute("SELECT * FROM runs ORDER BY imported_at, run_id")]
+        """按 run 开始时间排序（R8：导入顺序会把旧 run 提前，绊线方向会判反）。"""
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM runs ORDER BY started_at, run_id")]
 
     def run(self, run_id: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
@@ -361,6 +420,16 @@ class Store:
                 " VALUES(?,?,?,?,?,?,?,?)",
                 (answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, now()))
             return int(cur.lastrowid)
+
+    def add_legacy_review(self, answer_id: str, item_id: str, value: str, reason: str, reviewer: str,
+                          item_sha: str | None, answer_sha: str, legacy_key: str) -> bool:
+        """import-legacy 的幂等写入（R9）：legacy_key 唯一，重复导入不再追加。"""
+        with self.lock, self.conn:
+            cur = self.conn.execute(
+                "INSERT OR IGNORE INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason,"
+                " reviewer, at, legacy_key) VALUES(?,?,?,?,?,?,?,?,?)",
+                (answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, now(), legacy_key))
+            return cur.rowcount > 0
 
     def reviews_for(self, answer_id: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
@@ -446,6 +515,105 @@ class Store:
             "SELECT DISTINCT chain_sha FROM verdicts WHERE answer_id=? AND judge_fp=?",
             (answer_id, judge_fp))]
 
+    # ---------------------------------------------------------------- 复核队列取数（R2）
+
+    def undecided_items(self, chain_sha: str, run_id: str | None = None,
+                        page: int = 0, size: int = 20) -> tuple[list[dict], int]:
+        """未决队列（§6.3：按有效结论取数）：机器结论为空或异常、且没有效人工改判
+        （answer_sha + item_sha 匹配、取值在 scale 内）的参与条目。已被短路的条目
+        （前提判不成立/路径违反后的事实、forced 会话的路径、期望事实）不进队列。"""
+        sql = """SELECT v.answer_id, v.item_id, v.kind, v.turn, v.value AS machine_value,
+                 v.source AS machine_source, v.reason AS machine_reason, v.status,
+                 q.uid, a.run_id, a.episode_id, a.mode, a.trial, a.qkey, q.current_judge_fp,
+                 (SELECT r.value FROM reviews r WHERE r.answer_id = v.answer_id AND r.item_id = v.item_id
+                    AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
+                    ORDER BY r.review_id DESC LIMIT 1) AS review_value
+                 FROM verdicts v JOIN answers a USING(answer_id) JOIN questions q ON a.qkey = q.qkey
+                 WHERE q.current_judge_fp = v.judge_fp AND v.chain_sha = ?
+                   AND v.kind != 'expected' AND (v.status != 'ok' OR v.value IS NULL)"""
+        args: list = [chain_sha]
+        if run_id:
+            sql += " AND a.run_id = ?"
+            args.append(run_id)
+        sql += " ORDER BY v.answer_id, v.item_id"
+        cands = [dict(r) for r in self.conn.execute(sql, tuple(args))]
+        # 已有有效人工改判（取值在 scale 内）→ 不再需要复核
+        cands = [c for c in cands
+                 if c["review_value"] is None or c["review_value"] not in SCALES.get(c["kind"], ())]
+        # 参与门与 policy.session_conclusion 的分类门一致；批量为候选答案取判定行与期望
+        by_answer: dict[str, list[dict]] = {}
+        for c in cands:
+            by_answer.setdefault(c["answer_id"], []).append(c)
+        out: list[dict] = []
+        if cands:
+            aids = list(by_answer)
+            qmarks_a = ",".join("?" * len(aids))
+            vr_by_answer: dict[str, list[dict]] = {}
+            for v in self.conn.execute(
+                    f"SELECT answer_id, judge_fp, item_id, kind, value FROM verdicts"
+                    f" WHERE answer_id IN ({qmarks_a}) AND chain_sha = ?", (*aids, chain_sha)):
+                vr_by_answer.setdefault(v["answer_id"], []).append(dict(v))
+            qkeys = {c["qkey"] for c in cands}
+            qmarks_q = ",".join("?" * len(qkeys))
+            specs = {(r["qkey"], r["judge_fp"]): json.loads(r["spec_json"])
+                     for r in self.conn.execute(
+                         f"SELECT qkey, judge_fp, spec_json FROM specs WHERE qkey IN ({qmarks_q})", tuple(qkeys))}
+            for a_id, items_ in by_answer.items():
+                first = items_[0]
+                forced = first["mode"] == "forced"
+                fp = first["current_judge_fp"]
+                answerable = (specs.get((first["qkey"], fp)) or {}).get("answerable", True) is not False
+                rows_ = [v for v in vr_by_answer.get(a_id, []) if v["judge_fp"] == fp]
+                precond_fail = any(v["kind"] == "precond" and v["value"] == "不成立" for v in rows_)
+                path_violate = (not forced and any(v["kind"] == "path" and v["value"] == "违反" for v in rows_))
+                facts_live = not (precond_fail or path_violate or not answerable)
+                for c in items_:
+                    if c["kind"] == "precond":
+                        out.append(c)
+                    elif c["kind"] == "path" and not forced:
+                        out.append(c)
+                    elif c["kind"] == "refusal":
+                        out.append(c)
+                    elif c["kind"] in ("required", "forbidden") and facts_live:
+                        out.append(c)
+        out.sort(key=lambda c: (c["answer_id"], c["item_id"]))
+        total = len(out)
+        page = max(0, min(page, (max(total, 1) - 1) // size))
+        return out[page * size:(page + 1) * size], total
+
+    # ---------------------------------------------------------------- 质量聚合（R7）
+
+    def human_machine_compare(self, chain_sha: str) -> tuple[list[dict], int, int]:
+        """人工与机器不一致清单 + 规则一致率（一条 SQL 聚合，R7）：
+        只看有人工改判的条目；每条目取最后一条有效改判（sha 匹配 + 取值合法）。
+        返回 (mismatch 列表, rule_agree, rule_total)。"""
+        sql = """SELECT v.answer_id, v.item_id, v.kind, v.value AS machine_value, v.source AS machine_source,
+                 q.uid, r.value AS review_value, r.review_id
+                 FROM verdicts v
+                 JOIN answers a ON a.answer_id = v.answer_id
+                 JOIN questions q ON q.qkey = a.qkey AND q.current_judge_fp = v.judge_fp
+                 JOIN reviews r ON r.answer_id = v.answer_id AND r.item_id = v.item_id
+                    AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
+                 WHERE v.chain_sha = ?"""
+        best: dict[tuple, dict] = {}
+        for row in self.conn.execute(sql, (chain_sha,)):
+            d = dict(row)
+            if d["review_value"] not in SCALES.get(d["kind"], ()):
+                continue
+            key = (d["answer_id"], d["item_id"])
+            if key not in best or d["review_id"] > best[key]["review_id"]:
+                best[key] = d
+        mismatch, agree, total = [], 0, 0
+        for d in best.values():
+            if d["machine_source"] == "rule" and d["machine_value"] is not None:
+                total += 1
+                agree += d["machine_value"] == d["review_value"]
+            if d["machine_value"] != d["review_value"]:
+                mismatch.append({"answer_id": d["answer_id"], "uid": d["uid"], "kind": d["kind"],
+                                 "item": d["item_id"], "machine": d["machine_value"],
+                                 "human": d["review_value"]})
+        return mismatch, agree, total
+
     def recompute_conclusion(self, answer_id: str, judge_fp: str, chain_sha: str,
                              policy: Policy, policy_sha: str) -> str:
         """重算并物化一个 (答案, 期望, 链配置, 口径) 的会话结论（不调用任何算子）。"""
@@ -470,14 +638,18 @@ class Store:
             items = extract_items(ctx)
             reviews = self.reviews_for(answer_id)
             eff: dict[str, Verdict] = {}
+            statuses: dict[str, str] = {}
             for item in items:
                 vrow = next((r for r in self.verdicts(answer_id, judge_fp, chain_sha)
                              if r["item_id"] == item.id), None)
                 if vrow is None:
                     eff[item.id] = Verdict(None, "", "")
+                    statuses[item.id] = "undecided"
                 else:
                     eff[item.id] = self.effective(vrow, reviews)
-            v = session_conclusion(record, ctx, items, eff, policy, routing)
+                    # 人工改判覆盖后该条目已决（R10：异常按条目 status 判，单一判据）
+                    statuses[item.id] = "ok" if eff[item.id].source == "human" else vrow["status"]
+            v = session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses)
         self._exec("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?)",
                    (answer_id, judge_fp, chain_sha, policy_sha, v.status,
                     v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False)))
@@ -522,12 +694,13 @@ class Store:
     def answer_view_rows(self, chain_sha: str, policy_sha: str, with_records: bool = False) -> list[dict]:
         """answers × questions × 当前期望下的结论（统计与比较的取数口；
         缺判定的 c_status 为 NULL → 待重判）。record_json 较大，仅在
-        with_records=True（质量视图、锚点绊线）时随行带出。"""
+        with_records=True（锚点绊线）时随行带出；质量预计算列常带（R7）。"""
         record_col = "a.record_json, " if with_records else ""
         sql = f"""
         SELECT a.answer_id, a.qkey, a.run_id, a.episode_id, a.judge_fp_at_run, a.profile_id,
                a.models_json, a.mode, a.trial, a.skills_mode, a.skills_base, a.evalset_version,
-               a.run_status, {record_col}q.uid, q.case_id, q.variant_index, q.rewrite,
+               a.run_status, {record_col}a.injection_found_gt1, a.variant_leak_json,
+               q.uid, q.case_id, q.variant_index, q.rewrite,
                q.dim, q.topic, q.current_judge_fp, q.active,
                c.status AS c_status, c.reason AS c_reason, c.detail_json
         FROM answers a JOIN questions q ON a.qkey = q.qkey

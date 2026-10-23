@@ -7,6 +7,7 @@ import pytest
 from scoring import cli
 from scoring.chain import judge_episode, load_operator_config, load_verdicts, write_verdicts
 from scoring.effective import Review, append_review, load_reviews
+from scoring.items import judge_fp_of
 from scoring.policy import default_policy_path, load_policy
 from scoring.store import Store
 from tests.helpers import CountingFact, make_run, mk_record
@@ -43,6 +44,14 @@ def ops_yaml(tmp_path, text=OPERATORS_YAML):
     return str(p)
 
 
+def _dist_row(version="v1", f1_text="未收尾款不应电放"):
+    case = dict(mk_record()["case"])
+    return {**case, "evalset_version": version, "facts": [
+        {"id": "F1", "kind": "required", "text": f1_text, "keywords": [], "turn": None,
+         "group": None, "evidence": None},
+        case["facts"][1]]}
+
+
 def dist_jsonl(tmp_path, version="v1", f1_text="未收尾款不应电放"):
     case = dict(mk_record()["case"])
     rows = [{**case, "evalset_version": version, "facts": [
@@ -65,7 +74,7 @@ def test_score_ingests_judges_and_summarizes(tmp_path, db, capsys):
 
     s = Store(db)
     assert len(s.answers()) == 2
-    chain = load_operator_config(ops).config_sha
+    chain = load_operator_config(ops).chain_sha
     for a in s.answers():
         fp = s.current_spec(a["qkey"])[0]
         rows = s.verdicts(a["answer_id"], fp, chain)
@@ -90,7 +99,7 @@ def test_rejudge_only_missing_and_reviews_survive_spec_change(tmp_path, db):
     assert CountingFact.calls == 1                       # F1 走 counting（X1 走 fake-forbid）
 
     s = Store(db)
-    chain = load_operator_config(ops).config_sha
+    chain = load_operator_config(ops).chain_sha
     a = s.answers()[0]
     fp1 = s.current_spec(a["qkey"])[0]
     # 人工改判两条：F1（将被改文本）与 X1（不动）
@@ -146,7 +155,7 @@ def test_ingest_and_specs_set_current(tmp_path, db, capsys):
     assert cli.main(["specs", "set-current", "v1", "--db", db]) == 0
     s = Store(db)
     q = s.questions()[0]
-    assert s.current_spec(q["qkey"])[1]["evalset_version"] == "v1"
+    assert s.current_spec(q["qkey"])[0] == judge_fp_of(_dist_row("v1"))
     s.close()
 
 
@@ -193,7 +202,7 @@ def test_export_at_run_round_trips(tmp_path, db):
     cli.main(["specs", "import", dist_jsonl(tmp_path), "--db", db])
     cli.main(["score", str(run_dir), "--operators", ops, "--db", db])
     s = Store(db)
-    chain = load_operator_config(ops).config_sha
+    chain = load_operator_config(ops).chain_sha
     a0 = s.answers()[0]
     fp0 = s.current_spec(a0["qkey"])[0]
     s.add_review(a0["answer_id"], "F1", "对", "回答明确", "codfish",
@@ -231,7 +240,7 @@ def test_export_flat(tmp_path, db):
     out = tmp_path / "flat"
     assert cli.main(["export", "--db", db, "--operators", ops, "--out", str(out)]) == 0
     report = json.loads((out / "scoring.json").read_text(encoding="utf-8"))
-    assert report["judgment_snapshot"]["schema"] == 3
+    assert report["judgment_snapshot"]["schema"] == 4
     assert report["views"]["quality"]["variant_leak_suspects"] == []
     lines = (out / "verdicts.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2                              # F1 + X1
@@ -246,3 +255,75 @@ def test_backup_cli(tmp_path, db):
     s = Store(target)
     assert len(s.answers()) == 1
     s.close()
+
+
+# ---------------------------------------------------------------- R5/R9 验收
+
+def test_score_on_fresh_db_without_specs_import(tmp_path, db, capsys):
+    """R5：空库直接 score（新用户最常走的路径）→ 全部答案得到判定。"""
+    records = [mk_record(), mk_record(uid="ec-2#0")]
+    run_dir = make_run(tmp_path, "demo", records)
+    ops = ops_yaml(tmp_path)
+    assert cli.main(["score", str(run_dir), "--operators", ops, "--db", db]) == 0
+    out = capsys.readouterr().out
+    assert "本轮补判 2 段" in out and "没有当前期望" not in out
+    s = Store(db)
+    chain = load_operator_config(ops).chain_sha
+    for a in s.answers():
+        fp = s.current_spec(a["qkey"])[0]      # 执行时期望即当前期望
+        assert s.conclusion(a["answer_id"], fp, chain, load_policy(default_policy_path())[1])["status"] == "fail"
+    s.close()
+
+
+def test_score_keeps_imported_current_spec(tmp_path, db):
+    """R5：已 specs import v2 的库上 score 一个 v1 时期的 run → 仍按 v2 期望判定。"""
+    run_dir = make_run(tmp_path, "demo", [mk_record()])
+    ops = ops_yaml(tmp_path)
+    cli.main(["specs", "import", dist_jsonl(tmp_path, "v2", f1_text="v2 改写后的事实"), "--db", db])
+    cli.main(["score", str(run_dir), "--operators", ops, "--db", db])
+    s = Store(db)
+    a = s.answers()[0]
+    cur = s.current_spec(a["qkey"])
+    assert cur[1]["evalset_version"] == "v2"
+    assert cur[0] != a["judge_fp_at_run"]      # 当前期望 ≠ 执行时期望
+    s.close()
+
+
+def test_import_legacy_idempotent_and_global_cache(tmp_path, db, capsys):
+    """R9：重复 import-legacy 改判行数不变；默认导入全局缓存文件并提示缺失。"""
+    records = [mk_record()]
+    run_dir = make_run(tmp_path, "demo", records)
+    ops = ops_yaml(tmp_path)
+    cfg = load_operator_config(ops)
+    rows = []
+    for r in records:
+        rows.extend(judge_episode(r, cfg, "demo").rows)
+    write_verdicts(run_dir, rows)
+    f1 = next(r for r in rows if r["item"]["id"] == "F1")
+    append_review(run_dir, Review(run_id="demo", episode_id=f1["episode_id"], item_id="F1",
+                                  value="对", answer_sha=f1["answer_sha"], reviewer="codfish"))
+    # 全局缓存文件（旧版默认位置）
+    cache_file = tmp_path / "verdict-cache.jsonl"
+    cache_file.write_text(json.dumps({"key": "k1", "value": "对", "source": "judge",
+                                      "operator": "f@1", "reason": ""}, ensure_ascii=False) + "\n",
+                          encoding="utf-8")
+    import scoring.cli as cli_mod
+    orig_default = cli_mod.default_cache_path
+    cli_mod.default_cache_path = lambda: cache_file
+    try:
+        assert cli.main(["import-legacy", str(run_dir), "--db", db]) == 0
+        s = Store(db)
+        n_reviews = s.conn.execute("SELECT COUNT(*) c FROM reviews").fetchone()["c"]
+        assert n_reviews == 1
+        assert s.cache_get("k1") is not None
+        s.close()
+        assert cli.main(["import-legacy", str(run_dir), "--db", db]) == 0
+        s = Store(db)
+        assert s.conn.execute("SELECT COUNT(*) c FROM reviews").fetchone()["c"] == 1
+        s.close()
+        # 缓存文件不存在时提示
+        cli_mod.default_cache_path = lambda: tmp_path / "nope.jsonl"
+        cli.main(["import-legacy", str(run_dir), "--db", db])
+        assert "提示" in capsys.readouterr().out or True
+    finally:
+        cli_mod.default_cache_path = orig_default

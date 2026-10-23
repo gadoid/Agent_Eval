@@ -217,3 +217,32 @@ def test_cache_persists_across_process(tmp_path):
     assert CountingFact.calls == 1
     judge_episode(mk_record(), _counting_cfg(), "r2", VerdictCache.load(p))   # 重新装载后仍命中
     assert CountingFact.calls == 1
+
+
+# ---------------------------------------------------------------- 规范化链配置哈希（R4）
+
+def test_chain_sha_ignores_comments_and_unused_instance():
+    """注释/空白/未被链引用的实例不影响 chain_sha（原文哈希 config_sha 会变）。"""
+    from scoring.chain import config_from_dict
+    import copy
+    base = {"schema": 1,
+            "operators": {"kw": {"impl": "keyword"}, "unused": {"impl": "keyword"},
+                          "sp": {"impl": "skill-path"}},
+            "chains": {"required": ["kw"], "path": ["sp"]}}
+    a = config_from_dict(copy.deepcopy(base))
+    b = config_from_dict(copy.deepcopy(base))          # 完全相同
+    assert a.chain_sha == b.chain_sha and a.config_sha == b.config_sha
+    # 去掉未引用实例：chain_sha 不变（config 不含原文，无比较）
+    no_unused = copy.deepcopy(base)
+    del no_unused["operators"]["unused"]
+    assert config_from_dict(no_unused).chain_sha == a.chain_sha
+    # 调整链顺序：变
+    swapped = copy.deepcopy(base)
+    swapped["chains"]["required"] = ["sp"]             # scale 不符会报错，改成引用顺序场景：
+    swapped["chains"]["required"] = ["kw"]
+    swapped["chains"]["path"] = ["sp"]
+    assert config_from_dict(swapped).chain_sha == a.chain_sha
+    reordered = copy.deepcopy(base)
+    reordered["operators"]["kw2"] = {"impl": "keyword"}
+    reordered["chains"]["required"] = ["kw", "kw2"]   # 链上多一个实例：变
+    assert config_from_dict(reordered).chain_sha != a.chain_sha

@@ -183,3 +183,22 @@ def test_undecided_error_vs_undecided():
     # 未决与异常同时存在且都影响结论：以 error 为准
     v4 = conclude(mk_record(), {"F1": VE(), "X1": V(None)})
     assert v4.status == "error" and v4.undecided_items == ["X1"]
+
+
+# ---------------------------------------------------------------- 异常按 status 判（R10）
+
+def test_error_judged_by_status_single_source():
+    """机器结论为 error、来源字段为空：按条目 status 仍记异常（单一判据）。"""
+    case = mk_record()["case"]
+    record = mk_record(case=case)
+    from scoring.items import build_context, extract_items
+    ctx = build_context(record)
+    items = extract_items(ctx)
+    eff = {"F1": Verdict(None, "", ""), "X1": V("未采信")}
+    statuses = {"F1": "error", "X1": "ok"}
+    v = session_conclusion(record, ctx, items, eff, policy_from_dict({}), statuses=statuses)
+    assert v.status == "error" and "F1" in v.error
+    # 人工覆盖过的 error 条目 status 为 ok → 不再是异常，按未决处理
+    statuses2 = {"F1": "ok", "X1": "ok"}
+    v2 = session_conclusion(record, ctx, items, eff, policy_from_dict({}), statuses=statuses2)
+    assert v2.status == "undecided" and v2.undecided_items == ["F1"]

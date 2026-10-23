@@ -27,8 +27,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import views
-from .chain import (VerdictCache, default_operators_path, episode_id_of, judge_episode,
-                    load_operator_config, load_verdicts)
+from .chain import (VerdictCache, default_cache_path, default_operators_path, episode_id_of,
+                    judge_episode, load_operator_config, load_verdicts)
 from .effective import load_reviews
 from .items import build_context, extract_items, item_sha_of
 from .policy import EpisodeVerdict, default_policy_path, load_policy
@@ -80,11 +80,16 @@ def conclusions(records: list[dict], rows: list[dict], reviews: list, policy,
         items = extract_items(ctx)
         ep_rows = rows_by_ep.get(episode_id_of(record), {})
         eff = {}
+        statuses: dict[str, str] = {}
         for item in items:
             row = ep_rows.get(item.id)
-            eff[item.id] = (effective_final(row, reviews_by_ep.get(row["episode_id"], []), row["answer_sha"])
-                            if row else Verdict(None, "", ""))
-        out.append(session_conclusion(record, ctx, items, eff, policy, routing))
+            if row is None:
+                eff[item.id] = Verdict(None, "", "")
+                statuses[item.id] = "undecided"
+            else:
+                eff[item.id] = effective_final(row, reviews_by_ep.get(row["episode_id"], []), row["answer_sha"])
+                statuses[item.id] = "ok" if eff[item.id].source == "human" else row["status"]
+        out.append(session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses))
     return out
 
 
@@ -144,10 +149,10 @@ def judge_pending(store: Store, pending: list[dict], cfg, policy, policy_sha: st
         spec = store.spec_of(a["qkey"], p["judge_fp"])
         judged = judge_episode(record, cfg, a["run_id"], cache, case=spec)
         if judged.rows:
-            store.write_verdicts(a["answer_id"], p["judge_fp"], cfg.config_sha, judged.rows)
+            store.write_verdicts(a["answer_id"], p["judge_fp"], cfg.chain_sha, judged.rows)
         eps += 1
         items += len(judged.rows)
-        store.recompute_conclusion(a["answer_id"], p["judge_fp"], cfg.config_sha, policy, policy_sha)
+        store.recompute_conclusion(a["answer_id"], p["judge_fp"], cfg.chain_sha, policy, policy_sha)
     return eps, items
 
 
@@ -192,9 +197,10 @@ def cmd_specs_import(args) -> int:
 
 def cmd_specs_set_current(args) -> int:
     store = open_store(args.db)
-    n = store.set_current(args.version)
-    if n == 0:
-        print(f"评测集中没有期望：{args.version}")
+    try:
+        n = store.set_current(args.version)
+    except StoreError as e:
+        print(str(e))
         return 1
     print(f"当前期望切换为 {args.version}（{n} 题）")
     return 0
@@ -205,13 +211,13 @@ def cmd_score(args) -> int:
     cfg = load_operator_config(args.operators or default_operators_path())
     policy, policy_sha = load_policy(args.policy or default_policy_path())
     run_id, n_records = ingest_run(store, args.run)
-    pending = store.pending_rejudge(cfg.config_sha, run_id=run_id)
+    pending = store.pending_rejudge(cfg.chain_sha, run_id=run_id)
     no_spec = [a for a in store.answers(run_id=run_id) if store.current_spec(a["qkey"]) is None]
     eps, items = judge_pending(store, pending, cfg, policy, policy_sha, DbCache(store))
-    print(f"判定 run {run_id}：{n_records} 段会话，本轮补判 {eps} 段 / {items} 条条目（当前期望 + 链 {cfg.config_sha[:8]}）")
+    print(f"判定 run {run_id}：{n_records} 段会话，本轮补判 {eps} 段 / {items} 条条目（当前期望 + 链 {cfg.chain_sha[:8]}）")
     if no_spec:
         print(f"  注意：{len(no_spec)} 段会话的题目没有当前期望（先 specs import），未判定")
-    _print_summary(store, cfg.config_sha, policy, policy_sha, run_id=run_id)
+    _print_summary(store, cfg.chain_sha, policy, policy_sha, run_id=run_id)
     return 0
 
 
@@ -219,13 +225,13 @@ def cmd_rejudge(args) -> int:
     store = open_store(args.db)
     cfg = load_operator_config(args.operators or default_operators_path())
     policy, policy_sha = load_policy(args.policy or default_policy_path())
-    pending = store.pending_rejudge(cfg.config_sha, qkey=args.question, run_id=args.run)
+    pending = store.pending_rejudge(cfg.chain_sha, qkey=args.question, run_id=args.run)
     if not pending:
         print("没有待重判的答案")
         return 0
     eps, items = judge_pending(store, pending, cfg, policy, policy_sha, DbCache(store))
-    print(f"补判 {eps} 段会话 / {items} 条条目（当前期望 + 链 {cfg.config_sha[:8]}）")
-    _print_summary(store, cfg.config_sha, policy, policy_sha, run_id=args.run)
+    print(f"补判 {eps} 段会话 / {items} 条条目（当前期望 + 链 {cfg.chain_sha[:8]}）")
+    _print_summary(store, cfg.chain_sha, policy, policy_sha, run_id=args.run)
     return 0
 
 
@@ -233,9 +239,9 @@ def cmd_rescore(args) -> int:
     store = open_store(args.db)
     cfg = load_operator_config(args.operators or default_operators_path())
     policy, policy_sha = load_policy(args.policy or default_policy_path())
-    n = store.rescore(policy, policy_sha, cfg.config_sha)
+    n = store.rescore(policy, policy_sha, cfg.chain_sha)
     print(f"重算 {n} 组会话结论（未调用任何算子）→ {store.path}")
-    _print_summary(store, cfg.config_sha, policy, policy_sha)
+    _print_summary(store, cfg.chain_sha, policy, policy_sha)
     return 0
 
 
@@ -247,7 +253,7 @@ def cmd_compare(args) -> int:
     for kv in args.fix or []:
         k, _, v = kv.partition("=")
         fixes[k] = v
-    rows = store.answer_view_rows(cfg.config_sha, policy_sha, with_records=True)
+    rows = store.answer_view_rows(cfg.chain_sha, policy_sha, with_records=True)
     run_order = {r["run_id"]: i for i, r in enumerate(store.runs())}
     rep = views.compare_axis(rows, axis=args.axis, fixes=fixes, anys=args.any or (), run_order=run_order)
     print(json.dumps(rep, ensure_ascii=False, indent=1))
@@ -352,12 +358,12 @@ def cmd_export(args) -> int:
     policy, policy_sha = load_policy(args.policy or default_policy_path())
     out = Path(args.out) if args.out else Path(DEFAULT_DB).parent / "export"
     if args.run and args.spec == "at-run":
-        info = _export_bundle(store, out, args.run, cfg.config_sha, at_run=True)
+        info = _export_bundle(store, out, args.run, cfg.chain_sha, at_run=True)
         print(f"导出 run {info['run_id']}（执行时期望，bundle 布局）→ {out}")
         return 0
-    _export_flat(store, out, cfg.config_sha, policy_sha, args.run)
+    _export_flat(store, out, cfg.chain_sha, policy_sha, args.run)
     # scoring.json（当前期望 + 当前链 + 当前口径下的聚合报告）
-    rows = store.answer_view_rows(cfg.config_sha, policy_sha, with_records=True)
+    rows = store.answer_view_rows(cfg.chain_sha, policy_sha, with_records=True)
     if args.run:
         rows = [r for r in rows if r["run_id"] == args.run]
     verdicts = views.verdicts_of(rows)
@@ -365,11 +371,11 @@ def cmd_export(args) -> int:
     for r in rows:
         if r["current_judge_fp"]:
             applied += sum(er["eff"].source == "human"
-                           for er in store.effective_rows(r["answer_id"], r["current_judge_fp"], cfg.config_sha))
+                           for er in store.effective_rows(r["answer_id"], r["current_judge_fp"], cfg.chain_sha))
         voided += len(store.voided_reviews(r["answer_id"]))
     report = {
         "judgment_snapshot": {
-            "schema": 3, "chain_sha": cfg.config_sha, "policy_sha": policy_sha,
+            "schema": 4, "chain_sha": cfg.chain_sha, "operators_config_sha": cfg.config_sha, "policy_sha": policy_sha,
             "operators": operators_of_config(cfg), "judge_fp": "current",
             "reviews_applied": applied, "reviews_voided": voided,
             "undecided_excluded": sum(v.status == "undecided" for v in verdicts),
@@ -378,7 +384,7 @@ def cmd_export(args) -> int:
         "views": {
             "ability": views.ability_view(verdicts, policy),
             "attribution": views.attribution_view(verdicts),
-            "quality": views.quality_from_db(store, rows, cfg.config_sha),
+            "quality": views.quality_from_db(store, rows, cfg.chain_sha),
         },
         "verdicts": [v.as_dict() for v in verdicts],
     }
@@ -403,11 +409,19 @@ def cmd_import_legacy(args) -> int:
     policy, policy_sha = load_policy(args.policy or default_policy_path())
     store = open_store(args.db)
     ingest_run(store, run, records, manifest)
-    chain_sha = None
+    raw_sha = None
     old = run / "scoring.json"
     if old.exists():
-        chain_sha = (json.loads(old.read_text(encoding="utf-8")).get("judgment_snapshot") or {}).get("operators_config_sha")
-    chain_sha = chain_sha or "legacy"
+        raw_sha = (json.loads(old.read_text(encoding="utf-8")).get("judgment_snapshot") or {}).get("operators_config_sha")
+    # R4：旧记录里的哈希是 operators.yaml 原文哈希；与当前配置原文一致时映射到规范化
+    # chain_sha，否则原样保留（不匹配任何当前链 → 按待重判处理，历史不丢）
+    chain_sha = raw_sha or "legacy"
+    try:
+        cur = load_operator_config(default_operators_path())
+        if raw_sha and raw_sha == cur.config_sha:
+            chain_sha = cur.chain_sha
+    except Exception:
+        pass
 
     sha_cache: dict[str, dict[str, str]] = {}          # episode_id → item_id → item_sha
     for record in records:
@@ -431,20 +445,26 @@ def cmd_import_legacy(args) -> int:
     for (a_id, fp, ch), rs in by_key.items():
         n_verdicts += store.write_verdicts(a_id, fp, ch, rs)
 
+    # R9：legacy_key 唯一，重复 import-legacy 不再追加改判
     n_reviews = 0
     for r in load_reviews(run):
         a_id = answer_id_of(run_id, r.episode_id)
         if store.answer(a_id) is None:
             continue
         item_sha = getattr(r, "item_sha", None) or sha_cache.get(r.episode_id, {}).get(r.item_id)
-        store.add_review(a_id, r.item_id, r.value, r.reason or "", r.reviewer or "?", item_sha, r.answer_sha)
-        n_reviews += 1
+        legacy_key = f"{run_id}/{r.episode_id}/{r.item_id}/{getattr(r, 'at', '')}/{r.value}"
+        if store.add_legacy_review(a_id, r.item_id, r.value, r.reason or "", r.reviewer or "?",
+                                   item_sha, r.answer_sha, legacy_key):
+            n_reviews += 1
 
+    # R9：旧版判定缓存是全局文件（scoring/verdict-cache.jsonl），缺省导入它
     n_cache = 0
-    cache_path = Path(args.cache) if args.cache else run / "verdict-cache.jsonl"
+    cache_path = Path(args.cache) if args.cache else default_cache_path()
     if cache_path.exists():
         n_cache = store.cache_bulk([json.loads(l) for l in
                                     cache_path.read_text(encoding="utf-8").splitlines() if l.strip()])
+    elif not args.cache:
+        print(f"  提示：未找到判定缓存 {cache_path}（--cache 可指定其他路径）")
     n_concl = store.rescore(policy, policy_sha, chain_sha)
     print(f"导入 run {run_id}：{n_verdicts} 条判定、{n_reviews} 条改判、{n_cache} 条缓存；"
           f"重算 {n_concl} 组结论（链 {chain_sha[:8]}）")

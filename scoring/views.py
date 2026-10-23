@@ -10,8 +10,14 @@ from collections import defaultdict
 
 from .policy import EpisodeVerdict, Policy
 
-# 答案的比较属性（§4.2）：比较轴 / 固定 / 不限 只能从中取
+# 答案的比较属性（§4.2，R3 修订后分三类）：
+# - 重复采样（trial、run）：默认不限，无需声明——它们是采样标识，不是比较条件
+# - 处理条件（profile、model、mode、skills_base、evalset_version）：必须一致，
+#   或作为比较轴，或显式固定 / 声明不限
+# - 不可比较（skills_mode）：必须一致，不能作轴、不能不限
 ATTRS = ("profile", "model", "mode", "trial", "skills_mode", "skills_base", "evalset_version", "run")
+SAMPLING_ATTRS = frozenset({"trial", "run"})
+DERIVED_ATTR = {"profile": "model", "model": "profile"}   # 互为派生：一个作轴，另一个自动放行
 
 
 # ---------------------------------------------------------------- 区间
@@ -100,32 +106,6 @@ def attr_value(row: dict, name: str) -> str:
     if name == "run":
         return str(row.get("run_id"))
     return str(row.get(name))
-
-
-# ---------------------------------------------------------------- 出口 3：变体泄露嫌疑（C5）
-
-def variant_leak_suspects(records: list[dict]) -> list[dict]:
-    """变体泄露嫌疑清单（改造方案 §3.4 C5，规则来自 CASE-STRUCTURE §8 提示规则）：
-    只查变体（uid 序号 > 0）。被改写的那一轮用户消息缺少本轮关键条件的关键词，
-    或包含了更早轮次条件的关键词，即列入。"""
-    out: list[dict] = []
-    for r in records:
-        uid = r.get("uid", "?")
-        tail = uid.rsplit("#", 1)[-1]
-        if not tail.isdigit() or int(tail) == 0:
-            continue                                     # 种子不查
-        case = r.get("case") or {}
-        conds = [c for c in (case.get("conditions") or []) if c.get("keywords")]
-        msgs = [t.get("content", "") for t in (case.get("turns") or []) if t.get("role") == "user"]
-        for n, msg in enumerate(msgs, 1):
-            for c in conds:
-                if c.get("turn") == n and not any(kw in msg for kw in c["keywords"]):
-                    out.append({"uid": uid, "turn": n,
-                                "reason": f"第 {n} 轮缺少条件「{c.get('slot')}」关键词：{'、'.join(c['keywords'])}"})
-                if (c.get("turn") or 0) < n and any(kw in msg for kw in c["keywords"]):
-                    out.append({"uid": uid, "turn": n,
-                                "reason": f"第 {n} 轮含更早轮次条件「{c.get('slot')}」关键词：{'、'.join(c['keywords'])}"})
-    return out
 
 
 # ---------------------------------------------------------------- 题目级统计（C12，§4.3）
@@ -222,11 +202,12 @@ def anchor_tripwires(sel: list[dict], run_order: dict[str, int] | None = None) -
 
 def compare_axis(rows: list[dict], axis: str, fixes: dict[str, str] | None = None,
                  anys: tuple[str, ...] | set[str] = (), run_order: dict[str, int] | None = None) -> dict:
-    """比较轴对比（§7.1）：题目 × 轴值通过矩阵 + 维度聚合 + 锚点绊线。
+    """比较轴对比（§7.1，R3 修订）：题目 × 轴值通过矩阵 + 维度聚合 + 锚点绊线。
 
-    放行条件：除比较轴外，没有被固定（--fix）或声明不限（--any）的属性必须在所有
-    答案上取值一致；skills_mode 不能作轴、不能不限。比较按题目交集（qkey）对齐；
-    缺判定的答案计为待重判，不参与比较。"""
+    放行条件（属性三类，见 ATTRS 注释）：处理条件属性必须一致、作轴或显式固定/
+    声明不限；trial/run 默认不限；profile 与 model 互为派生，一个作轴另一个自动
+    放行（同轴值下观测到多个模型记入 warnings，不拦截）；skills_mode 永远不可跨。
+    比较按题目交集（qkey）对齐；缺判定的答案计为待重判，不参与比较。"""
     fixes = fixes or {}
     anys = set(anys)
     if axis not in ATTRS:
@@ -241,13 +222,25 @@ def compare_axis(rows: list[dict], axis: str, fixes: dict[str, str] | None = Non
         raise ValueError(f"未知比较属性：{unknown}")
 
     sel = [r for r in rows if all(attr_value(r, k) == v for k, v in fixes.items())]
-    others = [a for a in ATTRS if a != axis and a not in fixes and a not in anys]
+    others = [a for a in ATTRS if a != axis and a not in fixes and a not in anys
+              and a not in SAMPLING_ATTRS and a != DERIVED_ATTR.get(axis)]
     inconsistent = {a: sorted({attr_value(r, a) for r in sel}) for a in others
                     if len({attr_value(r, a) for r in sel}) > 1}
     if inconsistent:
         blocked = blocked or ("比较轴之外未固定的属性取值不一致："
                               + "；".join(f"{k}={v}" for k, v in inconsistent.items()))
     axis_values = sorted({attr_value(r, axis) for r in sel})
+
+    # 派生属性漂移：不拦截，记入 warnings（R3）
+    warnings: list[str] = []
+    if not blocked and axis in DERIVED_ATTR:
+        other = DERIVED_ATTR[axis]
+        by_axis: dict[str, set[str]] = defaultdict(set)
+        for r in sel:
+            by_axis[attr_value(r, axis)].add(attr_value(r, other))
+        for av, others_seen in sorted(by_axis.items()):
+            if len(others_seen) > 1:
+                warnings.append(f"{axis}「{av}」下观测到多个 {other}：{'、'.join(sorted(others_seen))}")
 
     by_q: dict[str, list[dict]] = defaultdict(list)
     for r in sel:
@@ -291,6 +284,13 @@ def compare_axis(rows: list[dict], axis: str, fixes: dict[str, str] | None = Non
                       for av, c in per_axis.items()}
                 for dim, per_axis in sorted(dims.items())}
     tripwires = [] if blocked else anchor_tripwires(sel, run_order)
+    evalset_versions = None
+    if "evalset_version" in anys and not blocked:
+        counts: dict[str, set[str]] = defaultdict(set)    # 版本 → 题目数（qkey）
+        for qkey in included:
+            for r in by_q[qkey]:
+                counts[r["evalset_version"] or "?"].add(qkey)
+        evalset_versions = {v: len(qs) for v, qs in sorted(counts.items())}
     return {
         "axis": axis,
         "axis_values": axis_values,
@@ -298,9 +298,11 @@ def compare_axis(rows: list[dict], axis: str, fixes: dict[str, str] | None = Non
         "any": sorted(anys),
         "blocked": blocked,
         "inconsistent": inconsistent,
+        "warnings": warnings,
         "matrix": matrix,
         "excluded_qkeys": excluded,
         "dims": dims_out,
+        "evalset_versions": evalset_versions,
         "anchor_tripwires": tripwires,
         "pending_answers": pending,
     }
@@ -310,34 +312,21 @@ def compare_axis(rows: list[dict], axis: str, fixes: dict[str, str] | None = Non
 
 def quality_from_db(store, rows: list[dict], chain_sha: str) -> dict:
     """人工与机器不一致清单、规则判定一致率、注入 found>1、无效清单、forced 前提
-    成立率偏低的 ec、变体泄露嫌疑清单（C5）。取数全部经评测库。"""
-    mismatch: list[dict] = []
-    rule_total = rule_agree = 0
+    成立率偏低的 ec、变体泄露嫌疑清单（C5）。全部经评测库聚合取数（R7）：
+    不一致/一致率一条 SQL；found>1 与变体泄露读 answers 预计算列，不解析 record。"""
+    mismatch, rule_agree, rule_total = store.human_machine_compare(chain_sha)
     invalid: list[str] = []
     found_gt1: set[str] = set()
     forced_ec: dict[str, list[str]] = defaultdict(list)
-    records: list[dict] = []
+    leaks: list[dict] = []
     for r in rows:
-        record = json.loads(r.get("record_json") or "{}")
-        records.append(record)
-        if any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or []):
-            found_gt1.add(r["uid"])
         if r["c_status"] == "invalid":
             invalid.append(f'{r["uid"]}|{r["mode"]}|t{r["trial"]}')
+        if r.get("injection_found_gt1"):
+            found_gt1.add(r["uid"])
         if r["c_status"] and r["mode"] == "forced" and r["dim"] == "错误知识纠正":
             forced_ec[r["uid"]].append(r["c_status"])
-        if not r["current_judge_fp"]:
-            continue
-        for er in store.effective_rows(r["answer_id"], r["current_judge_fp"], chain_sha):
-            vrow, eff = er["row"], er["eff"]
-            if eff.source != "human":
-                continue
-            if vrow["source"] == "rule" and vrow["value"] is not None:
-                rule_total += 1
-                rule_agree += vrow["value"] == eff.value
-            if vrow["value"] != eff.value:
-                mismatch.append({"answer_id": r["answer_id"], "uid": r["uid"], "kind": vrow["kind"],
-                                 "item": vrow["item_id"], "machine": vrow["value"], "human": eff.value})
+        leaks.extend(json.loads(r.get("variant_leak_json") or "[]"))
     forced_ec_low = [uid for uid, sts in sorted(forced_ec.items())
                      if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5]
     return {
@@ -347,5 +336,5 @@ def quality_from_db(store, rows: list[dict], chain_sha: str) -> dict:
         "injection_found_gt1": sorted(found_gt1),
         "invalid_episodes": invalid,
         "forced_ec_precond_low": forced_ec_low,
-        "variant_leak_suspects": variant_leak_suspects(records),
+        "variant_leak_suspects": leaks,
     }

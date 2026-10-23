@@ -1,8 +1,8 @@
-"""视图（方案 §10 出口迁移 + 改造方案 §4.3 题目级统计）：能力视图、变体泄露、
-难度/区分度/稳定性/题组一致性/历史。"""
+"""视图（方案 §10 出口迁移 + 改造方案 §4.3 题目级统计）：能力视图、
+难度/区分度/稳定性/题组一致性/历史。变体泄露嫌疑见 test_items。"""
 from scoring import views
 from scoring.policy import EpisodeVerdict, policy_from_dict
-from scoring.views import ability_view, question_stats, variant_leak_suspects
+from scoring.views import ability_view, question_stats
 
 
 def test_ability_view_counts_undecided_and_headline():
@@ -16,32 +16,6 @@ def test_ability_view_counts_undecided_and_headline():
     forced_cell = ability_view([EpisodeVerdict(uid="u", mode="forced", trial=1, dim="知识召回", status="pass")],
                                policy)["知识召回|forced"]
     assert forced_cell["headline"] is False
-
-
-def _leak_case(turns):
-    return {"uid": "x", "case": {
-        "conditions": [
-            {"slot": "收款状态", "value": "尾款未收", "turn": 1, "keywords": ["尾款"]},
-            {"slot": "问点", "value": "电放", "turn": 2, "keywords": ["电放"]}],
-        "turns": turns}}
-
-
-def test_variant_leak_suspects():
-    """C5：被替换轮缺少本轮条件关键词 / 含更早轮次条件关键词 → 嫌疑；种子不查。"""
-    variant = _leak_case([{"role": "user", "content": "可以放货吗"},          # 缺"尾款"
-                          {"role": "user", "content": "那没收钱也能放？"}])   # 缺"电放"、无早期泄漏
-    seed = _leak_case([{"role": "user", "content": "完全无关的种子轮"}])      # 种子：同样缺词也不列
-    variant["uid"], seed["uid"] = "kr-1#1", "kr-1#0"
-    suspects = variant_leak_suspects([seed, variant])
-    assert suspects == [
-        {"uid": "kr-1#1", "turn": 1, "reason": "第 1 轮缺少条件「收款状态」关键词：尾款"},
-        {"uid": "kr-1#1", "turn": 2, "reason": "第 2 轮缺少条件「问点」关键词：电放"}]
-    # 更早轮次关键词泄漏
-    leak = _leak_case([{"role": "user", "content": "尾款没收，可以电放吗"},
-                       {"role": "user", "content": "那尾款没收时也能电放？"}])  # 第 2 轮含第 1 轮的"尾款"
-    leak["uid"] = "kr-2#1"
-    suspects2 = variant_leak_suspects([leak])
-    assert suspects2 == [{"uid": "kr-2#1", "turn": 2, "reason": "第 2 轮含更早轮次条件「收款状态」关键词：尾款"}]
 
 
 # ---------------------------------------------------------------- 题目级统计（§4.3）

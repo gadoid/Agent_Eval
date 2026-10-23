@@ -121,13 +121,16 @@ def target_skill(case: dict, routing: dict[str, list[str]] | None) -> str | None
 
 
 def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff: dict[str, Verdict],
-                       policy: Policy, routing: dict[str, list[str]] | None = None) -> EpisodeVerdict:
+                       policy: Policy, routing: dict[str, list[str]] | None = None,
+                       statuses: dict[str, str] | None = None) -> EpisodeVerdict:
     """按 §7 顺序得出会话结论（改造方案 §3 两点求值）。
 
     条目先按实际值分类（确定 / 未决 / 异常）；会话结论由两点求值决定：
     未决与异常条目分别取最有利、最不利值各算一次，两次相同即确定。
     记录字段（facts / forbidden_adopted / 计数）沿现行短路顺序——前提/路径/
-    拒答短路后，事实不进结论。"""
+    拒答短路后，事实不进结论。
+    statuses（R10）：条目 id → 判定行 status（ok/undecided/error，人工覆盖后为 ok），
+    是异常的单一判据；缺省回退"取值为空且带算子来源"。"""
     case = ctx.case
     v = EpisodeVerdict(
         uid=record.get("uid", "?"), mode=record.get("mode", "?"), trial=record.get("trial", 0),
@@ -153,8 +156,12 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
     def verd_of(item: Item) -> Verdict:
         return eff.get(item.id) or Verdict(None, "", "")
 
-    def is_error(verd: Verdict) -> bool:
-        """value 为空但带算子来源 → 算子异常（§3.3）；空 Verdict（缺行/整链弃权）→ 未决。"""
+    def is_error(item: Item, verd: Verdict) -> bool:
+        """条目异常的单一判据（整改清单 R10）：优先按条目 status；调用方未提供
+        status（直接构造 eff 的单测路径）时回退"取值为空且带算子来源"。"""
+        st = (statuses or {}).get(item.id)
+        if st is not None:
+            return verd.value is None and st == "error"
         return verd.value is None and bool(verd.source)
 
     decided: dict[str, str] = {}
@@ -175,7 +182,7 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
     for item in preconds:
         verd = verd_of(item)
         if verd.value is None:
-            (errored if is_error(verd) else undecided).append(item.id)
+            (errored if is_error(item, verd) else undecided).append(item.id)
             continue
         decided[item.id] = verd.value
         v.precondition.append({"id": item.id, "hold": verd.value == "成立"})
@@ -189,7 +196,7 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
         if forced:
             continue
         if verd.value is None:
-            (errored if is_error(verd) else undecided).append(item.id)
+            (errored if is_error(item, verd) else undecided).append(item.id)
             continue
         decided[item.id] = verd.value
         path_vals.append(verd.value)
@@ -203,7 +210,7 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
     if not answerable and refusal is not None:
         verd = verd_of(refusal)
         if verd.value is None:
-            (errored if is_error(verd) else undecided).append(refusal.id)
+            (errored if is_error(refusal, verd) else undecided).append(refusal.id)
         else:
             decided[refusal.id] = verd.value
 
@@ -212,7 +219,7 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
         verd = verd_of(item)
         if verd.value is None:
             if facts_live:
-                (errored if is_error(verd) else undecided).append(item.id)
+                (errored if is_error(item, verd) else undecided).append(item.id)
             continue
         decided[item.id] = verd.value
     for item in items:

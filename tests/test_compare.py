@@ -1,4 +1,4 @@
-"""比较轴与锚点绊线（改造方案 §7、§12 步骤 4 验收）。"""
+"""比较轴与锚点绊线（改造方案 §7、整改清单 R3 验收）。"""
 import json
 
 import pytest
@@ -20,32 +20,63 @@ def row(qkey="q1", uid="kr-1#0", case="kr-1", vi=0, rewrite=None, dim="知识召
     }
 
 
-def test_axis_profile_matrix_and_dims():
+def test_common_multi_profile_case_passes_without_flags():
+    """R3 验收：两个 run、两个 profile、各 2 trial、同评测集 → --axis profile 零参数放行。"""
     rows = [
-        row(qkey="q1", profile="p1", status="pass"), row(qkey="q1", profile="p1", trial=2, status="fail"),
-        row(qkey="q1", profile="p2", status="pass"),
-        row(qkey="q2", uid="kr-2#0", profile="p1", status="fail"),
-        row(qkey="q2", uid="kr-2#0", profile="p2", status="pass"),
+        row(profile="p1", run="r1", trial=1), row(profile="p1", run="r1", trial=2),
+        row(profile="p2", run="r2", trial=1, status="fail", models='["glm-4"]'),
+        row(profile="p2", run="r2", trial=2, status="fail", models='["glm-4"]'),
     ]
-    rep = compare_axis(rows, axis="profile", anys=("trial",))
+    rep = compare_axis(rows, axis="profile")
     assert rep["blocked"] is None
     assert rep["axis_values"] == ["p1", "p2"]
-    assert rep["matrix"]["q1"]["p1"] == {"pass": 1, "n": 2, "pending": 0, "rate": 0.5}
-    assert rep["matrix"]["q1"]["p2"]["rate"] == 1.0
-    assert rep["dims"]["知识召回"]["p1"]["pass"] == 1 and rep["dims"]["知识召回"]["p1"]["n"] == 3
+    assert rep["matrix"]["q1"]["p1"] == {"pass": 2, "n": 2, "pending": 0, "rate": 1.0}
+    assert rep["matrix"]["q1"]["p2"]["rate"] == 0.0
+    assert rep["dims"]["知识召回"]["p1"]["n"] == 2
 
 
-def test_unfixed_inconsistent_attribute_blocks():
+def test_mode_inconsistent_still_blocks():
     rows = [row(mode="natural"), row(mode="forced")]
     rep = compare_axis(rows, axis="profile")
     assert rep["blocked"] and "mode" in rep["blocked"]
-    # 固定后放行
     ok = compare_axis(rows, axis="profile", fixes={"mode": "natural"})
     assert ok["blocked"] is None
-    # trial 不一致：不限则拦、声明不限则放行
-    t = [row(trial=1), row(trial=2)]
-    assert "trial" in compare_axis(t, axis="profile")["blocked"]
-    assert compare_axis(t, axis="profile", anys=("trial",))["blocked"] is None
+    # skills_base 同理：处理条件必须一致
+    sb = [row(), row(skills_base="s2")]
+    assert "skills_base" in compare_axis(sb, axis="profile")["blocked"]
+
+
+def test_trial_and_run_are_sampling_attrs():
+    """R3：trial / run 是重复采样标识，默认不限，无需声明。"""
+    rows = [row(trial=1), row(trial=2)]
+    assert compare_axis(rows, axis="profile")["blocked"] is None
+    # run 也可直接作比较轴，跨 run 的 trial 差异不拦截
+    runs = [row(run="a", trial=1), row(run="b", trial=2)]
+    rep = compare_axis(runs, axis="run")
+    assert rep["blocked"] is None and rep["axis_values"] == ["a", "b"]
+
+
+def test_profile_axis_allows_model_with_drift_warning():
+    """R3：profile 与 model 互为派生——作轴的派生属性自动放行；同 profile 多模型给漂移提示。"""
+    rows = [row(profile="p1", models='["glm-5.3"]', run="r1"),
+            row(profile="p1", models='["glm-4"]', run="r2")]
+    rep = compare_axis(rows, axis="profile")
+    assert rep["blocked"] is None
+    assert rep["warnings"] and "p1" in rep["warnings"][0] and "glm-4" in rep["warnings"][0]
+    # 干净的派生关系：每个 profile 一个模型 → 无警告
+    clean = [row(profile="p1", models='["glm-5.3"]'), row(profile="p2", models='["glm-4"]')]
+    assert compare_axis(clean, axis="profile")["warnings"] == []
+
+
+def test_evalset_version_any_lists_question_counts():
+    rows = [row(evalset="v1", run="a"), row(evalset="v2", run="b"),
+            row(qkey="q2", uid="kr-2#0", evalset="v1", run="b")]
+    rep = compare_axis(rows, axis="run", anys=("evalset_version",))
+    assert rep["blocked"] is None
+    # 各版本的题目数（进入交集的题：q2 只在 run b → 被排除）
+    assert rep["evalset_versions"] == {"v1": 1, "v2": 1}
+    # 未声明不限时跨版本拦截
+    assert "evalset_version" in compare_axis(rows, axis="run")["blocked"]
 
 
 def test_skills_mode_never_comparable():
@@ -62,14 +93,14 @@ def test_pending_answers_excluded():
 
 
 def test_question_intersection_excludes_single_sided():
-    """§7.2 题目交集：只在单侧有判定的题被排除（取代 diff.md 因降级移出对齐）。"""
+    """§7.2 题目交集：只在单侧有答案的题被排除（取代 diff.md 因降级移出对齐）。"""
     rows = [
         row(qkey="q1", run="a", status="pass"), row(qkey="q1", run="b", status="fail"),
         row(qkey="q2", uid="kr-2#0", run="a", status="pass"),           # b 里没有（降级移出）
         row(qkey="q3", uid="kr-3#0", run="a", status="pass"),           # 输入改版 → qkey 不同
         row(qkey="q3", uid="kr-3#0", run="b", status="pass"),
     ]
-    rep = compare_axis(rows, axis="run", anys=("trial",))
+    rep = compare_axis(rows, axis="run")
     assert rep["blocked"] is None
     assert set(rep["matrix"]) == {"q1", "q3"}
     assert [e["qkey"] for e in rep["excluded_qkeys"]] == ["q2"]
@@ -82,11 +113,10 @@ def test_anchor_tripwire_by_qkey():
         row(qkey="q1", run="b", trial=1, status="fail", anchor=True),
         row(qkey="q1", run="b", trial=2, status="fail", anchor=True),
     ]
-    rep = compare_axis(rows, axis="run", anys=("trial",), run_order={"a": 0, "b": 1})
+    rep = compare_axis(rows, axis="run", run_order={"a": 0, "b": 1})
     assert rep["anchor_tripwires"] == [{"qkey": "q1", "from_run": "a", "to_run": "b"}]
-    # trials 不足 2 → 不触发
     rows2 = rows[:1] + [row(qkey="q1", run="b", status="fail", anchor=True)]
-    rep2 = compare_axis(rows2, axis="run", anys=("trial",), run_order={"a": 0, "b": 1})
+    rep2 = compare_axis(rows2, axis="run", run_order={"a": 0, "b": 1})
     assert rep2["anchor_tripwires"] == []
 
 
