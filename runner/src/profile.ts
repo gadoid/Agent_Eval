@@ -127,8 +127,20 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
     }
   }
 
+  const modelProvider = typeof r.model_provider === 'string' ? r.model_provider : undefined
+  const reasoningEffort = typeof r.reasoning_effort === 'string' ? r.reasoning_effort : undefined
+  if (r.model !== undefined && (typeof r.model !== 'string' || (r.model as string).trim() === '')) {
+    errors.push('model 必须是非空字符串')
+  }
+  if (r.model_provider !== undefined && (typeof r.model_provider !== 'string' || (r.model_provider as string).trim() === '')) {
+    errors.push('model_provider 必须是非空字符串')
+  }
+  if (r.reasoning_effort !== undefined && (typeof r.reasoning_effort !== 'string' || (r.reasoning_effort as string).trim() === '')) {
+    errors.push('reasoning_effort 必须是非空字符串（如 low/medium/high）')
+  }
+
   for (const key of Object.keys(r)) {
-    if (!['id', 'description', 'model', 'dsh', 'skill_tool', 'routing', 'web',
+    if (!['id', 'description', 'model', 'model_provider', 'reasoning_effort', 'dsh', 'skill_tool', 'routing', 'web',
           'skills_mode', 'skills_roots', 'skills_inventory', 'budget'].includes(key)) {
       errors.push(`未知字段 ${key}`)
     }
@@ -136,11 +148,12 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
   if (errors.length > 0) {
     throw new ConfigError(`${source}:\n  ${errors.join('\n  ')}`)
   }
-
-  return {
+  const profile = {
     id: r.id as string,
     description: typeof r.description === 'string' ? r.description : undefined,
     model: typeof r.model === 'string' ? r.model : undefined,
+    model_provider: modelProvider,
+    reasoning_effort: reasoningEffort,
     dsh: {
       bin: dsh.bin as string | undefined,
       profile: (dsh.profile as string | undefined) ?? 'headless',
@@ -160,6 +173,20 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
       web && typeof web === 'object' && !Array.isArray(web)
         ? { home: (web.home as string).trim(), port: web.port as number, headless: (web.headless as boolean | undefined) ?? true }
         : undefined,
+  }
+  assertModelConfigComplete(profile, source)
+  return profile
+}
+
+/** model 与 reasoning_effort 要么都设、要么都不设：overlay 对 agent-default-model 是同 id 条目
+ * 整体覆盖，只写一项会把 eline profile 层的另一项剥掉（掉回 dsh 默认值）。 */
+export function assertModelConfigComplete(profile: Profile, source = '<profile>'): void {
+  if (profile.model !== undefined || profile.reasoning_effort !== undefined) {
+    if (profile.model === undefined || profile.reasoning_effort === undefined) {
+      throw new ConfigError(
+        `${source}: model 与 reasoning_effort 需同时设置（overlay 覆盖 agent-default-model 时必须完整，`
+        + `只写一项会剥掉 eline profile 层的另一项配置）`)
+    }
   }
 }
 

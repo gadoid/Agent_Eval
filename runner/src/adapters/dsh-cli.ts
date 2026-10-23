@@ -3,7 +3,7 @@ import { basename, dirname, join } from 'node:path'
 import type { AdapterCapabilities, Profile, TurnOutcome, TurnStatus, TurnTrace } from '../domain.js'
 import type { AgentAdapter, AgentSession, SessionContext } from '../ports.js'
 import { collectFromJsonl } from '../vendor/collector.js'
-import { buildSkillsOverlayEntries } from '../materialize.js'
+import { buildModelOverlayEntries, buildSkillsOverlayEntries } from '../materialize.js'
 import { buildDshArgs, buildOverlayYaml, findSessionFile, resolveDshCommand, runOne } from '../vendor/dsh-kernel.js'
 import type { DshCommand } from '../vendor/dsh-kernel.js'
 import { emptyTokenUsage } from '../vendor/types.js'
@@ -39,7 +39,8 @@ export class DshAdapter implements AgentAdapter {
     // bundled-copy：知识接线走逐会话 env（DSH_BUNDLED_SKILL_DIR），不写 skill overlay
     const viaEnv = context.env?.DSH_BUNDLED_SKILL_DIR !== undefined
     const skillsOverlay = !viaEnv && context.skillsDirs && context.skillsDirs.length > 0 ? buildSkillsOverlayEntries(context.skillsDirs) : ''
-    await writeFile(overlayPath, buildOverlayYaml(sessionRoot) + skillsOverlay)
+    const modelOverlay = buildModelOverlayEntries(this.profile)
+    await writeFile(overlayPath, buildOverlayYaml(sessionRoot) + skillsOverlay + modelOverlay)
     return new DshSession(this.dsh, this.profile.dsh.profile, context, sessionRoot, overlayPath)
   }
 }

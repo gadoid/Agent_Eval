@@ -109,6 +109,26 @@ export function buildSkillsOverlayEntries(customSkillDirs: readonly string[]): s
   ].join('\n')
 }
 
+/**
+ * overlay 中追加的会话模型覆盖（--patch 最高优先级层，压过 eline profile 的同名条目）。
+ * model/reasoning_effort 任一存在时生成，provider/模型/努力程度三者齐写——同 id 条目
+ * 整体生效，缺项会剥掉 eline profile 层的对应配置（parseProfile 已强制两项同设）。
+ */
+export function buildModelOverlayEntries(
+  profile: { model?: string; reasoning_effort?: string; model_provider?: string },
+): string {
+  if (profile.model === undefined && profile.reasoning_effort === undefined) return ''
+  return [
+    '- id: agent-default-model',
+    "  name: '@deepseek-ai/dsh-agent-default-model'",
+    '  config:',
+    `    provider: ${profile.model_provider ?? 'deepseek-account'}`,
+    `    model: ${JSON.stringify(profile.model ?? '')}`,
+    `    reasoningEffort: ${JSON.stringify(profile.reasoning_effort ?? '')}`,
+    '',
+  ].join('\n')
+}
+
 function countOccurrences(haystack: string, needle: string): number {
   if (needle === '') return 0
   let count = 0

@@ -177,7 +177,36 @@ describe('命令行端到端：md 用例 → evalset.jsonl → results.jsonl', (
   it('参数与配置错误返回 1', async () => {
     expect(await main(['run', '--evalset', evalset], new Sink() as never, new Sink() as never)).toBe(1)
     expect(await main(['run', '--evalset', evalset, '--profile', profilePath, '--out', join(tmp, 'o'), '--modes', 'sometimes'], new Sink() as never, new Sink() as never)).toBe(1)
+    // 模型覆盖必须成对（只给一项拒绝）
+    expect(await main(['run', '--evalset', evalset, '--profile', profilePath, '--out', join(tmp, 'o2'),
+      '--only', 'kr-0201', '--model', 'glm-4.6'], new Sink() as never, new Sink() as never)).toBe(1)
     expect(await main(['bogus'], new Sink() as never, new Sink() as never)).toBe(1)
+  })
+
+  it('模型覆盖：--model/--reasoning-effort 写进每会话 overlay，生效 profile id 带后缀', async () => {
+    const outDir = join(tmp, 'out-model')
+    const code = await main(
+      ['run', '--evalset', evalset, '--profile', profilePath, '--out', outDir,
+       '--modes', 'natural', '--trials', '1', '--only', 'kr-0201',
+       '--model', 'glm-4.6', '--reasoning-effort', 'low'],
+      new Sink() as never, new Sink() as never,
+    )
+    expect(code).toBe(0)
+    // 生效 id 可区分（profile 是比较轴的处理条件）
+    const manifest = JSON.parse(await readFile(join(outDir, 'run.json'), 'utf8')) as RunManifest
+    expect(manifest.profile.content.id).toBe('fake-v1@glm-4.6-low')
+    expect(manifest.profile.content.model).toBe('glm-4.6')
+    expect(manifest.profile.content.reasoning_effort).toBe('low')
+    // overlay 里有完整的 agent-default-model 覆盖条目（fake dsh 把 overlay 记进 state.json）
+    const workDir = join(outDir, '.work', '0001-kr-0201-0-natural-t1')
+    const sessionDir = (await import('node:fs')).readdirSync(join(workDir, 'session'))
+      .find((s) => String(s).startsWith('session-'))
+    const state = JSON.parse(await readFile(join(workDir, 'session', sessionDir as string, 'state.json'), 'utf8'))
+    expect(state.overlay).toContain('- id: agent-default-model')
+    expect(state.overlay).toContain("name: '@deepseek-ai/dsh-agent-default-model'")
+    expect(state.overlay).toContain('provider: deepseek-account')
+    expect(state.overlay).toContain('model: "glm-4.6"')
+    expect(state.overlay).toContain('reasoningEffort: "low"')
   })
 })
 

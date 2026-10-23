@@ -1,6 +1,7 @@
 id: eline-glm53-bundledcopy
 description: ec 可运行模式（P0-3 已验证）：逐 episode 物化 skill 副本并经 DSH_BUNDLED_SKILL_DIR 指向它，注入改写只作用于本会话副本
 model: glm-5.3
+reasoning_effort: high   # 与 model 成对：经每会话 overlay 覆盖 agent-default-model（provider 缺省 deepseek-account 产品账号态）
 dsh:
   bin: D:/eline-ai/eline.exe --expose-internals D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
   profile: evalheadless

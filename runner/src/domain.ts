@@ -69,8 +69,12 @@ export type SkillsMode = 'default-roots' | 'isolated' | 'bundled-copy'
 export interface Profile {
   id: string
   description?: string
-  /** 仅记录；实际模型由 dsh profile 的配置决定 */
+  /** 会话模型：与 reasoning_effort 同时设置时经每会话 overlay 覆盖 agent-default-model */
   model?: string
+  /** 努力程度（dsh 配置键 reasoningEffort）；与 model 需同时设置（overlay 同 id 条目整体生效，只写一项会剥掉另一项） */
+  reasoning_effort?: string
+  /** agent-default-model 的 provider；缺省 deepseek-account（产品链路账号态） */
+  model_provider?: string
   dsh: {
     bin?: string
     profile: string

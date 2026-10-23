@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { InjectionOp } from '../src/domain.js'
 import { userTurnsOf } from '../src/domain.js'
-import { buildSkillsOverlayEntries, materializeSkills, rehearseInjections } from '../src/materialize.js'
+import { buildModelOverlayEntries, buildSkillsOverlayEntries, materializeSkills, rehearseInjections } from '../src/materialize.js'
 import { parseEvalset, planEpisodes } from '../src/planner.js'
 import { parseProfile } from '../src/profile.js'
 import { computeSnapshot, hashTree } from '../src/snapshot.js'
@@ -172,5 +172,45 @@ dsh:
     expect(overlay).toContain("name: '@deepseek-ai/dsh-session-persistence-jsonl'")
     expect(overlay).toContain("name: '@deepseek-ai/dsh-skill-filesystem'")
     expect(overlay).toContain('includeDefaultRoots: false')
+  })
+})
+
+describe('会话模型覆盖（model / reasoning_effort）', () => {
+  it('model 与 reasoning_effort 需成对设置，model_provider 可选', () => {
+    expect(() => parseProfile('id: a\nmodel: glm-5.3\n')).toThrow(/reasoning_effort/)
+    expect(() => parseProfile('id: a\nreasoning_effort: high\n')).toThrow(/model/)
+    const ok = parseProfile('id: a\nmodel: glm-5.3\nreasoning_effort: high\n')
+    expect(ok.model).toBe('glm-5.3')
+    expect(ok.reasoning_effort).toBe('high')
+    expect(ok.model_provider).toBeUndefined()
+    expect(parseProfile('id: a\nmodel: glm-5.3\nreasoning_effort: high\nmodel_provider: p\n').model_provider).toBe('p')
+    expect(() => parseProfile('id: a\nmodel: ""\n')).toThrow(/model/)
+  })
+  it('buildModelOverlayEntries：未设置不生成；设置时产出完整 agent-default-model 条目', () => {
+    expect(buildModelOverlayEntries({})).toBe('')
+    expect(buildModelOverlayEntries({ model_provider: 'p' })).toBe('')
+    const y = buildModelOverlayEntries({ model: 'glm-4.6', reasoning_effort: 'low' })
+    expect(y).toContain('- id: agent-default-model')
+    expect(y).toContain("name: '@deepseek-ai/dsh-agent-default-model'")
+    expect(y).toContain('provider: deepseek-account')
+    expect(y).toContain('model: "glm-4.6"')
+    expect(y).toContain('reasoningEffort: "low"')
+    expect(buildModelOverlayEntries({ model: 'm', reasoning_effort: 'h', model_provider: 'p' })).toContain('provider: p')
+  })
+  it('DshAdapter 把模型覆盖写进 overlay', async () => {
+    const { DshAdapter } = await import('../src/adapters/dsh-cli.js')
+    const prof = parseProfile(`id: t
+model: glm-5.3
+reasoning_effort: high
+dsh:
+  bin: node ${resolve(__dirname, 'fake-dsh.mjs')}
+`)
+    const adapter = new (DshAdapter as unknown as new (p: unknown) => { open(c: import('../src/ports.js').SessionContext): Promise<unknown> })(prof)
+    const dir = await mkdtemp(join(tmpdir(), 'mov-'))
+    await adapter.open({ runDir: dir, workspace: join(dir, 'ws'), timeoutMs: 1000 })
+    const overlay = await readFile(join(dir, 'overlay.patch.yml'), 'utf8')
+    expect(overlay).toContain('- id: agent-default-model')
+    expect(overlay).toContain('model: "glm-5.3"')
+    expect(overlay).toContain('reasoningEffort: "high"')
   })
 })

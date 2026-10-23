@@ -1,6 +1,7 @@
 id: eline-glm53-defaultroots
 description: 过渡期 Profile（P0-1 验证通过前）：默认 skill 配置，ec 维度在规划期跳过
 model: glm-5.3
+reasoning_effort: high   # 与 model 成对：经每会话 overlay 覆盖 agent-default-model（provider 缺省 deepseek-account 产品账号态）
 dsh:
   bin: D:/eline-ai/eline.exe --expose-internals D:/eline-ai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
   profile: evalheadless

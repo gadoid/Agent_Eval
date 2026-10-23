@@ -14,7 +14,7 @@ import { findSessionFiles, inspectSession, renderInspect } from './inspect.js'
 import { runEvaluation } from './orchestrator.js'
 import { loadEvalset, planEpisodes } from './planner.js'
 import type { AgentAdapter } from './ports.js'
-import { ConfigError, loadProfile } from './profile.js'
+import { assertModelConfigComplete, ConfigError, loadProfile } from './profile.js'
 
 /** 退出码：0 完成；1 参数、配置、评测集错误或找不到 dsh；2 完成但 error/timeout 占比超过阈值 */
 export const EXIT_OK = 0
@@ -44,6 +44,9 @@ run 选项：
   --max-error-rate R        error 与 timeout 占比超过 R 时退出码为 2，默认 0.2
   --adapter dsh-cli|web-ui  执行器：CLI 无头进程，或起 dsh web 服务驱动真实 UI（默认 dsh-cli；
                             web-ui 需 Profile 配置 web.home/web.port，会话原生落在该 home）
+  --model <名>              覆盖会话模型（经每会话 overlay 覆盖 agent-default-model；需与
+                            --reasoning-effort 同时给，生效 profile id 追加 @模型-努力程度）
+  --reasoning-effort <级别> 努力程度（low/medium/high 等，以平台实际支持为准）
 `
 
 export async function main(argv: string[], out = process.stdout, err = process.stderr): Promise<number> {
@@ -85,6 +88,8 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
       'keep-workspace': { type: 'boolean', default: false },
       'max-error-rate': { type: 'string', default: '0.2' },
       adapter: { type: 'string', default: 'dsh-cli' },
+      model: { type: 'string' },
+      'reasoning-effort': { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
     },
     strict: true,
@@ -110,6 +115,15 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
 
   const { profile, sha256: profileSha256 } = await loadProfile(values.profile as string)
   if (profile.dsh.env) Object.assign(process.env, profile.dsh.env)
+
+  // 模型覆盖：overlay 逐会话覆盖 agent-default-model；生效值必须可从 profile id 区分
+  // （profile 是比较轴的处理条件，模型/努力程度不同而 id 相同会让对比误判可比）。
+  if (values.model !== undefined || values['reasoning-effort'] !== undefined) {
+    if (values.model !== undefined) profile.model = values.model as string
+    if (values['reasoning-effort'] !== undefined) profile.reasoning_effort = values['reasoning-effort'] as string
+    assertModelConfigComplete(profile, '--model/--reasoning-effort')
+    profile.id = `${profile.id}@${profile.model}-${profile.reasoning_effort}`
+  }
 
   // --cases：现场编译一次性评测集（dry-run 无 --out 时用临时目录）
   let evalsetPath = values.evalset as string | undefined
@@ -148,6 +162,9 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
       if (b?.max_hours && totalTurns * lastAverages.hoursPerTurn > b.max_hours) out.write(`  提醒：估算超过 budget.max_hours=${String(b.max_hours)}\n`)
     }
     out.write(`  skills_mode=${profile.skills_mode}${anchors.length > 0 ? `，锚点 ${String(anchors.length)} 个` : ''}\n`)
+    if (profile.model) {
+      out.write(`  模型 ${profile.model}（effort ${profile.reasoning_effort}）经 overlay 覆盖，profile id=${profile.id}\n`)
+    }
     for (const s of plan.skipped) out.write(`  跳过 ${s.uid}${s.mode ? `（${s.mode}）` : ''}：${s.reason}\n`)
     for (const e of plan.episodes.filter((x) => x.trial === 1)) {
       const turns = e.messages.length
