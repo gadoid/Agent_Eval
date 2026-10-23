@@ -391,8 +391,96 @@ def test_v1_upgrade_merges_when_new_qkey_already_exists(tmp_path):
     store.close()
 
 
+def _topic_record(topic, fact_text="未收尾款不应电放"):
+    """同 uid 同输入、仅 topic 不同的两条记录（旧算法 qkey 相同、新算法分叉）。"""
+    record = mk_record()
+    record["case"] = json.loads(json.dumps(record["case"]))
+    record["case"]["topic"] = topic
+    record["case"]["turns"] = [{"role": "user", "content": "电放前要收齐尾款吗"}]
+    record["case"]["injections"] = []
+    if fact_text != "未收尾款不应电放":
+        record["case"]["facts"][0]["text"] = fact_text
+    return record
+
+
+def test_v1_upgrade_qkey_fork_expectations_follow_their_topic(tmp_path):
+    """M1：旧 qkey 分叉（同 uid 同输入、仅 topic 不同）时，期望跟着自己 spec_json 的
+    topic 走，当前期望指针不跑丢；分叉出的另一题继承 first_seen、不带当前期望。"""
+    from scoring.items import qkey_of
+    rx = _topic_record("尾款与电放")                  # specs 登记过的期望（topic X）
+    ry = _topic_record("信用证交单")                  # 另一 run 记录的同题（topic Y）
+    old_fp = _old_input_fp(rx["case"])
+    assert old_fp == _old_input_fp(ry["case"])        # 旧算法下同 qkey
+    q_x, q_y = qkey_of(rx["case"]), qkey_of(ry["case"])
+    assert q_x != q_y
+
+    db_path = tmp_path / "v1fork.db"
+    old_q = _build_v1_db(db_path, rx)
+    assert old_q == f"ec-1#0|{old_fp}"
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    ep_y = f"{ry['uid']}-{ry['mode']}-t{ry['trial']}"
+    conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)",
+                 ("r2", "/y", "v1", "p1", "{}", "2026-10-23T09:30:00"))
+    conn.execute("INSERT INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 ("r2/" + ep_y, old_q, "r2", ep_y, judge_fp_of(ry["case"]), "p1", '["glm-5.3"]',
+                  ry["mode"], ry["trial"], "default-roots", None, "v1", "ok",
+                  json.dumps(ry, ensure_ascii=False)))
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    fp_x = judge_fp_of(rx["case"])
+    by_q = {q["qkey"]: q for q in store.questions()}
+    assert set(by_q) == {q_x, q_y}                    # 分叉成两题，旧 qkey 消失
+    assert by_q[q_x]["current_judge_fp"] == fp_x and by_q[q_x]["active"] == 1
+    assert by_q[q_y]["current_judge_fp"] is None and by_q[q_y]["active"] == 0
+    assert by_q[q_y]["first_seen"] == by_q[q_x]["first_seen"] == "2026-10-22T08:00:00"
+    assert store.spec_of(q_x, fp_x) is not None       # 期望在自己的 topic 名下
+    assert store.spec_of(q_y, fp_x) is None
+    assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions WHERE qkey=?",
+                              (q_y,)).fetchone()["c"] == 0
+    a_by_run = {a["run_id"]: a for a in store.answers()}
+    assert a_by_run["r1"]["qkey"] == q_x and a_by_run["r2"]["qkey"] == q_y
+    store.close()
+
+
+def test_v1_upgrade_qkey_fork_current_pointer_follows_its_spec(tmp_path):
+    """M1：旧 qkey 下两份期望（judge_fp 不同、topic 不同）各归各的新 qkey；
+    当前期望指针指向其期望所在的新 qkey，spec_versions 随期望拆分。"""
+    from scoring.items import qkey_of
+    rx = _topic_record("尾款与电放")                  # 期望 1：facts 文本 A、topic X
+    ry = _topic_record("信用证交单", fact_text="电放必须取得托收指示书")  # 期望 2：文本 B、topic Y
+    fp_x, fp_y = judge_fp_of(rx["case"]), judge_fp_of(ry["case"])
+    assert fp_x != fp_y
+
+    db_path = tmp_path / "v1fork2.db"
+    _build_v1_db(db_path, rx)
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("INSERT INTO specs VALUES(?,?,?,?,?)",
+                 ("ec-1#0|" + _old_input_fp(ry["case"]), fp_y,
+                  json.dumps(ry["case"], ensure_ascii=False), "v2", "2026-10-23T09:00:00"))
+    conn.execute("UPDATE questions SET current_judge_fp=?", (fp_y,))   # 当前期望 = 期望 2
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    q_x, q_y = qkey_of(rx["case"]), qkey_of(ry["case"])
+    assert store.spec_of(q_x, fp_x) is not None and store.spec_of(q_y, fp_y) is not None
+    assert store.current_spec(q_y)[0] == fp_y        # 指针跟着期望 2 走
+    by_q = {q["qkey"]: q for q in store.questions()}
+    assert by_q[q_y]["current_judge_fp"] == fp_y and by_q[q_y]["active"] == 1
+    assert by_q[q_x]["current_judge_fp"] is None and by_q[q_x]["active"] == 0
+    sv = {(r["qkey"], r["judge_fp"]) for r in store.conn.execute(
+        "SELECT qkey, judge_fp FROM spec_versions")}
+    assert sv == {(q_x, fp_x), (q_y, fp_y)}
+    store.close()
+
+
 def test_run_without_started_at_falls_back_stably(tmp_path):
-    """无 run.json started_at 的 run：排序回退导入时间，重导不刷新顺序。"""
+    """无 run.json started_at 的 run：首次导入以导入时间回填落列，重导不刷新，
+    run.json 真实值一旦出现即覆盖（M2）。"""
     from scoring.cli import ingest_run
     d1 = make_run(tmp_path, "r1", [mk_record()], run_id="r1")
     d2 = make_run(tmp_path, "r2", [mk_record(uid="ec-2#0")], run_id="r2")
@@ -400,7 +488,15 @@ def test_run_without_started_at_falls_back_stably(tmp_path):
     ingest_run(store, d1)
     ingest_run(store, d2)
     assert [r["run_id"] for r in store.runs()] == ["r1", "r2"]
-    ingest_run(store, d1)                             # 重导旧 run：顺序不变
+    fallback = store.run("r1")["started_at"]
+    assert fallback is not None                      # 回退值已落列，不存 NULL
+    ingest_run(store, d1)                             # 重导旧 run：回退值不刷新
     assert [r["run_id"] for r in store.runs()] == ["r1", "r2"]
-    assert store.run("r1")["started_at"] is None      # 无真实值时存 NULL，不伪造
+    assert store.run("r1")["started_at"] == fallback
+    (d1 / "run.json").write_text(json.dumps(
+        {"run_id": "r1", "started_at": "2026-10-20T00:00:00Z", "snapshot": {}, "profile": {}},
+        ensure_ascii=False), encoding="utf-8")
+    ingest_run(store, d1)                             # run.json 真实值出现：覆盖回退值
+    assert store.run("r1")["started_at"] == "2026-10-20T00:00:00Z"
+    assert [r["run_id"] for r in store.runs()] == ["r1", "r2"]
     store.close()

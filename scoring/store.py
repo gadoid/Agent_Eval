@@ -113,9 +113,14 @@ def _migrate_recompute_qkeys(conn) -> None:
       qkey，同一题被拆成两个。用 answers.record_json 与 specs.spec_json 的编译行
       重算输入指纹与 qkey，改写 questions、specs、spec_versions、answers 四张表；
       新旧 qkey 并存时按题合并（保留目标行、取更早 first_seen、当前期望缺者补之）。
+    - 同一旧 qkey 可能分叉出多个新 qkey（uid 与输入未变、仅 topic 改过：不同 run
+      或不同评测集版本各记各的 topic）。期望按各自 spec_json 重算归属，不走
+      old→new 单值映射；当前期望指针跟着期望所在的新 qkey 走，其余分叉题只继承
+      first_seen、不带当前期望。spec_versions 无内容可重算，跟随同 (qkey, judge_fp)
+      的期望行；期望行缺失且分叉不明时删除（成员表可由 specs import 重建）。
     - injection_found_gt1 / variant_leak_json 只在入库时计算，这里按 record_json 回填。
     """
-    remap: dict[str, str] = {}
+    candidates: dict[str, set[str]] = {}
     for row in conn.execute("SELECT answer_id, qkey, record_json FROM answers").fetchall():
         record = json.loads(row["record_json"])
         new_q = qkey_of(record.get("case") or {})
@@ -124,40 +129,68 @@ def _migrate_recompute_qkeys(conn) -> None:
         conn.execute("UPDATE answers SET qkey=?, injection_found_gt1=?, variant_leak_json=? WHERE answer_id=?",
                      (new_q, found, leak, row["answer_id"]))
         if row["qkey"] != new_q:
-            remap[row["qkey"]] = new_q
-    for row in conn.execute("SELECT qkey, spec_json FROM specs").fetchall():   # 从未跑过的题
-        new_q = qkey_of(json.loads(row["spec_json"]))
-        if row["qkey"] != new_q:
-            remap[row["qkey"]] = new_q
-    if not remap:
+            candidates.setdefault(row["qkey"], set()).add(new_q)
+    spec_target: dict[tuple[str, str], str] = {}       # (旧qkey, judge_fp) → 新qkey
+    for row in conn.execute("SELECT qkey, judge_fp, spec_json FROM specs").fetchall():
+        new_q = qkey_of(json.loads(row["spec_json"]))  # 从未跑过的题也在此列
+        if new_q != row["qkey"]:
+            spec_target[(row["qkey"], row["judge_fp"])] = new_q
+            candidates.setdefault(row["qkey"], set()).add(new_q)
+    if not candidates:
         return
     with conn:
-        for old_q, new_q in remap.items():
+        for (old_q, fp), new_q in spec_target.items():
             conn.execute("INSERT OR IGNORE INTO specs(qkey, judge_fp, spec_json, evalset_version, imported_at)"
-                         " SELECT ?, judge_fp, spec_json, evalset_version, imported_at FROM specs WHERE qkey=?",
-                         (new_q, old_q))
-            conn.execute("DELETE FROM specs WHERE qkey=?", (old_q,))
-            conn.execute("INSERT OR IGNORE INTO spec_versions(qkey, judge_fp, evalset_version, imported_at)"
-                         " SELECT ?, judge_fp, evalset_version, imported_at FROM spec_versions WHERE qkey=?",
-                         (new_q, old_q))
-            conn.execute("DELETE FROM spec_versions WHERE qkey=?", (old_q,))
+                         " SELECT ?, judge_fp, spec_json, evalset_version, imported_at"
+                         " FROM specs WHERE qkey=? AND judge_fp=?", (new_q, old_q, fp))
+            conn.execute("DELETE FROM specs WHERE qkey=? AND judge_fp=?", (old_q, fp))
+        for row in conn.execute("SELECT qkey, judge_fp FROM spec_versions").fetchall():
+            new_q = spec_target.get((row["qkey"], row["judge_fp"]))
+            if new_q is None and row["qkey"] in candidates:
+                cands = candidates[row["qkey"]]
+                new_q = next(iter(cands)) if len(cands) == 1 else False
+            if new_q:
+                conn.execute("INSERT OR IGNORE INTO spec_versions(qkey, judge_fp, evalset_version, imported_at)"
+                             " SELECT ?, judge_fp, evalset_version, imported_at"
+                             " FROM spec_versions WHERE qkey=? AND judge_fp=?", (new_q, row["qkey"], row["judge_fp"]))
+                conn.execute("DELETE FROM spec_versions WHERE qkey=? AND judge_fp=?",
+                             (row["qkey"], row["judge_fp"]))
+            elif new_q is False:
+                conn.execute("DELETE FROM spec_versions WHERE qkey=? AND judge_fp=?",
+                             (row["qkey"], row["judge_fp"]))
+        for old_q, cands in candidates.items():
             src = conn.execute("SELECT current_judge_fp, active, first_seen FROM questions WHERE qkey=?",
                                (old_q,)).fetchone()
             if src is None:
                 continue
-            tgt = conn.execute("SELECT current_judge_fp, active, first_seen FROM questions WHERE qkey=?",
-                               (new_q,)).fetchone()
-            if tgt is None:
-                conn.execute("UPDATE questions SET qkey=?, input_fp=? WHERE qkey=?",
-                             (new_q, new_q.split("|", 1)[1], old_q))
-            else:
-                first_seen = min(x for x in (src["first_seen"], tgt["first_seen"]) if x) \
-                    if any((src["first_seen"], tgt["first_seen"])) else None
-                current = tgt["current_judge_fp"] or src["current_judge_fp"]
-                active = 1 if current else (tgt["active"] or src["active"])
-                conn.execute("UPDATE questions SET first_seen=?, current_judge_fp=?, active=? WHERE qkey=?",
-                             (first_seen, current, active, new_q))
-                conn.execute("DELETE FROM questions WHERE qkey=?", (old_q,))
+            primary = spec_target.get((old_q, src["current_judge_fp"])) \
+                if src["current_judge_fp"] else None
+            if primary is None and len(cands) == 1:
+                primary = next(iter(cands))
+            for new_q in cands:
+                is_primary = new_q == primary
+                tgt = conn.execute("SELECT current_judge_fp, active, first_seen FROM questions WHERE qkey=?",
+                                   (new_q,)).fetchone()
+                if tgt is None:
+                    conn.execute(
+                        "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic,"
+                        " tags_json, input_fp, current_judge_fp, active, first_seen)"
+                        " SELECT ?, uid, case_id, variant_index, rewrite, dim, topic, tags_json,"
+                        " ?, ?, ?, first_seen FROM questions WHERE qkey=?",
+                        (new_q, new_q.split("|", 1)[1],
+                         src["current_judge_fp"] if is_primary else None,
+                         src["active"] if is_primary else 0, old_q))
+                else:
+                    first_seen = min(x for x in (src["first_seen"], tgt["first_seen"]) if x) \
+                        if any((src["first_seen"], tgt["first_seen"])) else None
+                    if is_primary:
+                        current = tgt["current_judge_fp"] or src["current_judge_fp"]
+                        active = 1 if current else (tgt["active"] or src["active"])
+                        conn.execute("UPDATE questions SET first_seen=?, current_judge_fp=?, active=? WHERE qkey=?",
+                                     (first_seen, current, active, new_q))
+                    else:
+                        conn.execute("UPDATE questions SET first_seen=? WHERE qkey=?", (first_seen, new_q))
+            conn.execute("DELETE FROM questions WHERE qkey=?", (old_q,))
 
 
 def _migrate_backfill_started_at(conn) -> None:
@@ -351,17 +384,20 @@ class Store:
         snap = (manifest or {}).get("snapshot") or {}
         profile_id = ((manifest or {}).get("profile") or {}).get("id") or "?"
         snapshot_json = json.dumps(manifest or {}, ensure_ascii=False)
-        # started_at 只认 run.json 的真实值；缺失时存 NULL，排序时回退导入时间。
-        # 不用 now() 兜底——重导会刷新它，run 顺序随之漂移（整改清单 R8 补充）。
+        # started_at 只认 run.json 的真实值；缺失时首次导入以导入时间回填落列（与 v3
+        # 迁移同语义），重导沿用已落列的值、真实值一旦出现即覆盖——不会被反复刷新。
         started_at = (manifest or {}).get("started_at")
-        self._exec(
-            "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at)"
-            " VALUES(?,?,?,?,?,?,?)"
-            " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
-            " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
-            " snapshot_json=excluded.snapshot_json,"
-            " started_at=COALESCE(excluded.started_at, runs.started_at)",
-            (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at))
+        with self.lock, self.conn:
+            if started_at is None:
+                row = self.conn.execute("SELECT started_at FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                started_at = row["started_at"] if row else now()
+            self.conn.execute(
+                "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at)"
+                " VALUES(?,?,?,?,?,?,?)"
+                " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
+                " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
+                " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at",
+                (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at))
 
     def ingest_answer(self, record: dict, run_id: str, manifest: dict | None) -> str:
         """入库一条答案：完整 EpisodeRecord 随行保存（run 目录移走后仍可重判），
@@ -409,7 +445,8 @@ class Store:
 
     def runs(self) -> list[dict]:
         """按 run 开始时间排序（R8：导入顺序会把旧 run 提前，绊线方向会判反）。
-        started_at 缺失（无 run.json 的 run）回退导入时间——导入时间在重导时保留。"""
+        无 run.json 的 run 在首次导入时已把导入时间回填进 started_at（重导不刷新）；
+        COALESCE 兜底只为兼容未迁移的旧库连接。"""
         return [dict(r) for r in self.conn.execute(
             "SELECT * FROM runs ORDER BY COALESCE(started_at, imported_at), run_id")]
 

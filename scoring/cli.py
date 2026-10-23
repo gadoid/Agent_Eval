@@ -539,7 +539,7 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("import-legacy", help="一次性导入旧版 verdicts/review/cache jsonl")
     p.add_argument("run")
-    p.add_argument("--cache", help="额外导入的判定缓存文件（缺省 run 目录下 verdict-cache.jsonl）")
+    p.add_argument("--cache", help="额外导入的判定缓存文件（缺省导入全局缓存 scoring/verdict-cache.jsonl）")
     p.add_argument("--policy")
     add_db(p); p.set_defaults(func=cmd_import_legacy)
 
