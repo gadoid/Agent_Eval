@@ -2,30 +2,34 @@
 {% block title %}复核队列 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <h1>复核队列 <span class="muted">共 {{ total }} 条 · j/k 切换，数字键选结论，Enter 提交</span></h1>
-<div class="tabs">
-  <a href="/queue?filter_name=undecided{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name=='undecided' %}style="font-weight:600"{% endif %}>未决</a>
-  <a href="/queue?filter_name=fail{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name=='fail' %}style="font-weight:600"{% endif %}>会话失败</a>
-  <a href="/queue?filter_name=mismatch{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name=='mismatch' %}style="font-weight:600"{% endif %}>人工与机器不一致</a>
+<div class="pager">
+  <a href="/queue?filter_name=undecided{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name == 'undecided' %}style="font-weight:600"{% endif %}>未决/异常</a>
+  <a href="/queue?filter_name=fail{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name == 'fail' %}style="font-weight:600"{% endif %}>会话失败</a>
+  <a href="/queue?filter_name=mismatch{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name == 'mismatch' %}style="font-weight:600"{% endif %}>人工与机器不一致</a>
+  <a href="/queue?filter_name=pending{% if q_run %}&run_id={{ q_run }}{% endif %}" {% if filter_name == 'pending' %}style="font-weight:600"{% endif %}>待重判</a>
   <form style="display:inline" method="get" action="/queue">
     <input type="hidden" name="filter_name" value="{{ filter_name }}">
     <select name="run_id" onchange="this.form.submit()">
       <option value="">全部 run</option>
-      {% for r in runs %}<option value="{{ r.run_id }}" {% if r.run_id==q_run %}selected{% endif %}>{{ r.run_id }}</option>{% endfor %}
+      {% for r in run_ids %}<option value="{{ r }}" {% if r == q_run %}selected{% endif %}>{{ r }}</option>
+      {% endfor %}
     </select>
   </form>
 </div>
-{% if not items %}<p>队列为空。</p>{% endif %}
-{% for it in items %}
+{% if not cards %}<p>队列为空。</p>{% endif %}
+
+{% for it in cards %}
+{% if it.r is defined %}
 <div class="card qitem" tabindex="0"
-     data-run="{{ it.r.run_id }}" data-ep="{{ it.r.episode_id }}" data-item="{{ it.r.item_id }}">
-  <div class="muted">{{ it.r.run_id }} · <a href="/case/{{ it.r.run_id }}/{{ it.r.uid|urlencode }}">{{ it.r.uid }}</a> · {{ it.r.episode_id }} · {{ it.r.kind }} {{ it.r.item_id }}{% if it.r.turn %}（第 {{ it.r.turn }} 轮）{% endif %}</div>
+     data-answer="{{ it.r.answer_id }}" data-item="{{ it.r.item_id }}">
+  <div class="muted"><a href="/question/{{ it.r.qkey | urlencode }}">{{ it.r.uid }}</a> · {{ it.r.run_id }} · {{ it.r.episode_id }} · {{ it.r.kind }} {{ it.r.item_id }}{% if it.r.turn %}（第 {{ it.r.turn }} 轮）{% endif %}</div>
   <div style="margin:6px 0"><b>期望：</b>{{ it.text or "（路径/拒答条目）" }}</div>
-  <div class="answer">{{ it.answer|highlight(it.keywords) }}</div>
+  <div class="answer">{{ it.answer | highlight(it.keywords) }}</div>
   <div style="margin:6px 0">
-    机器：<span class="badge {{ it.r.machine_value|vcls }}">{{ it.r.machine_value or "未决" }}</span>
+    机器：<span class="badge {{ it.r.machine_value | vcls }}">{{ it.r.machine_value or it.r.status }}</span>
     {% if it.r.machine_source %}<span class="src-{{ it.r.machine_source }}">{{ it.r.machine_source }}</span>{% endif %}
-    {% if it.r.reason %}<span class="muted">{{ it.r.reason }}</span>{% endif %}
-    {% if it.r.eff_source == 'human' %} · 人工已判：<span class="badge {{ it.r.eff_value|vcls }}">{{ it.r.eff_value }}</span>{% endif %}
+    {% if it.r.machine_reason %}<span class="muted">{{ it.r.machine_reason }}</span>{% endif %}
+    {% if it.r.eff_value is defined and it.r.eff_value %} · 人工已判：<span class="badge {{ it.r.eff_value | vcls }}">{{ it.r.eff_value }}</span>{% endif %}
   </div>
   <form class="rv" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
     <select class="val">
@@ -36,7 +40,24 @@
     <button class="primary" type="submit">提交</button>
   </form>
 </div>
+{% elif it.episode is defined %}
+<div class="card">
+  <div class="muted">{{ it.episode.run_id }} · {{ it.episode.episode_id }}</div>
+  <div><a href="/question/{{ it.episode.qkey | urlencode }}"><b>{{ it.episode.uid }}</b></a>
+    <span class="badge">{{ it.episode.mode }} t{{ it.episode.trial }}</span>
+    <span class="badge bad">{{ it.episode.c_status }}</span>
+    <span class="muted">{{ it.episode.c_reason or "" }}</span></div>
+</div>
+{% elif it.pending is defined %}
+<div class="card">
+  <div class="muted">{{ it.pending.run_id }} · {{ it.pending.episode_id }} · 期望 {{ it.pending.judge_fp }}</div>
+  <div><a href="/question/{{ it.pending.qkey | urlencode }}"><b>{{ it.pending.qkey }}</b></a>
+    <span class="badge mid">待重判</span></div>
+  <div class="muted">python -m scoring rejudge --question "{{ it.pending.qkey }}"</div>
+</div>
+{% endif %}
 {% endfor %}
+
 <div class="pager">
   {% if page > 0 %}<a href="/queue?filter_name={{ filter_name }}{% if q_run %}&run_id={{ q_run }}{% endif %}&page={{ page - 1 }}">← 上一页</a>{% endif %}
   第 {{ page + 1 }} / {{ pages }} 页
@@ -47,7 +68,7 @@ document.querySelectorAll('.qitem .rv').forEach(f => f.addEventListener('submit'
   ev.preventDefault();
   const card = f.closest('.qitem');
   const sel = f.querySelector('.val'), why = f.querySelector('.why'), who = f.querySelector('.who');
-  await postReview(card.dataset.run, card.dataset.ep, card.dataset.item, sel.value, why.value, reviewerOf(who),
+  await postReview(card.dataset.answer, card.dataset.item, sel.value, why.value, reviewerOf(who),
     () => { card.style.opacity = .35; card.querySelector('button').disabled = true; f.querySelector('button').textContent = '已提交（刷新页面更新统计）'; });
 }));
 let cur = -1;

@@ -1,34 +1,17 @@
-"""分析出口（方案 §10，04 §7 五类出口的迁移落点）与多 run 对比（§9.5）。"""
+"""分析出口（方案 §10、评测结果管理改造方案 §7/§8）：能力/归因/质量视图、
+题目级统计与比较轴。全部视图从评测库取数（store.answer_view_rows /
+effective_rows），不再读 run 目录文件，也不在请求中全量重算。
+"""
 from __future__ import annotations
 
 import json
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
-from pathlib import Path
 
-from .effective import Review, effective_final
 from .policy import EpisodeVerdict, Policy
 
-SNAPSHOT_KEYS = ["evalset", "runner_profile", "eline_profile", "skills_mode", "skills_base", "agent", "models_observed"]
-ALLOWED_DIFF = {
-    "model": {"runner_profile", "eline_profile", "models_observed"},
-    "skill": {"skills_base"},
-}
-
-
-@dataclass
-class RunBundle:
-    """一个 run 的全部判定材料（cli 装载，视图只读）。"""
-
-    run_id: str
-    run_dir: str
-    records: list[dict]
-    manifest: dict | None
-    rows: list[dict]                 # verdicts.jsonl 行
-    reviews: list[Review]
-    verdicts: list[EpisodeVerdict]   # 会话结论（有效结论 + 口径）
-    scored: bool = True              # 是否已跑过 score（无 verdicts.jsonl 时 False）
+# 答案的比较属性（§4.2）：比较轴 / 固定 / 不限 只能从中取
+ATTRS = ("profile", "model", "mode", "trial", "skills_mode", "skills_base", "evalset_version", "run")
 
 
 # ---------------------------------------------------------------- 区间
@@ -44,7 +27,7 @@ def wilson(passes: int, total: int, z: float = 1.96) -> tuple[float, float]:
     return round(max(0.0, center - half), 4), round(min(1.0, center + half), 4)
 
 
-# ---------------------------------------------------------------- 出口 1：能力视图
+# ---------------------------------------------------------------- 出口 1/2：能力与归因
 
 def ability_view(verdicts: list[EpisodeVerdict], policy: Policy) -> dict:
     """dim × mode 的通过率与前提成立率（Wilson 区间）；headline 由 policy 决定。"""
@@ -77,8 +60,6 @@ def ability_view(verdicts: list[EpisodeVerdict], policy: Policy) -> dict:
     return out
 
 
-# ---------------------------------------------------------------- 出口 2：归因视图
-
 def attribution_view(verdicts: list[EpisodeVerdict]) -> dict:
     """natural 三分归因（04 §6.3）：未加载 / 误加载 / 加载但答错。"""
     nat = [v for v in verdicts if v.mode == "natural" and v.status in ("pass", "fail")]
@@ -99,158 +80,272 @@ def attribution_view(verdicts: list[EpisodeVerdict]) -> dict:
     return {"n": total, **rates}
 
 
-# ---------------------------------------------------------------- 出口 3：用例质量视图
+def verdicts_of(rows: list[dict]) -> list[EpisodeVerdict]:
+    """answer_view_rows → 会话结论对象（缺判定 / 待重判的行跳过）。"""
+    return [EpisodeVerdict(**json.loads(r["detail_json"])) for r in rows if r["c_status"]]
 
-def quality_view(verdicts: list[EpisodeVerdict], records: list[dict], rows: list[dict], reviews: list[Review]) -> dict:
-    """人工与机器不一致清单、规则判定一致率、注入 found>1、无效清单、forced 前提成立率偏低的 ec。"""
-    by_ep: dict[str, list[Review]] = defaultdict(list)
-    for r in reviews:
-        by_ep[r.episode_id].append(r)
+
+# ---------------------------------------------------------------- 比较属性（§4.2/§7.1）
+
+def model_label(row: dict) -> str:
+    models = json.loads(row["models_json"]) if row.get("models_json") else []
+    return ",".join(str(m) for m in models) if models else "?"
+
+
+def attr_value(row: dict, name: str) -> str:
+    if name == "profile":
+        return str(row.get("profile_id") or "?")
+    if name == "model":
+        return model_label(row)
+    if name == "run":
+        return str(row.get("run_id"))
+    return str(row.get(name))
+
+
+# ---------------------------------------------------------------- 出口 3：变体泄露嫌疑（C5）
+
+def variant_leak_suspects(records: list[dict]) -> list[dict]:
+    """变体泄露嫌疑清单（改造方案 §3.4 C5，规则来自 CASE-STRUCTURE §8 提示规则）：
+    只查变体（uid 序号 > 0）。被改写的那一轮用户消息缺少本轮关键条件的关键词，
+    或包含了更早轮次条件的关键词，即列入。"""
+    out: list[dict] = []
+    for r in records:
+        uid = r.get("uid", "?")
+        tail = uid.rsplit("#", 1)[-1]
+        if not tail.isdigit() or int(tail) == 0:
+            continue                                     # 种子不查
+        case = r.get("case") or {}
+        conds = [c for c in (case.get("conditions") or []) if c.get("keywords")]
+        msgs = [t.get("content", "") for t in (case.get("turns") or []) if t.get("role") == "user"]
+        for n, msg in enumerate(msgs, 1):
+            for c in conds:
+                if c.get("turn") == n and not any(kw in msg for kw in c["keywords"]):
+                    out.append({"uid": uid, "turn": n,
+                                "reason": f"第 {n} 轮缺少条件「{c.get('slot')}」关键词：{'、'.join(c['keywords'])}"})
+                if (c.get("turn") or 0) < n and any(kw in msg for kw in c["keywords"]):
+                    out.append({"uid": uid, "turn": n,
+                                "reason": f"第 {n} 轮含更早轮次条件「{c.get('slot')}」关键词：{'、'.join(c['keywords'])}"})
+    return out
+
+
+# ---------------------------------------------------------------- 题目级统计（C12，§4.3）
+
+def question_stats(rows: list[dict], run_order: dict[str, int] | None = None) -> dict[str, dict]:
+    """难度 / 区分度 / 稳定性 / 题组一致性 / 历史。全部按当前期望下的有效结论计算，
+    只计 pass / fail 的答案；诱导变体不计入题组一致性（CASE-STRUCTURE §2.13）。"""
+    order = run_order or {}
+    by_q: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_q[r["qkey"]].append(r)
+
+    # 题组一致性（§4.3）：种子与非诱导变体 qkey 不同（输入被改写），按
+    # case_id + 模型 + 干预配对：变体结论与种子结论的一致率
+    by_mm: dict[tuple, list[dict]] = defaultdict(list)
+    for r in rows:
+        if r["c_status"] in ("pass", "fail"):
+            by_mm[(r["case_id"], model_label(r), r["mode"])].append(r)
+    gc_by_case: dict[str, tuple[int, int, float]] = {}
+    for (case, _m, _mode), grp in by_mm.items():
+        seeds = {r["c_status"] for r in grp if r["variant_index"] == 0}
+        if len(seeds) != 1:
+            continue                                      # 无种子或种子结论不一致：无法配对
+        seed_status = next(iter(seeds))
+        variants = [r for r in grp if r["variant_index"] > 0 and r["rewrite"] != "诱导"]
+        if variants:
+            agree = sum(r["c_status"] == seed_status for r in variants)
+            gc_by_case[case] = (agree, len(variants), round(agree / len(variants), 4))
+
+    out: dict[str, dict] = {}
+    for qkey, rs in by_q.items():
+        judged = [r for r in rs if r["c_status"] in ("pass", "fail")]
+        n_pass = sum(r["c_status"] == "pass" for r in judged)
+        by_model: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        for r in judged:
+            c = by_model[model_label(r)]
+            c[0] += r["c_status"] == "pass"
+            c[1] += 1
+        rates = [p / t for p, t in by_model.values() if t]
+        by_mode: dict[tuple, list[dict]] = defaultdict(list)
+        for r in judged:
+            by_mode[(model_label(r), r["mode"])].append(r)
+        stab_groups = [g for g in by_mode.values() if len(g) >= 2]
+        stability = None
+        if stab_groups:
+            total = sum(len(g) for g in stab_groups)
+            consist = sum(max(sum(r["c_status"] == "pass" for r in g),
+                              sum(r["c_status"] == "fail" for r in g)) for g in stab_groups)
+            stability = round(consist / total, 4)
+        by_env: dict[str, list] = defaultdict(lambda: [0, 0, None])   # pass, n, 首个 run 序
+        for r in judged:
+            env = f"{r['skills_mode'] or '?'}/{r['skills_base'] or '?'}"
+            e = by_env[env]
+            e[0] += r["c_status"] == "pass"
+            e[1] += 1
+            seq = order.get(r["run_id"], 0)
+            e[2] = seq if e[2] is None else min(e[2], seq)
+        history = [{"env": env, "pass": e[0], "n": e[1], "pass_rate": round(e[0] / e[1], 4)}
+                   for env, e in sorted(by_env.items(), key=lambda kv: (kv[1][2], kv[0]))]
+        gc = gc_by_case.get(rs[0]["case_id"])
+        out[qkey] = {
+            "difficulty": round(1 - n_pass / len(judged), 4) if judged else None,
+            "discrimination": round(max(rates) - min(rates), 4) if len(rates) >= 2 else None,
+            "models_n": len(by_model),
+            "stability": stability,
+            "group_consistency": gc[2] if gc else None,
+            "group_pairs": gc[1] if gc else 0,
+            "history": history,
+            "judged": len(judged),
+            "pending": sum(r["c_status"] is None for r in rs),
+        }
+    return out
+
+
+# ---------------------------------------------------------------- 出口 4/5：比较轴（C11，§7）
+
+def anchor_tripwires(sel: list[dict], run_order: dict[str, int] | None = None) -> list[dict]:
+    """锚点绊线（§7.2）：上一 run 全部 trial 通过、本 run 全部失败（各 ≥2），按 qkey 匹配。"""
+    order = run_order or {}
+    by_q: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    for r in sel:
+        if json.loads(r.get("record_json") or "{}").get("anchor"):
+            by_q[r["qkey"]][r["run_id"]].append(r)
+    out: list[dict] = []
+    for qkey, by_run in by_q.items():
+        runs_sorted = sorted(by_run.items(), key=lambda kv: (order.get(kv[0], 10 ** 9), kv[0]))
+        for (ra, as_), (rb, bs) in zip(runs_sorted, runs_sorted[1:]):
+            sa = [r["c_status"] for r in as_ if r["c_status"] in ("pass", "fail")]
+            sb = [r["c_status"] for r in bs if r["c_status"] in ("pass", "fail")]
+            if len(sa) >= 2 and all(s == "pass" for s in sa) and len(sb) >= 2 and all(s == "fail" for s in sb):
+                out.append({"qkey": qkey, "from_run": ra, "to_run": rb})
+    return out
+
+
+def compare_axis(rows: list[dict], axis: str, fixes: dict[str, str] | None = None,
+                 anys: tuple[str, ...] | set[str] = (), run_order: dict[str, int] | None = None) -> dict:
+    """比较轴对比（§7.1）：题目 × 轴值通过矩阵 + 维度聚合 + 锚点绊线。
+
+    放行条件：除比较轴外，没有被固定（--fix）或声明不限（--any）的属性必须在所有
+    答案上取值一致；skills_mode 不能作轴、不能不限。比较按题目交集（qkey）对齐；
+    缺判定的答案计为待重判，不参与比较。"""
+    fixes = fixes or {}
+    anys = set(anys)
+    if axis not in ATTRS:
+        raise ValueError(f"比较轴只能是 {'/'.join(ATTRS)}")
+    blocked: str | None = None
+    if axis == "skills_mode":
+        blocked = "skills_mode 不能作比较轴（跨 mode 对比无效）"
+    if "skills_mode" in anys:
+        blocked = blocked or "skills_mode 不能声明为不限（跨 mode 对比无效）"
+    unknown = [k for k in (*fixes, *anys) if k not in ATTRS]
+    if unknown:
+        raise ValueError(f"未知比较属性：{unknown}")
+
+    sel = [r for r in rows if all(attr_value(r, k) == v for k, v in fixes.items())]
+    others = [a for a in ATTRS if a != axis and a not in fixes and a not in anys]
+    inconsistent = {a: sorted({attr_value(r, a) for r in sel}) for a in others
+                    if len({attr_value(r, a) for r in sel}) > 1}
+    if inconsistent:
+        blocked = blocked or ("比较轴之外未固定的属性取值不一致："
+                              + "；".join(f"{k}={v}" for k, v in inconsistent.items()))
+    axis_values = sorted({attr_value(r, axis) for r in sel})
+
+    by_q: dict[str, list[dict]] = defaultdict(list)
+    for r in sel:
+        by_q[r["qkey"]].append(r)
+    # 按题目交集对齐（§7.2）：在多个轴值上有答案的题目进入矩阵；
+    # 只存在于单侧的题（降级移出/退役/输入已改）列出并排除。
+    # 缺判定（待重判）不影响交集——该轴值记 pending，不参与通过率
+    excluded: list[dict] = []
+    included: set[str] = set()
+    if len(axis_values) >= 2:
+        for qkey, qrows in by_q.items():
+            covered = {attr_value(r, axis) for r in qrows}
+            if len(covered) >= 2:
+                included.add(qkey)
+            elif covered:
+                excluded.append({"qkey": qkey, "reason": f"仅轴值 {sorted(covered)} 有答案"})
+    else:
+        included = set(by_q)
+    matrix: dict[str, dict] = {}
+    pending = 0
+    for qkey in sorted(included):
+        qrows = by_q[qkey]
+        cells = {}
+        for av in axis_values:
+            grp = [r for r in qrows if attr_value(r, axis) == av]
+            judged = [r for r in grp if r["c_status"] in ("pass", "fail")]
+            pend = sum(r["c_status"] is None for r in grp)
+            pending += pend
+            p = sum(r["c_status"] == "pass" for r in judged)
+            cells[av] = {"pass": p, "n": len(judged), "pending": pend,
+                         "rate": round(p / len(judged), 4) if judged else None}
+        matrix[qkey] = cells
+    dims: dict[str, dict[str, list[int]]] = defaultdict(lambda: defaultdict(lambda: [0, 0]))
+    for r in sel:
+        if r["qkey"] in included and r["c_status"] in ("pass", "fail"):
+            c = dims[r["dim"] or "?"][attr_value(r, axis)]
+            c[0] += r["c_status"] == "pass"
+            c[1] += 1
+    dims_out = {dim: {av: {"pass": c[0], "n": c[1], "rate": round(c[0] / c[1], 4) if c[1] else None,
+                           "ci": wilson(c[0], c[1])}
+                      for av, c in per_axis.items()}
+                for dim, per_axis in sorted(dims.items())}
+    tripwires = [] if blocked else anchor_tripwires(sel, run_order)
+    return {
+        "axis": axis,
+        "axis_values": axis_values,
+        "fixed": fixes,
+        "any": sorted(anys),
+        "blocked": blocked,
+        "inconsistent": inconsistent,
+        "matrix": matrix,
+        "excluded_qkeys": excluded,
+        "dims": dims_out,
+        "anchor_tripwires": tripwires,
+        "pending_answers": pending,
+    }
+
+
+# ---------------------------------------------------------------- 出口 3：用例质量（DB 版）
+
+def quality_from_db(store, rows: list[dict], chain_sha: str) -> dict:
+    """人工与机器不一致清单、规则判定一致率、注入 found>1、无效清单、forced 前提
+    成立率偏低的 ec、变体泄露嫌疑清单（C5）。取数全部经评测库。"""
     mismatch: list[dict] = []
     rule_total = rule_agree = 0
-    for row in rows:
-        ep_reviews = by_ep.get(row["episode_id"])
-        if not ep_reviews:
+    invalid: list[str] = []
+    found_gt1: set[str] = set()
+    forced_ec: dict[str, list[str]] = defaultdict(list)
+    records: list[dict] = []
+    for r in rows:
+        record = json.loads(r.get("record_json") or "{}")
+        records.append(record)
+        if any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or []):
+            found_gt1.add(r["uid"])
+        if r["c_status"] == "invalid":
+            invalid.append(f'{r["uid"]}|{r["mode"]}|t{r["trial"]}')
+        if r["c_status"] and r["mode"] == "forced" and r["dim"] == "错误知识纠正":
+            forced_ec[r["uid"]].append(r["c_status"])
+        if not r["current_judge_fp"]:
             continue
-        eff = effective_final(row, ep_reviews, row["answer_sha"])
-        if eff.source != "human":
-            continue
-        machine = row["machine"]
-        if machine.get("source") == "rule" and machine.get("value") is not None:
-            rule_total += 1
-            if machine.get("value") == eff.value:
-                rule_agree += 1
-        if machine.get("value") != eff.value:
-            mismatch.append({
-                "episode_id": row["episode_id"], "uid": row["uid"],
-                "kind": row["item"]["kind"], "item": row["item"]["id"],
-                "machine": machine.get("value"), "human": eff.value,
-            })
-    found_gt1 = sorted({r.get("uid", "?") for r in records
-                        if any((a or {}).get("found", 1) > 1 for a in r.get("injections_applied") or [])})
-    invalid = [f"{v.uid}|{v.mode}|t{v.trial}" for v in verdicts if v.status == "invalid"]
-    forced_ec_low = []
-    forced_ec: dict[str, list[EpisodeVerdict]] = defaultdict(list)
-    for v in verdicts:
-        if v.mode == "forced" and v.dim == "错误知识纠正" and v.status != "error":
-            forced_ec[v.uid].append(v)
-    for uid, vs in sorted(forced_ec.items()):
-        n_invalid = sum(v.status == "invalid" for v in vs)
-        if len(vs) >= 2 and n_invalid / len(vs) > 0.5:
-            forced_ec_low.append(uid)
+        for er in store.effective_rows(r["answer_id"], r["current_judge_fp"], chain_sha):
+            vrow, eff = er["row"], er["eff"]
+            if eff.source != "human":
+                continue
+            if vrow["source"] == "rule" and vrow["value"] is not None:
+                rule_total += 1
+                rule_agree += vrow["value"] == eff.value
+            if vrow["value"] != eff.value:
+                mismatch.append({"answer_id": r["answer_id"], "uid": r["uid"], "kind": vrow["kind"],
+                                 "item": vrow["item_id"], "machine": vrow["value"], "human": eff.value})
+    forced_ec_low = [uid for uid, sts in sorted(forced_ec.items())
+                     if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5]
     return {
         "human_machine_mismatch": mismatch,
         "rule_agreement": {"agree": rule_agree, "total": rule_total,
                            "rate": round(rule_agree / rule_total, 4) if rule_total else None},
-        "injection_found_gt1": found_gt1,
+        "injection_found_gt1": sorted(found_gt1),
         "invalid_episodes": invalid,
         "forced_ec_precond_low": forced_ec_low,
-    }
-
-
-# ---------------------------------------------------------------- 出口 4/5：多 run 对比与锚点绊线
-
-def operators_of(rows: list[dict]) -> set[str]:
-    """一个 run 实际用到的机器算子版本清单（判定配置摘要 operators 的同源数据）。"""
-    return {r["machine"].get("operator") for r in rows
-            if r["machine"].get("value") is not None and r["machine"].get("operator")}
-
-
-def parse_diff(diff_path: str | Path) -> dict[str, list[str]]:
-    """解析 md2case diff.md 的五类清单（新增/退役/因降级移出/内容修订/注入 rev 变化）。"""
-    text = Path(diff_path).read_text(encoding="utf-8")
-    sections: dict[str, list[str]] = {}
-    current = None
-    for line in text.splitlines():
-        if line.startswith("## "):
-            current = line[3:].split("（")[0].strip()
-            sections.setdefault(current, [])
-        elif line.strip().startswith("- ") and current:
-            sections[current].append(line.lstrip("- ").strip())
-    return sections
-
-
-def _snapshot_value(snapshot: dict, key: str) -> str:
-    return json.dumps(snapshot.get(key), sort_keys=True, ensure_ascii=False)
-
-
-def compare_runs(a: RunBundle, b: RunBundle, intended: str = "model", diff_md: str | None = None) -> dict:
-    """多 run 对比（§9.5）：声明预期变量（model / skill）放行对应快照键差异；
-    通过率取有效结论，修正现行以完成率计通过的问题；锚点绊线按结论判定。"""
-    if intended not in ALLOWED_DIFF:
-        raise ValueError(f"预期变量只能是 {'/'.join(ALLOWED_DIFF)}")
-    snap_a = (a.manifest or {}).get("snapshot") or {}
-    snap_b = (b.manifest or {}).get("snapshot") or {}
-    diff_keys = [k for k in SNAPSHOT_KEYS if _snapshot_value(snap_a, k) != _snapshot_value(snap_b, k)]
-    allowed = ALLOWED_DIFF[intended]
-    blocked = None
-    if snap_a.get("skills_mode") != snap_b.get("skills_mode"):
-        blocked = "skills_mode 不同，跨 mode 对比无效（过渡期自成基线）"
-    ops_a, ops_b = operators_of(a.rows), operators_of(b.rows)
-    if ops_a != ops_b:
-        blocked = blocked or f"算子版本不同：{sorted(ops_a ^ ops_b)}"
-    unexpected = [k for k in diff_keys if k not in allowed and k != "evalset"]
-    if unexpected:
-        blocked = blocked or f"预期变量（{intended}）之外的快照键不同：{unexpected}"
-
-    demoted_out: set[str] = set()
-    if "evalset" in diff_keys:
-        sections = parse_diff(diff_md) if diff_md and Path(diff_md).exists() else None
-        if sections is None:
-            blocked = blocked or "evalset 不同且未提供 diff.md（--diff），无法对齐分母"
-        else:
-            other = {k: v for k, v in sections.items() if k != "因降级移出" and v}
-            if other:
-                blocked = blocked or f"evalset 不同且 diff 含 {'、'.join(sorted(other))}，无法对齐分母"
-            demoted_out = {u.split("（")[0].strip() for u in sections.get("因降级移出", [])}
-    elif diff_md and Path(diff_md).exists():
-        demoted_out = {u.split("（")[0].strip() for u in parse_diff(diff_md).get("因降级移出", [])}
-
-    def pass_map(verdicts: list[EpisodeVerdict]) -> dict[str, list[int]]:
-        out: dict[str, list[int]] = defaultdict(list)
-        for v in verdicts:
-            if v.status in ("pass", "fail"):
-                out[v.uid].append(1 if v.status == "pass" else 0)
-        return out
-
-    paired: dict[str, dict] = {}
-    pa, pb = pass_map(a.verdicts), pass_map(b.verdicts)
-    for uid in sorted((set(pa) & set(pb)) - demoted_out):
-        a_pass = sum(pa[uid]) / len(pa[uid])
-        b_pass = sum(pb[uid]) / len(pb[uid])
-        d = b_pass - a_pass
-        n = min(len(pa[uid]), len(pb[uid]))
-        se = math.sqrt(a_pass * (1 - a_pass) / max(n, 1) + b_pass * (1 - b_pass) / max(n, 1)) or 1e-9
-        paired[uid] = {"delta": round(d, 4), "ci": (round(d - 1.96 * se, 4), round(d + 1.96 * se, 4)),
-                       "significant": not (d - 1.96 * se <= 0 <= d + 1.96 * se)}
-
-    tripwires: list[str] = []
-    if not blocked:
-        def anchor_state(bundle: RunBundle) -> dict[str, tuple[bool, int]]:
-            out: dict[str, tuple[bool, int]] = {}
-            for rec, v in zip(bundle.records, bundle.verdicts):
-                if rec.get("anchor"):
-                    ok, cnt = out.get(v.uid, (True, 0))
-                    out[v.uid] = (ok and v.status == "pass", cnt + 1)
-            return out
-
-        sa, sb = anchor_state(a), anchor_state(b)
-        for uid in sorted(set(sa) & set(sb)):
-            (a_ok, a_n), (b_ok, b_n) = sa[uid], sb[uid]
-            if a_n >= 2 and b_n >= 2 and a_ok and not b_ok:
-                tripwires.append(uid)
-
-    allowed_diff_keys = sorted(k for k in diff_keys if k in allowed)
-    return {
-        "run_a": a.run_id,
-        "run_b": b.run_id,
-        "intended": intended,
-        "snapshot_diff_keys": diff_keys,
-        "allowed_diff_keys": allowed_diff_keys,
-        "blocked": blocked,
-        "note": "差异键多于被比较项时，结论需注明" if len(diff_keys) > len(allowed_diff_keys) + (1 if "evalset" in diff_keys else 0) else None,
-        "paired": paired,
-        "significant_uids": [u for u, p in paired.items() if p["significant"]],
-        "anchor_tripwires": tripwires,
-        "demoted_excluded": sorted(demoted_out),
+        "variant_leak_suspects": variant_leak_suspects(records),
     }

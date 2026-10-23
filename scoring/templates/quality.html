@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}质量 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<h1>用例质量视图</h1>
+
+<div class="card">
+  <h2 style="margin-top:0">规则判定一致率</h2>
+  {% if q.rule_agreement.rate is not none %}
+  <p>{{ q.rule_agreement.agree }}/{{ q.rule_agreement.total }} = {{ q.rule_agreement.rate }}（人工改判过、机器规则给出取值的条目）</p>
+  {% else %}<p class="muted">暂无人工改判过的规则条目。</p>{% endif %}
+  <div>注入 found&gt;1（注入定位异常）：{{ q.injection_found_gt1 | join("、") or "无" }}</div>
+  <div>前提不成立（invalid）：{{ q.invalid_episodes | join("、") or "无" }}</div>
+  <div>forced ec 前提成立率偏低：{{ q.forced_ec_precond_low | join("、") or "无" }}</div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">变体泄露嫌疑清单（C5）</h2>
+  {% if q.variant_leak_suspects %}
+  <table>
+    <tr><th>uid</th><th>轮次</th><th>原因</th></tr>
+    {% for s in q.variant_leak_suspects %}<tr><td>{{ s.uid }}</td><td>{{ s.turn }}</td><td>{{ s.reason }}</td></tr>{% endfor %}
+  </table>
+  {% else %}<p class="muted">没有嫌疑条目。</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">人工与机器不一致</h2>
+  {% if q.human_machine_mismatch %}
+  <table>
+    <tr><th>uid</th><th>条目</th><th>机器</th><th>人工</th></tr>
+    {% for m in q.human_machine_mismatch %}
+    <tr><td>{{ m.uid }}</td><td>{{ m.kind }} {{ m.item }}</td>
+        <td><span class="badge {{ m.machine | vcls }}">{{ m.machine or "未决" }}</span></td>
+        <td><span class="badge {{ m.human | vcls }}">{{ m.human }}</span></td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="muted">没有不一致条目。</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">作废的人工改判（当前期望下）</h2>
+  {% if voided %}
+  {% for v in voided %}
+  <div class="card">
+    <div class="muted">{{ v.uid }} · {{ v.review.answer_id }} · {{ v.review.item_id }} · {{ v.review.reviewer }} · {{ v.review.at }}</div>
+    <div>改判：<span class="badge {{ v.review.value | vcls }}">{{ v.review.value }}</span>
+      <span class="muted">{{ v.review.reason }}</span></div>
+    <div><span class="badge bad">{{ v.reason }}</span></div>
+  </div>
+  {% endfor %}
+  {% else %}<p class="muted">没有作废的改判。</p>{% endif %}
+</div>
+{% endblock %}

@@ -1,119 +1,95 @@
-"""多 run 对比与锚点绊线（方案 §9.5、§12 步骤 5 验收）。"""
-from scoring.chain import judge_episode, write_verdicts
-from scoring.cli import load_bundle
-from scoring.policy import policy_from_dict
-from scoring.views import compare_runs
-from tests.helpers import cfg_fact, fact, fake_config, make_run, mk_record
+"""比较轴与锚点绊线（改造方案 §7、§12 步骤 4 验收）。"""
+import json
 
-SNAP = {"skills_mode": "default-roots", "evalset": {"file": "e.jsonl", "sha256": "a"},
-        "runner_profile": "p1", "eline_profile": {"method": "files", "sha256": "e1"},
-        "skills_base": "s1", "agent": "eline rc.6", "models_observed": ["glm-5.3"]}
+import pytest
+
+from scoring.views import compare_axis
 
 
-def anchor_records():
-    """kr-1#0（锚点，2 次 trial）+ kr-2#0。"""
-    case = {"id": "kr-1", "uid": "kr-1#0", "dim": "知识召回", "answerable": True,
-            "facts": [fact("F1", text="尾号 400")], "preconditions": [], "path": []}
-    case2 = {"id": "kr-2", "uid": "kr-2#0", "dim": "知识召回", "answerable": True,
-             "facts": [fact("F1", text="尾号 500")], "preconditions": [], "path": []}
-    return [
-        dict(mk_record(uid="kr-1#0", trial=1, case=case), anchor=True),
-        dict(mk_record(uid="kr-1#0", trial=2, case=case), anchor=True),
-        mk_record(uid="kr-2#0", trial=1, case=case2),
+def row(qkey="q1", uid="kr-1#0", case="kr-1", vi=0, rewrite=None, dim="知识召回", mode="natural",
+        trial=1, profile="p1", models='["glm-5.3"]', skills_mode="default-roots", skills_base="s1",
+        evalset="v1", run="a", status="pass", answer=None, anchor=False, topic="t1"):
+    return {
+        "answer_id": answer or f"{run}/{uid}-{mode}-t{trial}", "qkey": qkey, "run_id": run,
+        "episode_id": f"{uid}-{mode}-t{trial}", "judge_fp_at_run": "f1", "profile_id": profile,
+        "models_json": models, "mode": mode, "trial": trial, "skills_mode": skills_mode,
+        "skills_base": skills_base, "evalset_version": evalset, "run_status": "ok",
+        "record_json": json.dumps({"anchor": anchor}), "uid": uid, "case_id": case,
+        "variant_index": vi, "rewrite": rewrite, "dim": dim, "topic": topic,
+        "current_judge_fp": "f1", "active": 1, "c_status": status, "c_reason": "", "detail_json": "{}",
+    }
+
+
+def test_axis_profile_matrix_and_dims():
+    rows = [
+        row(qkey="q1", profile="p1", status="pass"), row(qkey="q1", profile="p1", trial=2, status="fail"),
+        row(qkey="q1", profile="p2", status="pass"),
+        row(qkey="q2", uid="kr-2#0", profile="p1", status="fail"),
+        row(qkey="q2", uid="kr-2#0", profile="p2", status="pass"),
     ]
-
-
-def build_bundle(tmp_path, name, snapshot=None, cfg=None, records=None):
-    run_dir = make_run(tmp_path, name, records or anchor_records(), snapshot=snapshot or dict(SNAP))
-    cfg = cfg or cfg_fact("对")
-    rows = []
-    for r in (records or anchor_records()):
-        rows.extend(judge_episode(r, cfg, name).rows)
-    write_verdicts(run_dir, rows)
-    return load_bundle(run_dir, policy_from_dict({}))
-
-
-def test_intended_model_allows_profile_diff_and_tripwire(tmp_path):
-    a = build_bundle(tmp_path, "a")
-    snap_b = dict(SNAP, eline_profile={"method": "files", "sha256": "e2"})
-    b = build_bundle(tmp_path, "b", snapshot=snap_b, cfg=fake_config())   # 默认假 judge：事实未提及 → 全败
-    rep = compare_runs(a, b, intended="model")
+    rep = compare_axis(rows, axis="profile", anys=("trial",))
     assert rep["blocked"] is None
-    assert rep["allowed_diff_keys"] == ["eline_profile"]
-    assert rep["anchor_tripwires"] == ["kr-1#0"]          # 上 run 锚点全过、本 run 全败（trials≥2）
-    assert rep["paired"]["kr-1#0"]["delta"] == -1.0
-    assert rep["paired"]["kr-2#0"]["significant"] is True
+    assert rep["axis_values"] == ["p1", "p2"]
+    assert rep["matrix"]["q1"]["p1"] == {"pass": 1, "n": 2, "pending": 0, "rate": 0.5}
+    assert rep["matrix"]["q1"]["p2"]["rate"] == 1.0
+    assert rep["dims"]["知识召回"]["p1"]["pass"] == 1 and rep["dims"]["知识召回"]["p1"]["n"] == 3
 
 
-def test_intended_model_rejects_other_key(tmp_path):
-    a = build_bundle(tmp_path, "a")
-    b = build_bundle(tmp_path, "b", snapshot=dict(SNAP, skills_base="s2"), cfg=fake_config())
-    rep = compare_runs(a, b, intended="model")
-    assert rep["blocked"] and "skills_base" in rep["blocked"]
+def test_unfixed_inconsistent_attribute_blocks():
+    rows = [row(mode="natural"), row(mode="forced")]
+    rep = compare_axis(rows, axis="profile")
+    assert rep["blocked"] and "mode" in rep["blocked"]
+    # 固定后放行
+    ok = compare_axis(rows, axis="profile", fixes={"mode": "natural"})
+    assert ok["blocked"] is None
+    # trial 不一致：不限则拦、声明不限则放行
+    t = [row(trial=1), row(trial=2)]
+    assert "trial" in compare_axis(t, axis="profile")["blocked"]
+    assert compare_axis(t, axis="profile", anys=("trial",))["blocked"] is None
 
 
-def test_intended_skill_allows_skills_base_diff(tmp_path):
-    a = build_bundle(tmp_path, "a")
-    b = build_bundle(tmp_path, "b", snapshot=dict(SNAP, skills_base="s2"), cfg=cfg_fact("对"))
-    rep = compare_runs(a, b, intended="skill")            # 知识修订后的验证对比（01 §8 闭环第 4 条）
+def test_skills_mode_never_comparable():
+    rows = [row(run="a", skills_mode="default-roots"), row(run="b", skills_mode="isolated")]
+    assert compare_axis(rows, axis="skills_mode")["blocked"]
+    assert compare_axis(rows, axis="run", anys=("skills_mode",))["blocked"]
+
+
+def test_pending_answers_excluded():
+    rows = [row(profile="p1"), row(profile="p2", status=None)]
+    rep = compare_axis(rows, axis="profile")
+    assert rep["pending_answers"] == 1
+    assert rep["matrix"]["q1"]["p2"] == {"pass": 0, "n": 0, "pending": 1, "rate": None}
+
+
+def test_question_intersection_excludes_single_sided():
+    """§7.2 题目交集：只在单侧有判定的题被排除（取代 diff.md 因降级移出对齐）。"""
+    rows = [
+        row(qkey="q1", run="a", status="pass"), row(qkey="q1", run="b", status="fail"),
+        row(qkey="q2", uid="kr-2#0", run="a", status="pass"),           # b 里没有（降级移出）
+        row(qkey="q3", uid="kr-3#0", run="a", status="pass"),           # 输入改版 → qkey 不同
+        row(qkey="q3", uid="kr-3#0", run="b", status="pass"),
+    ]
+    rep = compare_axis(rows, axis="run", anys=("trial",))
     assert rep["blocked"] is None
-    assert rep["anchor_tripwires"] == []                  # 两 run 都通过
+    assert set(rep["matrix"]) == {"q1", "q3"}
+    assert [e["qkey"] for e in rep["excluded_qkeys"]] == ["q2"]
 
 
-def test_skills_mode_diff_blocks(tmp_path):
-    a = build_bundle(tmp_path, "a")
-    b = build_bundle(tmp_path, "b", snapshot=dict(SNAP, skills_mode="isolated"), cfg=cfg_fact("对"))
-    assert "skills_mode" in compare_runs(a, b, intended="model")["blocked"]
+def test_anchor_tripwire_by_qkey():
+    rows = [
+        row(qkey="q1", run="a", trial=1, status="pass", anchor=True),
+        row(qkey="q1", run="a", trial=2, status="pass", anchor=True),
+        row(qkey="q1", run="b", trial=1, status="fail", anchor=True),
+        row(qkey="q1", run="b", trial=2, status="fail", anchor=True),
+    ]
+    rep = compare_axis(rows, axis="run", anys=("trial",), run_order={"a": 0, "b": 1})
+    assert rep["anchor_tripwires"] == [{"qkey": "q1", "from_run": "a", "to_run": "b"}]
+    # trials 不足 2 → 不触发
+    rows2 = rows[:1] + [row(qkey="q1", run="b", status="fail", anchor=True)]
+    rep2 = compare_axis(rows2, axis="run", anys=("trial",), run_order={"a": 0, "b": 1})
+    assert rep2["anchor_tripwires"] == []
 
 
-def test_operator_version_diff_blocks(tmp_path):
-    a = build_bundle(tmp_path, "a")
-    b = build_bundle(tmp_path, "b", cfg=cfg_fact("对"))
-    b.rows[0]["machine"]["operator"] = "other-op@9"
-    rep = compare_runs(a, b, intended="model")
-    assert rep["blocked"] and "算子版本" in rep["blocked"]
-
-
-DIFF_DEMOTE = """# evalset v1 → v2 变更
-
-## 新增（0）
-
-## 退役（0）
-
-## 因降级移出（1）
-- kr-2#0（收汇保单尾号/反转 rev 1→2，需复核）
-
-## 内容修订（0）
-
-## 注入 rev 变化（0）
-"""
-
-DIFF_REVISE = DIFF_DEMOTE.replace("## 内容修订（0）", "## 内容修订（1）\n- kr-9#0").replace(
-    "## 因降级移出（1）", "## 因降级移出（0）").replace("- kr-2#0（收汇保单尾号/反转 rev 1→2，需复核）", "")
-
-
-def test_evalset_diff_alignment(tmp_path):
-    a = build_bundle(tmp_path, "a")
-    snap_b = dict(SNAP, evalset={"file": "e2.jsonl", "sha256": "b"})
-    b = build_bundle(tmp_path, "b", snapshot=snap_b, cfg=fake_config())
-    # 未提供 diff.md → 拒绝
-    assert "evalset" in compare_runs(a, b, intended="model")["blocked"]
-    # diff 只有因降级移出 → 对齐分母放行，且 demoted 不进配对
-    diff = tmp_path / "diff.md"
-    diff.write_text(DIFF_DEMOTE, encoding="utf-8")
-    rep = compare_runs(a, b, intended="model", diff_md=str(diff))
-    assert rep["blocked"] is None
-    assert rep["demoted_excluded"] == ["kr-2#0"]
-    assert "kr-2#0" not in rep["paired"]
-    # diff 含内容修订 → 拒绝（题变了不该对比）
-    diff2 = tmp_path / "diff2.md"
-    diff2.write_text(DIFF_REVISE, encoding="utf-8")
-    assert "内容修订" in compare_runs(a, b, intended="model", diff_md=str(diff2))["blocked"]
-
-
-def test_compare_needs_verdicts(tmp_path):
-    from scoring.views import RunBundle
-    a = build_bundle(tmp_path, "a")
-    empty = RunBundle(run_id="b", run_dir="x", records=[], manifest={"snapshot": SNAP},
-                      rows=[], reviews=[], verdicts=[])
-    assert "算子版本" in compare_runs(a, empty, intended="model")["blocked"]
+def test_unknown_axis_raises():
+    with pytest.raises(ValueError):
+        compare_axis([row()], axis="nope")

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .items import EpisodeContext, Item, SCALES, build_context, episode_error, extract_items
+from .items import EpisodeContext, Item, SCALES, build_context, episode_error, extract_items, item_sha_of
 from .operators import Operator, Verdict
 
 
@@ -207,9 +207,11 @@ class EpisodeJudged:
     error: str | None
 
 
-def judge_episode(record: dict, cfg: OperatorConfig, run_id: str, cache: VerdictCache | None = None) -> EpisodeJudged:
-    """对一段会话的全部条目执行链，产出 verdicts.jsonl 行。会话前置不满足时无行。"""
-    ctx = build_context(record)
+def judge_episode(record: dict, cfg: OperatorConfig, run_id: str, cache: VerdictCache | None = None,
+                  case: dict | None = None) -> EpisodeJudged:
+    """对一段会话的全部条目执行链，产出 verdicts.jsonl 行。会话前置不满足时无行。
+    case 缺省取 record 内嵌编译行；重判时传 specs 表中的期望编译行。"""
+    ctx = build_context(record, case)
     err = episode_error(record, ctx)
     if err:
         return EpisodeJudged(record, ctx, [], err)
@@ -225,6 +227,7 @@ def judge_episode(record: dict, cfg: OperatorConfig, run_id: str, cache: Verdict
             "machine": machine.as_dict(),
             "trace": trace,
             "answer_sha": answer_sha(ctx.answer_for(item)),
+            "item_sha": item_sha_of(item),
             "status": status,
         })
     return EpisodeJudged(record, ctx, rows, None)

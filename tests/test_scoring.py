@@ -6,7 +6,7 @@ from scoring.cli import conclusions
 from scoring.policy import EpisodeVerdict, policy_from_dict
 from scoring.views import ability_view, attribution_view, wilson
 from tests import legacy_scoring_reference as legacy
-from tests.helpers import cfg_fact, fact, fake_config, mk_record, turn
+from tests.helpers import cfg_fact, cfg_map, fact, fake_config, mk_record, turn
 
 
 def run_old(record, judges=None):
@@ -150,6 +150,36 @@ def test_parity_multi_turn_pick():
     rec = mk_record(case=case, turns=[turn(output="甲"), turn(output="乙")])
     v = assert_parity(rec)
     assert v.facts == {"F1": "对", "F2": "对"} and v.status == "pass"
+
+
+# ---------------------------------------------------------------- 组内"错"对拍（改造方案 §3.1，步骤 0 验收）
+
+def test_parity_group_contra_with_hit():
+    """组内一错一对：旧实现 vetoed→fail，新实现（C1）也 fail。"""
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲说法", group="G1"), fact("F2", text="乙说法", group="G1")])
+    judges = legacy.Judges(fact=lambda t, a: legacy.CONTRA if t == "甲说法" else legacy.HIT,
+                           forbidden=lambda t, a: False, refusal=lambda a: False, precond=lambda t, a: True)
+    v = assert_parity(mk_record(case=case), cfg=cfg_map({"甲说法": "错", "乙说法": "对"}), judges=judges)
+    assert v.status == "fail" and v.facts == {"F1": "错", "F2": "对"}
+
+
+def test_parity_group_contra_with_missing():
+    """组内一错一未提及：组不满足且含"错"，新旧都 fail。"""
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲说法", group="G1"), fact("F2", text="乙说法", group="G1")])
+    judges = legacy.Judges(fact=lambda t, a: legacy.CONTRA if t == "甲说法" else legacy.MISSING,
+                           forbidden=lambda t, a: False, refusal=lambda a: False, precond=lambda t, a: True)
+    v = assert_parity(mk_record(case=case), cfg=cfg_map({"甲说法": "错"}), judges=judges)
+    assert v.status == "fail"
+
+
+def test_parity_single_contra_with_forbidden_adopted():
+    """单条为"错"且禁止事实被采信：新旧都 fail（否决优先，均为失败）。"""
+    judges = legacy.Judges(fact=lambda t, a: legacy.CONTRA, forbidden=lambda t, a: True,
+                           refusal=lambda a: False, precond=lambda t, a: True)
+    v = assert_parity(mk_record(), cfg=cfg_map({"未收尾款不应电放": "错"}, adopted=True), judges=judges)
+    assert v.status == "fail" and v.facts == {"F1": "错"} and v.forbidden_adopted == {"X1": True}
 
 
 # ---------------------------------------------------------------- 迁移后的聚合单测

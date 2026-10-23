@@ -95,10 +95,15 @@ def test_expected_never_affects_conclusion():
 def test_undecided_precond_blocks_conclusion():
     case = mk_record()["case"]
     case["preconditions"] = [{"id": "P1", "turn": 1, "text": "前提", "injections": []}]
-    v = conclude(mk_record(case=case), {"P1": V(None), "F1": V("对")})
+    v = conclude(mk_record(case=case), {"P1": V(None), "F1": V("对"), "X1": V("未采信")})
     assert v.status == "undecided" and v.undecided_items == ["P1"]
-    v2 = conclude(mk_record(case=case), {"P1": V(None), "F1": V("对")}, policy_from_dict({"undecided": "fail"}))
-    assert v2.status == "fail" and "未决" in v2.invalid_reason
+    # 前提未决时，事实/禁止条目仍是参与条目（最有利一次会走到事实步），
+    # 未决的一并列入清单，供复核队列定位
+    v2 = conclude(mk_record(case=case), {"P1": V(None), "F1": V("对")})
+    assert v2.status == "undecided" and v2.undecided_items == ["P1", "X1"]
+    v3 = conclude(mk_record(case=case), {"P1": V(None), "F1": V("对"), "X1": V("未采信")},
+                  policy_from_dict({"undecided": "fail"}))
+    assert v3.status == "fail" and "未决" in v3.invalid_reason
 
 
 def test_undecided_required_excludes_or_fails():
@@ -123,3 +128,58 @@ def test_forced_path_na():
     case["path"] = [{"type": "forbid", "action": {"kind": "load_skill", "skill": "s"}}]
     v = conclude(mk_record(case=case, mode="forced"), {"path#1": V("不适用"), "F1": V("对"), "X1": V("未采信")})
     assert v.status == "pass" and v.path == "n/a"
+
+
+# ---------------------------------------------------------------- 缺陷修复（改造方案 §3，步骤 0 验收）
+
+def VE(reason="算子异常：炸了"):
+    """error 条目：value 为空但带算子来源。"""
+    return Verdict(None, "judge", "op@1", reason=reason)
+
+
+def test_group_member_contra_fails_session():
+    """C1：组内一错一对 → 失败（08 §7 第 4 步：任一必要事实为"错"即失败）。"""
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲", group="G1"), fact("F2", text="乙", group="G1"),
+        fact("X1", "forbidden", "禁止")])
+    v = conclude(mk_record(case=case), {"F1": V("错"), "F2": V("对"), "X1": V("未采信")})
+    assert v.status == "fail" and "必要事实判错" in v.invalid_reason
+    # 关掉禁止否决也一样失败：veto_on_forbidden 只管禁止事实
+    v2 = conclude(mk_record(case=case), {"F1": V("错"), "F2": V("对"), "X1": V("采信")},
+                  policy_from_dict({"veto_on_forbidden": False}))
+    assert v2.status == "fail"
+
+
+def test_group_sibling_hit_makes_member_undecided_decided():
+    """C2：同组已有成员满足，另一成员未决改变不了结论 → 结论确定。"""
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲", group="G1"), fact("F2", text="乙", group="G1"),
+        fact("X1", "forbidden", "禁止")])
+    v = conclude(mk_record(case=case), {"F1": V(None), "F2": V("对"), "X1": V("未采信")})
+    assert v.status == "pass" and v.undecided_items == ["F1"]
+
+
+def test_undecided_forbidden_decided_when_veto_off():
+    """C2：关闭否决时，禁止事实未决改变不了结论 → 结论确定。"""
+    no_veto = policy_from_dict({"veto_on_forbidden": False})
+    v = conclude(mk_record(), {"F1": V("对"), "X1": V(None)}, no_veto)
+    assert v.status == "pass" and v.undecided_items == ["X1"]
+
+
+def test_undecided_error_vs_undecided():
+    """C3：异常条目只在可能改变结论时生效；结论可确定时异常不影响会话。"""
+    # 异常条目在组内、另一成员已满足：两点求值均可确定 → pass
+    case = dict(mk_record()["case"], facts=[
+        fact("F1", text="甲", group="G1"), fact("F2", text="乙", group="G1"),
+        fact("X1", "forbidden", "禁止")])
+    v = conclude(mk_record(case=case), {"F1": VE(), "F2": V("对"), "X1": V("未采信")})
+    assert v.status == "pass"
+    # 单条事实异常：最有利"对"→pass、最不利"错"→fail，无法确定 → error（不进分母）
+    v2 = conclude(mk_record(), {"F1": VE(), "X1": V("未采信")})
+    assert v2.status == "error" and "F1" in v2.error
+    # undecided: fail 时异常条目也不计为失败
+    v3 = conclude(mk_record(), {"F1": VE(), "X1": V("未采信")}, policy_from_dict({"undecided": "fail"}))
+    assert v3.status == "error"
+    # 未决与异常同时存在且都影响结论：以 error 为准
+    v4 = conclude(mk_record(), {"F1": VE(), "X1": V(None)})
+    assert v4.status == "error" and v4.undecided_items == ["X1"]

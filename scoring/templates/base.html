@@ -8,7 +8,7 @@ body{font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;margin:0;back
 header{padding:10px 24px;background:#fff;border-bottom:1px solid #e1e4e8;position:sticky;top:0;z-index:5;display:flex;gap:18px;align-items:center}
 header a{color:#0969da;text-decoration:none;font-size:14px}
 header .brand{font-weight:600;font-size:15px;color:#1f2328}
-main{max-width:1180px;margin:16px auto;padding:0 14px}
+main{max-width:1280px;margin:16px auto;padding:0 14px}
 h1{font-size:18px} h2{font-size:15px;margin:18px 0 8px}
 table{border-collapse:collapse;background:#fff;font-size:13px}
 th,td{border:1px solid #e1e4e8;padding:6px 10px;text-align:left;vertical-align:top}
@@ -27,29 +27,29 @@ mark{background:#fff1a8;padding:0 2px}
 .item-chip{display:inline-block;border:1px solid #d0d7de;border-radius:8px;padding:1px 8px;font-size:12px;margin:2px 4px 2px 0;background:#fff}
 .chip-undecided{border-color:#d4a72c;background:#fff8c5}
 .muted{color:#57606a;font-size:12px}
-.pager a,.tabs a{margin-right:8px;font-size:13px}
+.pager a{margin-right:8px;font-size:13px}
 .err-box{background:#ffebe9;border:1px solid #cf222e;border-radius:8px;padding:8px 14px}
+.rate{font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
 <header>
   <span class="brand">Agent_Eval 复核</span>
-  <a href="/">总览</a>
+  <a href="/">题目列表</a>
   <a href="/queue?filter_name=undecided">复核队列</a>
-  <a href="/compare">多 run 对比</a>
-  <button onclick="rescan(this)">重新扫描</button>
+  <a href="/compare">比较</a>
+  <a href="/quality">质量</a>
+  <span class="muted">评测库 {{ db_path }} · 链 {{ chain_sha }}</span>
 </header>
 <main>{% block body %}{% endblock %}</main>
 <script>
-async function postReview(runId, epId, itemId, value, reason, reviewer, done){
+async function postReview(answerId, itemId, value, reason, reviewer, done){
   const res = await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({run_id:runId,episode_id:epId,item_id:itemId,value,reason,reviewer})});
+    body:JSON.stringify({answer_id:answerId,item_id:itemId,value,reason,reviewer})});
   const data = await res.json();
   if(!res.ok){alert(data.error||'提交失败');return}
   done(data);
 }
-async function rescore(runId,btn){btn.disabled=true;await fetch('/api/rescore/'+encodeURIComponent(runId),{method:'POST'});location.reload()}
-async function rescan(btn){btn.disabled=true;await fetch('/api/rescan',{method:'POST'});location.reload()}
 function reviewerOf(inp){const v=inp.value||localStorage.getItem('reviewer')||'';localStorage.setItem('reviewer',v);return v}
 </script>
 </body>

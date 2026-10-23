@@ -1,31 +1,51 @@
 {% extends "base.html" %}
-{% block title %}多 run 对比 · Agent_Eval 复核{% endblock %}
+{% block title %}比较 · Agent_Eval 复核{% endblock %}
 {% block body %}
-<h1>多 run 对比</h1>
+<h1>比较（比较轴，按题目交集对齐）</h1>
 <form method="get" action="/compare" class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-  <select name="a">{% for r in runs %}<option value="{{ r.run_id }}" {% if r.run_id==a %}selected{% endif %}>{{ r.run_id }}</option>{% endfor %}</select>
-  <span>vs</span>
-  <select name="b">{% for r in runs %}<option value="{{ r.run_id }}" {% if r.run_id==b %}selected{% endif %}>{{ r.run_id }}</option>{% endfor %}</select>
-  <label><input type="radio" name="intended" value="model" {% if intended=='model' %}checked{% endif %}> 预期变量：模型</label>
-  <label><input type="radio" name="intended" value="skill" {% if intended=='skill' %}checked{% endif %}> skill（知识修订验证）</label>
-  <button class="primary" type="submit">对比</button>
+  <label>比较轴</label>
+  <select name="axis">
+    {% for a in attrs %}<option value="{{ a }}" {% if a == axis %}selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  <label>固定（k=v，逗号分隔）</label>
+  <input type="text" name="fix" value="{{ fix }}" placeholder="mode=natural" style="width:180px">
+  <label>不限（逗号分隔）</label>
+  <input type="text" name="any" value="{{ any }}" placeholder="trial" style="width:120px">
+  <button class="primary" type="submit">比较</button>
 </form>
 
 {% if error %}<div class="err-box">{{ error }}</div>{% endif %}
 {% if rep %}
-  {% if rep.blocked %}<div class="err-box">已拒绝对比：{{ rep.blocked }}</div>
+  {% if rep.blocked %}<div class="err-box">已拒绝比较：{{ rep.blocked }}</div>
   {% else %}
   <div class="card">
-    <div>快照差异键：{{ rep.snapshot_diff_keys|join('、') or '（无）' }}
-      {% if rep.allowed_diff_keys %}（预期变量 {{ rep.intended }} 放行：{{ rep.allowed_diff_keys|join('、') }}）{% endif %}</div>
-    {% if rep.demoted_excluded %}<div class="muted">按 diff.md 排除因降级移出：{{ rep.demoted_excluded|join('、') }}</div>{% endif %}
-    {% if rep.anchor_tripwires %}<div class="err-box">锚点绊线标红：{{ rep.anchor_tripwires|join('、') }}（上一 run 全过、本 run 全败，去看一眼）</div>{% endif %}
+    <div>比较轴：{{ rep.axis }}（{{ rep.axis_values | join("、") }}）
+      {% if rep.fixed %} · 固定：{% for k, v in rep.fixed.items() %}{{ k }}={{ v }} {% endfor %}{% endif %}
+      {% if rep.any %} · 不限：{{ rep.any | join("、") }}{% endif %}</div>
+    {% if rep.pending_answers %}<div class="prov">{{ rep.pending_answers }} 段会话缺判定（待重判），未参与比较</div>{% endif %}
+    {% if rep.excluded_qkeys %}<div class="muted">按题目交集排除：{% for e in rep.excluded_qkeys %}{{ e.qkey }}（{{ e.reason }}）{% endfor %}</div>{% endif %}
+    {% if rep.anchor_tripwires %}
+    <div class="err-box">锚点绊线：
+      {% for t in rep.anchor_tripwires %}{{ t.qkey }}（{{ t.from_run }} → {{ t.to_run }}，上 run 全过本 run 全败）{% endfor %}
+    </div>
+    {% endif %}
   </div>
+  <h2>维度 × 轴值 通过率（95% 区间）</h2>
   <table>
-    <tr><th>uid</th><th>Δ通过率（B−A）</th><th>95% 区间</th><th>显著</th></tr>
-    {% for uid, p in rep.paired.items() %}
-    <tr><td>{{ uid }}</td><td>{{ p.delta }}</td><td>{{ p.ci[0] }} ~ {{ p.ci[1] }}</td>
-        <td>{% if p.significant %}<span class="badge {{ 'bad' if p.delta < 0 else 'ok' }}">显著</span>{% else %}<span class="badge mid">不显著</span>{% endif %}</td></tr>
+    <tr><th>维度</th>{% for av in rep.axis_values %}<th>{{ av }}</th>{% endfor %}</tr>
+    {% for dim, per in rep.dims.items() %}
+    <tr><td>{{ dim }}</td>
+      {% for av in rep.axis_values %}{% set c = per.get(av) %}<td class="rate">{% if c and c.n %}{{ c.pass }}/{{ c.n }} = {{ c.rate }}<br><span class="muted">{{ c.ci[0] }} ~ {{ c.ci[1] }}</span>{% else %}—{% endif %}</td>{% endfor %}
+    </tr>
+    {% endfor %}
+  </table>
+  <h2>题目 × 轴值 通过矩阵</h2>
+  <table>
+    <tr><th>题目</th>{% for av in rep.axis_values %}<th>{{ av }}</th>{% endfor %}</tr>
+    {% for qkey, cells in rep.matrix.items() %}
+    <tr><td><a href="/question/{{ qkey | urlencode }}">{{ qkey }}</a></td>
+      {% for av in rep.axis_values %}{% set c = cells[av] %}<td class="rate">{% if c.n %}{{ c.pass }}/{{ c.n }}{% if c.rate is not none %} = {{ c.rate }}{% endif %}{% elif c.pending %}<span class="badge mid">待重判 {{ c.pending }}</span>{% else %}—{% endif %}</td>{% endfor %}
+    </tr>
     {% endfor %}
   </table>
   {% endif %}

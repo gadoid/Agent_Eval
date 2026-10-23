@@ -145,6 +145,32 @@ def cfg_fact(value, adopted=False):
     })
 
 
+@operator
+class MapFact:
+    """按条目文本查表的假 judge：mapping 未命中判"未提及"（组内一错一对等对拍场景）。"""
+
+    id, version, source = "map-fact", "1", "judge"
+    scales = {"required": FACT_SCALE, "expected": FACT_SCALE}
+    inputs = ("item.text", "answer")
+
+    def __init__(self, mapping: dict | None = None):
+        self._map = dict(mapping or {})
+
+    def judge(self, item, ctx):
+        return Verdict(self._map.get(item.text or "", "未提及"), self.source, f"{self.id}@{self.version}")
+
+
+def cfg_map(mapping, adopted=False):
+    """文本查表假 judge 配置：事实按 mapping（文本→取值），禁止事实按 adopted。"""
+    return fake_config(operators={
+        "keyword": {"impl": "keyword"}, "skill-path": {"impl": "skill-path"},
+        "fake-fact": {"impl": "map-fact", "mapping": mapping},
+        "fake-forbid": {"impl": "fake-forbid", "adopted": adopted},
+        "fake-refusal": {"impl": "fake-refusal"},
+        "fake-precond": {"impl": "fake-precond"},
+    })
+
+
 # ---------------------------------------------------------------- 会话构造
 
 def fact(id, kind="required", text="", keywords=(), turn=None, group=None, evidence=None):

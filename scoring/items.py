@@ -3,9 +3,17 @@
 除注明外全部为现行 scoring.py（v2 单文件版）行为的迁移，出处见各函数；
 唯一扩展：会话无效或失败时后续条目仍拆出（仍判定、仍落盘，但不参与会话
 结论，见 policy.session_conclusion 的短路顺序）。
+
+题目指纹（评测结果管理改造方案 §4.1）也在本模块计算：
+- 输入指纹 input_fp：history + 用户消息序列 + 注入（point/option/rev/file/key/value）
+- 判定指纹 judge_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group）+ 路径约束
+- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组不进入）
+参考答案、备注、证据、标签、状态、关键条件的改动不影响任何指纹。
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,10 +71,11 @@ def loaded_skills_by_turn(record: dict) -> list[set[str]]:
     return out
 
 
-def build_context(record: dict) -> EpisodeContext:
+def build_context(record: dict, case: dict | None = None) -> EpisodeContext:
+    """case 缺省取 record 内嵌编译行；重判（期望修订）时传入 specs 表中的期望编译行。"""
     return EpisodeContext(
         record=record,
-        case=record.get("case") or {},
+        case=case if case is not None else (record.get("case") or {}),
         outputs=tuple(live_outputs(record)),
         skills_by_turn=tuple(frozenset(s) for s in loaded_skills_by_turn(record)),
     )
@@ -94,3 +103,50 @@ def extract_items(ctx: EpisodeContext) -> list[Item]:
     for f in case.get("facts") or []:
         items.append(Item(f.get("kind", "required"), f["id"], f.get("text"), f.get("turn"), f))
     return items
+
+
+# ---------------------------------------------------------------- 题目指纹（改造方案 §4.1）
+
+def _sha16(payload: Any) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
+def input_fp_of(case: dict) -> str:
+    """输入指纹：回答能否直接比较。改用户消息或注入 → 变；改参考答案/备注 → 不变。"""
+    inj = [{k: i.get(k) for k in ("point", "option", "rev", "file", "key", "value")}
+           for i in (case.get("injections") or [])]
+    return _sha16({
+        "history": case.get("history", "live"),
+        "turns": [t.get("content", "") for t in (case.get("turns") or []) if t.get("role") == "user"],
+        "injections": inj,
+    })
+
+
+def judge_fp_of(case: dict) -> str:
+    """判定指纹：结论能否直接比较。改事实/前提/路径约束 → 变；改输入 → 不变。"""
+    return _sha16({
+        "answerable": case.get("answerable", True),
+        "preconditions": [{"id": p.get("id"), "text": p.get("text"), "turn": p.get("turn")}
+                          for p in (case.get("preconditions") or [])],
+        "facts": [{"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text"),
+                   "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group")}
+                  for f in (case.get("facts") or [])],
+        "path": case.get("path") or [],
+    })
+
+
+def qkey_of(case: dict) -> str:
+    """题目身份 = uid + "|" + 输入指纹。"""
+    return f"{case.get('uid', '?')}|{input_fp_of(case)}"
+
+
+def item_sha_of(item: Item) -> str:
+    """条目指纹：人工改判是否仍然有效的判据。关键词与组影响规则判定，
+    但不影响人对"这条事实是否成立"的判断，不进入指纹。"""
+    if item.kind == "path":
+        payload = {"type": item.attrs.get("type"), "action": item.attrs.get("action"), "turn": item.attrs.get("turn")}
+    elif item.kind == "refusal":
+        payload = {"kind": "refusal"}
+    else:
+        payload = {"kind": item.kind, "text": item.attrs.get("text"), "turn": item.attrs.get("turn")}
+    return _sha16(payload)

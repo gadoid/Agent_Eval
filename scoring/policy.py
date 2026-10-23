@@ -3,6 +3,12 @@
 会话结论判定顺序与现行 score_episode 一致（§4.2 拆条规则的短路顺序）：
 前提 invalid → 路径 fail → 拒答 → 事实（否决/全满足）→ 未决处理。
 组的"满足其一"为内建语义（CASE-STRUCTURE §2.4），不开放配置。
+
+未决与异常按"能否改变结论"处理（评测结果管理改造方案 §3.2/§3.3）：
+未决/异常条目分别取最有利与最不利值各算一次会话结论，两次相同即确定；
+不同时有异常条目记 error（不进分母，不受 policy.undecided 影响），否则按
+policy.undecided。任一必要事实（单条或组成员）实际判"错"即失败（§3.1），
+不受 veto_on_forbidden 控制——该开关只管禁止事实。
 """
 from __future__ import annotations
 
@@ -15,6 +21,10 @@ from .items import FACT_SCALE, EpisodeContext, Item
 from .operators import Verdict
 
 HIT, VAGUE, MISSING, CONTRA = FACT_SCALE
+
+# 两点求值的假想取值（改造方案 §3.2）：未决/异常条目各取一次
+FAVORABLE = {"required": HIT, "forbidden": "未采信", "precond": "成立", "path": "满足", "refusal": "拒答"}
+UNFAVORABLE = {"required": CONTRA, "forbidden": "采信", "precond": "不成立", "path": "违反", "refusal": "未拒答"}
 
 
 class PolicyError(Exception):
@@ -112,8 +122,12 @@ def target_skill(case: dict, routing: dict[str, list[str]] | None) -> str | None
 
 def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff: dict[str, Verdict],
                        policy: Policy, routing: dict[str, list[str]] | None = None) -> EpisodeVerdict:
-    """按 §7 顺序得出会话结论。items 全部已判定（§4.2 扩展），但短路步骤之后的
-    条目不参与结论（与现行一致）；参与条目中有未决时按 policy.undecided 处理。"""
+    """按 §7 顺序得出会话结论（改造方案 §3 两点求值）。
+
+    条目先按实际值分类（确定 / 未决 / 异常）；会话结论由两点求值决定：
+    未决与异常条目分别取最有利、最不利值各算一次，两次相同即确定。
+    记录字段（facts / forbidden_adopted / 计数）沿现行短路顺序——前提/路径/
+    拒答短路后，事实不进结论。"""
     case = ctx.case
     v = EpisodeVerdict(
         uid=record.get("uid", "?"), mode=record.get("mode", "?"), trial=record.get("trial", 0),
@@ -128,137 +142,153 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
     v.target_loaded = (tgt in loaded_ever) if tgt else None
     v.other_loaded = bool(loaded_ever - ({tgt} if tgt else set()))
 
-    undecided: list[str] = []
+    forced = record.get("mode") == "forced"
+    preconds = [i for i in items if i.kind == "precond"]
+    paths = [i for i in items if i.kind == "path"]
+    refusal = next((i for i in items if i.kind == "refusal"), None)
+    requireds = [i for i in items if i.kind == "required"]
+    forbids = [i for i in items if i.kind == "forbidden"]
+    answerable = case.get("answerable", True) is not False
 
-    def count(verdict: Verdict) -> None:
-        if verdict.source == "rule":
+    def verd_of(item: Item) -> Verdict:
+        return eff.get(item.id) or Verdict(None, "", "")
+
+    def is_error(verd: Verdict) -> bool:
+        """value 为空但带算子来源 → 算子异常（§3.3）；空 Verdict（缺行/整链弃权）→ 未决。"""
+        return verd.value is None and bool(verd.source)
+
+    decided: dict[str, str] = {}
+    undecided: list[str] = []
+    errored: list[str] = []
+
+    def count(item: Item) -> None:
+        verd = verd_of(item)
+        if verd.source == "rule":
             v.by_rule += 1
-        elif verdict.source == "judge":
+        elif verd.source == "judge":
             v.by_judge += 1
-        elif verdict.source == "human":
+        elif verd.source == "human":
             v.by_human += 1
 
-    def finish(status: str, reason: str | None = None) -> EpisodeVerdict:
-        """已由确定条目得出结论；未决条目只在"本可通过"时改写结论（§7 规则 6）。"""
-        if status == "pass" and undecided:
-            v.undecided_items = undecided
-            if policy.undecided == "fail":
-                v.status, v.invalid_reason = "fail", "有未决条目"
-            else:
-                v.status, v.invalid_reason = "undecided", "有未决条目"
-            return v
-        v.status, v.invalid_reason = status, reason
-        v.undecided_items = undecided
-        return v
-
-    def finish_undecided() -> EpisodeVerdict:
-        """结论无法确定（如前提未决：无法区分 invalid 与后续路径）。"""
-        v.undecided_items = undecided
-        if policy.undecided == "fail":
-            v.status, v.invalid_reason = "fail", "有未决条目"
-        else:
-            v.status, v.invalid_reason = "undecided", "有未决条目"
-        return v
-
-    def of_kind(kind: str) -> list[Item]:
-        return [i for i in items if i.kind == kind]
-
-    # 2 路径归并：先算出 path 状态（现行 scoring.py:177 在前提检查前即计算，
-    # invalid/拒答的会话也带 path），"违反即败"的决策顺序仍排在前提之后。
-    path_vals: list[str] = []
-    for item in of_kind("path"):
-        verd = eff.get(item.id) or Verdict(None, "", "")
-        if verd.value is None:
-            undecided.append(item.id)
-        else:
-            path_vals.append(verd.value)
-    if record.get("mode") == "forced":
-        v.path = "n/a"
-    elif "违反" in path_vals:
-        v.path = "violate"
-    else:
-        v.path = "ok"
-
-    # 1 前提：任一不成立 → invalid（现行 scoring.py:183-186）。
-    # 前提与路径不计入 by_rule/by_judge（现行只对事实/禁止事实/拒答计数）。
+    # 1 前提（前提与路径不计入 by_rule/by_judge，与现行一致）
     precond_fail = False
-    for item in of_kind("precond"):
-        verd = eff.get(item.id) or Verdict(None, "", "")
+    for item in preconds:
+        verd = verd_of(item)
         if verd.value is None:
-            undecided.append(item.id)
+            (errored if is_error(verd) else undecided).append(item.id)
+            continue
+        decided[item.id] = verd.value
+        v.precondition.append({"id": item.id, "hold": verd.value == "成立"})
+        if verd.value != "成立":
+            precond_fail = True
+
+    # 2 路径：forced 会话不判路径（条目不参与结论）
+    path_vals: list[str] = []
+    for item in paths:
+        verd = verd_of(item)
+        if forced:
+            continue
+        if verd.value is None:
+            (errored if is_error(verd) else undecided).append(item.id)
+            continue
+        decided[item.id] = verd.value
+        path_vals.append(verd.value)
+    v.path = "n/a" if forced else ("violate" if "违反" in path_vals else "ok")
+    path_violate = not forced and "违反" in path_vals
+
+    # 事实条目是否参与结论：前提已判不成立 / 路径已违反 / 拒答型会话时被短路
+    facts_live = not precond_fail and not path_violate and answerable
+
+    # 3 拒答（仅 answerable=false 的会话）
+    if not answerable and refusal is not None:
+        verd = verd_of(refusal)
+        if verd.value is None:
+            (errored if is_error(verd) else undecided).append(refusal.id)
         else:
-            v.precondition.append({"id": item.id, "hold": verd.value == "成立"})
-            if verd.value != "成立":
-                precond_fail = True
-    if precond_fail:
-        return finish("invalid", "前提不成立（不计为答错）")
-    if any(i in undecided for i in (x.id for x in of_kind("precond"))):
-        return finish_undecided()
+            decided[refusal.id] = verd.value
 
-    if v.path == "violate":
-        return finish("fail", "路径约束违反")
-    if any(i in undecided for i in (x.id for x in of_kind("path"))):
-        return finish_undecided()
-
-    # 3 拒答（现行 scoring.py:191-195）：仅 answerable=false 的会话
-    if case.get("answerable", True) is False:
-        verd = eff.get("refusal") or Verdict(None, "", "")
+    # 4/5 事实与禁止事实：分类全部（两点求值要用），记录仍沿短路门
+    for item in forbids + requireds:
+        verd = verd_of(item)
         if verd.value is None:
-            undecided.append("refusal")
-            return finish_undecided()
-        count(verd)
-        return finish("pass" if verd.value == "拒答" else "fail")
+            if facts_live:
+                (errored if is_error(verd) else undecided).append(item.id)
+            continue
+        decided[item.id] = verd.value
+    for item in items:
+        if item.kind == "expected":
+            verd = verd_of(item)
+            if verd.value is not None:
+                decided[item.id] = verd.value        # 期望事实不进 undecided/errored，不参与结论
 
-    # 4/5 事实与禁止事实（现行 scoring.py:197-247）：先判定全部事实，再应用否决——
-    # 否决的会话其事实结论仍记录（与现行一致）。
-    req = of_kind("required")
-    groups: dict[str, list[Item]] = defaultdict(list)
-    singles = [i for i in req if not i.attrs.get("group")]
-    for i in req:
-        if i.attrs.get("group"):
-            groups[i.attrs["group"]].append(i)
+    stage_open = (all(i.id in decided for i in preconds)
+                  and (forced or all(i.id in decided for i in paths)))
+    if stage_open and not answerable and refusal is not None and refusal.id in decided:
+        count(refusal)                                # 拒答判定计入 by_*
+    elif stage_open and facts_live:
+        for item in forbids + requireds:
+            count(item)
+        for item in forbids:
+            if item.id in decided:
+                v.forbidden_adopted[item.id] = decided[item.id] == "采信"
+        for item in requireds:
+            if item.id in decided:
+                v.facts[item.id] = decided[item.id]
+        for item in items:
+            if item.kind == "expected" and item.id in decided:
+                v.expected_hit[item.id] = decided[item.id] == HIT
 
-    for item in of_kind("forbidden"):
-        verd = eff.get(item.id) or Verdict(None, "", "")
-        count(verd)
-        if verd.value is None:
-            undecided.append(item.id)
-        else:
-            v.forbidden_adopted[item.id] = verd.value == "采信"
+    # ---------------------------------------------------------------- 两点求值（§3.2）
+    def value_of(item: Item, fav: bool) -> str:
+        if item.id in decided:
+            return decided[item.id]
+        return (FAVORABLE if fav else UNFAVORABLE)[item.kind]
 
     def satisfied(value: str) -> bool:
         return value == HIT or (policy.partial_as == "pass" and value == VAGUE)
 
-    all_pass = True
-    for item in singles:
-        verd = eff.get(item.id) or Verdict(None, "", "")
-        count(verd)
-        if verd.value is None:
-            undecided.append(item.id)          # 未决不直接判败：由 finish 映射为 undecided
-            continue
-        v.facts[item.id] = verd.value
-        if not satisfied(verd.value):
-            all_pass = False
-    for members in groups.values():
-        group_ok = False
-        group_undecided = False
-        for item in members:
-            verd = eff.get(item.id) or Verdict(None, "", "")
-            count(verd)
-            if verd.value is None:
-                undecided.append(item.id)
-                group_undecided = True
-                continue
-            v.facts[item.id] = verd.value
-            if satisfied(verd.value):
-                group_ok = True
-        if not group_ok and not group_undecided:
-            all_pass = False
-    for item in of_kind("expected"):
-        verd = eff.get(item.id) or Verdict(None, "", "")
-        if verd.value is not None:
-            v.expected_hit[item.id] = verd.value == HIT
+    def evaluate(fav: bool) -> tuple[str, str | None]:
+        for item in preconds:
+            if value_of(item, fav) != "成立":
+                return "invalid", "前提不成立（不计为答错）"
+        if not forced:
+            for item in paths:
+                if value_of(item, fav) == "违反":
+                    return "fail", "路径约束违反"
+        if not answerable:
+            if refusal is None:
+                return "fail", None
+            return ("pass" if value_of(refusal, fav) == "拒答" else "fail"), None
+        for item in forbids:
+            if policy.veto_on_forbidden and value_of(item, fav) == "采信":
+                return "fail", "禁止事实被采信"
+        # 必要事实判"错"即失败（§3.1）：只看实际判定值——未决条目经两点求值参与，
+        # 其假想取值不触发本条，否则"同组已满足时另一成员未决"永远无法确定。
+        if any(decided.get(item.id) == CONTRA for item in requireds):
+            return "fail", "必要事实判错"
+        groups: dict[str, list[Item]] = defaultdict(list)
+        ok = True
+        for item in requireds:
+            if item.attrs.get("group"):
+                groups[item.attrs["group"]].append(item)
+            elif not satisfied(value_of(item, fav)):
+                ok = False
+        for members in groups.values():
+            if not any(satisfied(value_of(m, fav)) for m in members):
+                ok = False
+        return ("pass" if ok else "fail"), None
 
-    if policy.veto_on_forbidden and any(v.forbidden_adopted.values()):
-        return finish("fail", "禁止事实被采信")
-    return finish("pass" if all_pass else "fail")
+    # 结论取最有利一次的原因：该次中任何负面结论都来自实际判定值（假想值全取有利），
+    # 原因不会引用未发生的事。
+    fav_status, fav_reason = evaluate(True)
+    unfav_status, _ = evaluate(False)
+    v.undecided_items = undecided
+    if fav_status == unfav_status:
+        v.status, v.invalid_reason = fav_status, fav_reason
+    elif errored:
+        v.status, v.error = "error", "判定异常，结论无法确定：" + "、".join(errored)
+    elif policy.undecided == "fail":
+        v.status, v.invalid_reason = "fail", "有未决条目"
+    else:
+        v.status, v.invalid_reason = "undecided", "有未决条目"
+    return v

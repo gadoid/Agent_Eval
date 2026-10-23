@@ -7,11 +7,13 @@ __pycache__/
 # 运行产出：session 日志含业务数据，不进仓库（见 doc/07-使用手册.md §5.1）
 runner/out/
 
+# 评测库：判定与人工改判含真实业务对话，不进仓库（改造方案 §14；backup/export 另存）
+archive/
+
 # 本机临时文件
 *.log
 .DS_Store
 Thumbs.db
 
-# scoring 运行时产物：跨 run 模型判定缓存与复核服务索引（可随时删除重建）
+# scoring 运行时产物：跨 run 模型判定缓存（已迁入评测库 verdict_cache 表，遗留文件可删）
 scoring/verdict-cache.jsonl
-.review-index.db
