@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}复核 {{ v.uid }} · Agent_Eval 复核{% endblock %}
+{% block body %}
+{% set c = v.conclusion %}
+{% set concl0 = {'status': c.status if c else None, 'score': c.score if c else None,
+                 'score_min': c.score_min if c else None, 'score_max': c.score_max if c else None,
+                 'auto_score': c.auto_score if c else None, 'score_source': c.score_source if c else None,
+                 'vetoes': (c.detail.vetoes if c and c.detail else []) or [],
+                 'reason': (c.reason if c else '') or '',
+                 'parts': (c.detail.parts if c and c.detail else []) or []} %}
+<main class="rv-page" style="max-width:none" data-review-body
+      data-answer="{{ v.answer_id }}" data-chain="{{ chain_sha }}" data-pass-mark="{{ pass_mark }}"
+      data-next="{{ next_url }}" data-prev="{{ prev_url }}"
+      data-preview-url="/api/review/preview" data-submit-url="/api/reviews"
+      data-concl="{{ concl0|tojson }}">
+  <div class="rv-crumb"><a href="/review?tab={{ tab }}">复核</a> / {{ tab_labels[tab] }}{% if pos %} / 第 {{ pos }} 段，共 {{ total_q }} 段{% endif %}</div>
+  <div class="rv-page-head" style="margin:4px 0 12px">
+    <h1>{{ v.uid }}</h1>
+    <span class="rv-meta"><span>{{ v.dim or '?' }}</span><span>{{ v.topic or '' }}</span>
+      {% if v.rewrite %}<span>{{ v.rewrite }}</span>{% endif %}
+      <a href="/case/{{ v.case_id }}">用例详情 →</a></span>
+  </div>
+  <div class="rv-runtag" style="margin-bottom:12px">
+    <span class="rv-runtag-k">被测</span>
+    <span class="rv-pill"><b>{{ v.models|join('、') if v.models else '?' }}</b>{% if v.reasoning_effort %} · 努力 {{ v.reasoning_effort }}{% endif %}</span>
+    <span class="rv-pill rv-pill--mono">{{ v.profile }}</span>
+    <span class="rv-pill">{{ v.mode }} · 第 {{ v.trial }} 次</span>
+    <span class="rv-pill rv-pill--mono">{{ v.run_id }}</span>
+    <span class="rv-pill">技能 {{ v.skills_mode or '?' }}</span>
+    {% for inj in v.injections_applied %}<span class="rv-pill">注入 {{ inj.point }} · {{ inj.option }}</span>{% endfor %}
+  </div>
+
+  <div class="rv-concl" id="concl"></div>
+
+  <div class="rv-review-layout">
+    <section class="rv-conv" id="conv" aria-label="对话">
+      {% for t in v.turns %}
+      <article class="rv-turn" data-turn="{{ t.index or loop.index }}">
+        <div class="rv-turn-head"><b>第 {{ t.index or loop.index }} 轮</b>
+          {% if t.status != 'ok' %}<span class="rv-obs" data-ok="false">{{ t.status }}</span>{% endif %}
+          {% for s in t.skills %}<span class="rv-obs">技能 {{ s }} ✓</span>{% endfor %}
+          {% if t.ask_user %}<span class="rv-obs">反问 {{ t.ask_user }}</span>{% endif %}
+          {% for e in t.tool_errors %}<span class="rv-obs" data-ok="false">{{ e.name if e.name else '工具错误' }}</span>{% endfor %}
+          <span class="rv-turn-items"></span></div>
+        <div class="rv-msg" data-role="{{ 'preset' if t.source == 'preset' else 'user' }}">
+          <span class="rv-msg-who">用户</span><div class="rv-md">{{ t.input|md }}</div></div>
+        <div class="rv-msg" data-role="assistant"><span class="rv-msg-who">助手</span>
+          <div class="rv-md">{{ t.output|md }}</div></div>
+      </article>
+      {% endfor %}
+    </section>
+
+    <aside class="rv-sheet" id="sheet" aria-label="评分表">
+      <div class="rv-sheet-head"><h2>评分表</h2>
+        <span class="rv-meta"><span>{{ v.sections|map(attribute='rows')|map('length')|sum }} 条</span>
+          <span>及格 {{ pass_mark }}</span>
+          <input class="rv-input" id="reviewer" placeholder="评审人" style="width:90px;height:26px;font-size:12px"></span></div>
+      {% for sec in v.sections %}
+      <div class="rv-sec">{{ sec.label }} <span>· {{ sec.hint }}</span></div>
+      {% for r in sec.rows %}
+      <div class="rv-row" data-i="{{ loop.index0 }}" data-id="{{ r.id }}" data-kind="{{ r.kind }}"
+           data-turn="{{ r.turn or 1 }}" data-scored="{{ '1' if r.kind in ('required', 'expected', 'refusal') else '0' }}"
+           data-scale="{{ scales.get(r.kind, [])|tojson }}"
+           data-map="{{ score_map|tojson if r.kind in ('required', 'expected', 'refusal') else '{}' }}"
+           data-kw="{{ r.keywords|tojson }}" data-machine="{{ {'value': r.machine.value if r.machine else None, 'score': r.machine.score if r.machine else None}|tojson }}"
+           data-human="{{ '1' if r.human else '' }}">
+        <div class="rv-row-top">
+          <span class="rv-kind" {% if r.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ sec.label }} {{ r.id }}</span>
+          <span class="rv-meta"><span>第 {{ r.turn or 1 }} 轮</span>{% if r.group %}<span>组 {{ r.group }}</span>{% endif %}</span>
+          {% if r.kind in ('required', 'expected') %}<span class="rv-weight" {% if not r.weight %}data-zero{% endif %}>权重 {{ r.weight|f1 }}</span>{% endif %}
+          <span class="rv-state" data-s="{{ 'human' if r.human else ('need' if not r.machine or r.machine.value is none else 'off') }}" {% if r.machine and r.machine.value is not none and not r.human %}hidden{% endif %}>{{ '人工' if r.human else '待判' }}</span>
+        </div>
+        <div class="rv-row-text">{{ r.text }}</div>
+        {% if r.kind == 'precond' and v.injection_observed %}
+          {% for jid, seen in v.injection_observed.items() %}
+          <div class="rv-meta" style="font-size:12px"><span class="rv-inj" data-s="{{ 'seen' if seen else 'unseen' }}">{{ '注入观测' if seen else '注入未观测到' }}</span>
+            {{ jid }}{% if not seen %}——若判不成立，原因可能是注入被遮蔽{% endif %}</div>
+          {% endfor %}
+        {% endif %}
+        {% if r.machine %}
+        <div class="rv-mc">
+          <div class="rv-mc-line"><span class="rv-mc-k">机器</span>
+            {% if r.machine.value is not none %}{{ m.vval(r.machine.value, r.machine.score) }}{{ m.src(r.machine.source) }}
+            {% else %}<span class="rv-verdict" data-tone="{{ 'error' if r.machine.status == 'error' else 'undecided' }}">{{ '异常' if r.machine.status == 'error' else '未决' }}</span>{% endif %}
+            <span class="rv-mc-op">{{ r.machine.operator or '—' }}</span></div>
+          {% if r.machine.reason %}<div class="rv-mc-why">{{ r.machine.reason }}</div>{% endif %}
+          {% if r.machine.trace %}<div class="rv-mc-trace">{{ r.machine.trace }}</div>{% endif %}
+        </div>
+        {% endif %}
+        {% if r.human %}
+        <div class="rv-meta" style="font-size:12px">{{ m.src('human') }}<span>{{ r.human.reviewer }} · {{ r.human.at }}</span>
+          {% if r.human.reason %}<span>理由：{{ r.human.reason }}</span>{% endif %}</div>
+        {% endif %}
+        <div class="rv-hc">
+          <fieldset class="rv-picker rv-picker--sm"><legend>{{ r.id }} 的结论</legend>
+            {% for val in scales.get(r.kind, []) %}
+            <label class="rv-opt" data-tone="{{ val|vcls }}"><input type="radio" name="p{{ sec.kind }}{{ r.id }}" value="{{ val }}"
+              {% if r.human and r.human.value == val and r.human.score is none %}checked{% endif %}>
+              <span><span class="rv-kbd">{{ loop.index }}</span>{{ val }}{% if r.kind in ('required', 'expected', 'refusal') and score_map.get(val) is defined %}<span class="rv-pts">{{ score_map[val]|f1 }}</span>{% endif %}</span></label>
+            {% endfor %}
+          </fieldset>
+          {% if r.kind in ('required', 'expected', 'refusal') %}
+          <span class="rv-score"><input class="rv-score-num" inputmode="numeric" placeholder="分数"
+            aria-label="{{ r.id }} 分数（0–100）" value="{{ r.human.score if r.human and r.human.score is not none else '' }}"
+            {% if r.human and r.human.score is not none and (score_map.get(r.human.value) != r.human.score) %}data-custom{% endif %}>
+            <span class="rv-score-unit">分</span></span>
+          {% endif %}
+          {% if r.machine and r.machine.value is not none %}
+          <button class="rv-btn rv-agree" data-agree type="button">同意机器 <span class="rv-kbd">Y</span></button>{% endif %}
+        </div>
+        <input class="rv-input rv-why" placeholder="理由（可选，E 键聚焦）" value="{{ r.human.reason if r.human and r.human.reason else '' }}"
+               {% if not loop.last %}style="display:none"{% endif %}>
+      </div>
+      {% endfor %}
+      {% endfor %}
+      <div class="rv-total" id="total"></div>
+      <div class="rv-sheet-foot"><span class="rv-kbd">J</span><span class="rv-kbd">K</span> 换条目 ·
+        <span class="rv-kbd">1</span>–<span class="rv-kbd">9</span> 快捷分 · <span class="rv-kbd">N</span> 输入分数 ·
+        <span class="rv-kbd">Y</span> 同意机器 · <span class="rv-kbd">E</span> 理由 · <span class="rv-kbd">T</span> 手改总分 ·
+        <span class="rv-kbd">Ctrl ↵</span> 提交并下一段</div>
+      {% if v.voided %}
+      <div class="rv-total" style="border-top:1px dashed var(--line)">
+        <b>作废的人工分数（期望或回答已变）</b>
+        {% for vd in v.voided %}<div class="rv-meta" style="margin-top:4px"><span>{{ vd.review.item_id }}</span><span>{{ vd.review.value }}{% if vd.review.score is not none %} · {{ vd.review.score|f1 }} 分{% endif %}</span><span>{{ vd.review.reviewer }}</span><span class="rv-state" data-s="void">{{ vd.reason }}</span></div>{% endfor %}
+      </div>
+      {% endif %}
+    </aside>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="/static/review.js"></script>{% endblock %}

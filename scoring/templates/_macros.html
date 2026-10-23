@@ -1,0 +1,58 @@
+{# 共享部件（doc/10 设计系统）：结论徽标、取值徽标、来源、RunTag、分数条、平均分格、分页 #}
+
+{% macro verdict(status, lg=False) -%}
+<span class="rv-verdict{% if lg %} rv-verdict--lg{% endif %}" data-tone="{{ {'pass':'pass','fail':'fail','invalid':'neutral','undecided':'undecided','error':'error'}.get(status, 'neutral') }}">{{ status|status_label }}</span>
+{%- endmacro %}
+
+{% macro vval(value, score=None) -%}
+<span class="rv-verdict" data-tone="{{ value|vcls }}">{{ value or '未判' }}{% if score is not none %}<span class="rv-pts">{{ score|f1 }}</span>{% endif %}</span>
+{%- endmacro %}
+
+{% macro kind(kind) -%}
+<span class="rv-kind" {% if kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ kind|kind_label }}</span>
+{%- endmacro %}
+
+{% macro src(source) -%}
+{%- if source %}<span class="rv-src" data-src="{{ source }}">{{ {'rule':'规则','judge':'模型','human':'人工'}.get(source, source) }}</span>{% endif -%}
+{%- endmacro %}
+
+{% macro runtag(r) -%}
+<span class="rv-runtag">
+  <span class="rv-runtag-k">被测</span>
+  <span class="rv-pill"><b>{{ r.models|join('、') if r.models else '?' }}</b>{% if r.reasoning_effort %} · 努力 {{ r.reasoning_effort }}{% endif %}</span>
+  <span class="rv-pill rv-pill--mono">{{ r.profile or r.run_id }}</span>
+  <span class="rv-pill">{{ r.mode }} · 第 {{ r.trial }} 次</span>
+  {% if r.run_id %}<span class="rv-pill rv-pill--mono">{{ r.run_id }}</span>{% endif %}
+</span>
+{%- endmacro %}
+
+{% macro scorebar(score, mark=60, fail_below=None) -%}
+<div class="rv-scorebar" style="height:6px">
+  {% if score is not none %}<span class="rv-scorebar-fill" {% if fail_below is not none and score < fail_below %}data-fail{% endif %} style="width:{{ score }}%"></span>{% endif %}
+  <span class="rv-scorebar-mark" style="left:{{ mark }}%;top:-3px;bottom:-3px"></span>
+</div>
+{%- endmacro %}
+
+{% macro avg_cell(score, n, provisional=False, sub='') -%}
+<span class="rv-avg{% if provisional %} rv-avg--provisional{% endif %}{% if score is none %} rv-avg--empty{% endif %}">
+  <span class="rv-avg-main"><span class="rv-avg-n">{{ score|f1 if score is not none else '—' }}</span>{% if n %}<span class="rv-avg-sub">n={{ n }}</span>{% endif %}</span>
+  {{ scorebar(score, mark=pass_mark, fail_below=pass_mark) }}
+  {% if sub %}<span class="rv-avg-sub">{{ sub }}</span>{% endif %}
+</span>
+{%- endmacro %}
+
+{% macro rate_cell(p, n, ci=None) -%}
+<span class="rv-rate">
+  <span class="rv-rate-main"><span class="rv-rate-pct">{{ (p * 100)|round|int }}%</span><span class="rv-rate-n">{{ p }}/{{ n }}</span></span>
+  <span class="rv-rate-bar"><i style="width:{{ (p * 100)|round|int }}%"></i></span>
+  {% if ci %}<span class="rv-rate-ci">{{ (ci[0]*100)|round }}–{{ (ci[1]*100)|round }}%</span>{% endif %}
+</span>
+{%- endmacro %}
+
+{% macro pager(page, pages, base) -%}
+<nav class="rv-pager" aria-label="分页">
+  {% if page > 0 %}<a class="rv-btn" href="{{ base }}page={{ page - 1 }}">← 上一页</a>{% endif %}
+  <span class="rv-pager-pos">第 {{ page + 1 }} / {{ pages }} 页</span>
+  {% if page + 1 < pages %}<a class="rv-btn" href="{{ base }}page={{ page + 1 }}">下一页 →</a>{% endif %}
+</nav>
+{%- endmacro %}

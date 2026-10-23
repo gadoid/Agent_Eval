@@ -258,16 +258,72 @@ def cmd_rescore(args) -> int:
 def cmd_compare(args) -> int:
     store = open_store(args.db)
     cfg = load_operator_config(args.operators or default_operators_path())
-    _, policy_sha = load_policy(args.policy or default_policy_path())
+    policy, policy_sha = load_policy(args.policy or default_policy_path())
     fixes = {}
     for kv in args.fix or []:
         k, _, v = kv.partition("=")
         fixes[k] = v
     rows = store.answer_view_rows(cfg.chain_sha, policy_sha, with_records=True)
     run_order = {r["run_id"]: i for i, r in enumerate(store.runs())}
+
+    if args.base and args.target:
+        # 分数对比（doc/10 §5.5）：两侧综合分与维度分、单组件贡献、逐题差异
+        rep = views.compare_scores(rows, axis=args.axis, base=args.base, target=args.target,
+                                   policy=policy, fixes=fixes, anys=args.any or (), run_order=run_order)
+        if rep.get("blocked"):
+            print(f"已拒绝比较：{rep['blocked']}")
+            return 1
+        print(f"比较 {args.axis}：{rep['base']} → {rep['target']}（共有 {rep['n_shared']} 题 / "
+              f"{rep['n_shared_cases']} 用例）")
+        for c in rep["contributions"]:
+            ci = f"（95% 区间 {c['lo']:+.1f} ~ {c['hi']:+.1f}）" if c.get("lo") is not None else ""
+            base_s = f"{c['base']:.1f}" if c.get("base") is not None else "—"
+            tgt_s = f"{c['target']:.1f}" if c.get("target") is not None else "—"
+            d = f"{c['delta']:+.1f}" if c.get("delta") is not None else "—"
+            print(f"  {c['name']:<12} {base_s:>6} → {tgt_s:<6} {d:>7} {ci}")
+        for q in rep["questions"]:
+            note = " · 锚点绊线" if q["anchor"] else ""
+            print(f"  {q['uid']:<14} {q['base']:.1f} → {q['target']:.1f}（{q['delta']:+.1f}）{note}")
+        if args.factors:
+            _print_shapley(store, cfg, policy, rows, args)
+        return 0
+
+    if args.factors:
+        _print_shapley(store, cfg, policy, rows, args)
+        return 0
     rep = views.compare_axis(rows, axis=args.axis, fixes=fixes, anys=args.any or (), run_order=run_order)
     print(json.dumps(rep, ensure_ascii=False, indent=1))
     return 0
+
+
+def _print_shapley(store, cfg, policy, rows, args) -> None:
+    """--factors a,b：全因子各格综合分 + Shapley 分摊（缺格列出需补跑组合）。"""
+    facs = [f.strip() for f in args.factors.split(",") if f.strip()]
+    pairs = {}
+    for f in facs:
+        vals = sorted({views.attr_value(r, f) for r in rows})
+        if len(vals) != 2:
+            print(f"组件 {f} 需要恰好两个取值（现有 {len(vals)} 个：{vals[:4]}），跳过分摊")
+            return
+        pairs[f] = vals
+    cells = {}
+    for i in range(2 ** len(facs)):
+        on = [facs[j] for j in range(len(facs)) if i >> j & 1]
+        sel = rows
+        for f in facs:
+            want = pairs[f][1] if f in on else pairs[f][0]
+            sel = [r for r in sel if views.attr_value(r, f) == want]
+        dims = views.dimension_scores(sel, policy)
+        cells[frozenset(on)] = views.composite(dims, policy).get("score")
+    res = views.shapley(cells, facs)
+    if res.get("missing"):
+        print("缺组合，不能分摊；需补跑：" + "；".join(res["missing"]))
+        return
+    for label, val in res["cells"].items():
+        print(f"  {label:<24} 综合分 {val}")
+    for f, val in res["phi"].items():
+        print(f"  φ({f}) = {val:+.1f}")
+    print(f"  合计 = {res['total']:+.1f}")
 
 
 # ---------------------------------------------------------------- 导出与备份
@@ -533,8 +589,11 @@ def main(argv=None) -> int:
     p.add_argument("--operators"); p.add_argument("--policy")
     add_db(p); p.set_defaults(func=cmd_rescore)
 
-    p = sub.add_parser("compare", help="比较轴：题目 × 轴值通过矩阵（§7）")
+    p = sub.add_parser("compare", help="比较轴：题目 × 轴值通过矩阵（§7）；--base/--target 出分数对比")
     p.add_argument("--axis", required=True, choices=views.ATTRS)
+    p.add_argument("--base", help="基线轴值（与 --target 同给时输出分数对比与组件贡献）")
+    p.add_argument("--target", help="对照轴值")
+    p.add_argument("--factors", help="多组件分摊的组件清单（逗号分隔，如 model,skills_base；每组件恰好两值）")
     p.add_argument("--fix", action="append", help="固定属性 k=v，可重复")
     p.add_argument("--any", action="append", choices=views.ATTRS, help="声明不限的属性，可重复")
     p.add_argument("--operators"); p.add_argument("--policy")

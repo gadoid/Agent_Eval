@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}用例 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page" data-page="cases">
+  <div class="rv-page-head"><h1>用例</h1>
+    <span class="rv-meta"><span>{{ table|length }} 个用例</span>
+      {% if configs %}{% set sel_cfg = (configs | selectattr('key', 'equalto', config_key) | list | first) if config_key else configs[0] %}
+      {% if sel_cfg %}<span>配置 {{ sel_cfg.label }}</span>{% endif %}{% endif %}
+      <span>评测库 {{ db_path }}</span></span>
+  </div>
+
+  {% if configs %}
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>被测配置</b>
+    <select class="rv-select" onchange="var u=new URL(location);u.searchParams.set('config',this.value);location=u">
+      {% for c in configs %}<option value="{{ c.key }}" {% if c.key == config_key %}selected{% endif %}>{{ c.label }}（{{ c.n }} 段对话）</option>{% endfor %}
+    </select>
+    <span>分数按配置分别计算；页面其余统计（难度/区分度）跨全部 run。</span>
+  </div>
+  {% endif %}
+
+  {% if composite and composite.score is not none %}
+  <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;margin-bottom:16px">
+    <section class="rv-card rv-comp">
+      <div class="rv-comp-head"><span class="rv-comp-n">{{ composite.score|f1 }}</span>
+        <span class="rv-meta"><span>综合分{% if composite.provisional %}（临时）{% endif %}</span>
+          <span>{{ composite.parts|length }} 个维度{% if not composite.complete %} · 不完整（缺 {{ known_dims|length - composite.parts|length }} 维）{% endif %}</span></span></div>
+      {% for d, p in composite.parts.items() %}
+      <div class="rv-comp-row" title="{{ d }}：{{ p.score|f1 }}（权重 {{ p.weight|f1 }}{% if p.provisional %}，临时{% endif %}）">
+        <span>{{ d }}</span><span class="rv-comp-w">×{{ p.weight|f1 }}</span>
+        <div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:{{ p.score }}%"></span><span class="rv-scorebar-mark" style="left:{{ pass_mark }}%;top:-3px;bottom:-3px"></span></div>
+        <span class="rv-comp-v">{{ p.score|f1 }}</span></div>
+      {% endfor %}
+      <div class="rv-total-formula">Σ(维度权重 × 维度分) / Σ权重 · 竖线 = 及格 {{ pass_mark }}</div>
+    </section>
+    <div class="rv-stats" style="margin:0;align-content:start">
+      <div class="rv-stat"><div class="rv-stat-label">结论待定对话</div><div class="rv-stat-value">{{ nav_count }}</div><div class="rv-stat-note"><a href="/review?tab=undecided">去复核 →</a></div></div>
+      <div class="rv-stat"><div class="rv-stat-label">待重判</div><div class="rv-stat-value">{{ pending_rejudge }}</div>
+        <div class="rv-stat-note">{% if pending_rejudge %}<span class="rv-cmd">python -m scoring rejudge<button type="button">复制</button></span>{% else %}无{% endif %}</div></div>
+      <div class="rv-stat"><div class="rv-stat-label">用例体检</div><div class="rv-stat-value">{{ table | selectattr('flags') | list | length }}</div><div class="rv-stat-note">变体泄露 / 全部采样无效</div></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <form class="rv-filterbar" style="margin-bottom:12px" onsubmit="return false">
+    <div class="rv-field"><label>维度</label><select class="rv-select" onchange="f('dim',this.value)">
+      <option value="">全部维度</option>{% for d in dims %}<option value="{{ d }}" {% if d == f_dim %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>主题</label><select class="rv-select" onchange="f('topic',this.value)">
+      <option value="">全部主题</option>{% for t in topics %}<option value="{{ t }}" {% if t == f_topic %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>排序</label><select class="rv-select" onchange="f('sort',this.value)">
+      {% for k, label in [('pending','结论待定多的在前'),('score','用例分低的在前'),('difficulty','难度')] %}
+      <option value="{{ k }}" {% if k == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>&nbsp;</label><label style="display:inline-flex;gap:6px;align-items:center;height:32px;font-weight:400">
+      <input type="checkbox" {% if flag_only %}checked{% endif %} onchange="f('flag_only',this.checked?'1':'')"> 只看有体检标记</label></div>
+  </form>
+
+  <div class="rv-table-wrap">
+  <table class="rv-table">
+    <thead><tr><th class="rv-sticky-col">用例</th><th>维度</th><th>主题</th><th class="rv-num">变体</th><th class="rv-num">对话</th><th>结论待定</th><th>用例分</th>
+      <th class="rv-num" title="1 − 通过率">难度</th><th class="rv-num" title="不同被测模型之间通过率的差（模型数）">区分度</th>
+      <th class="rv-num" title="同一配置多次 trial 结论一致的比例">稳定性</th><th class="rv-num" title="种子与非诱导变体结论一致的比例">题组一致</th><th>体检</th></tr></thead>
+    <tbody>
+    {% for t in table %}
+    <tr><th scope="row" class="rv-sticky-col"><a href="/case/{{ t.case_id }}">{{ t.case_id }}</a></th>
+      <td>{{ t.dim or '?' }}</td><td>{{ t.topic or '—' }}</td>
+      <td class="rv-num">{{ t.variants }}</td><td class="rv-num">{{ t.convs }}</td>
+      <td>{% if t.undecided %}<span class="rv-state" data-s="need">{{ t.undecided }} 段</span>{% else %}<span class="rv-meta">—</span>{% endif %}</td>
+      <td>{{ m.avg_cell(t.score, t.score_n, t.score_provisional) }}</td>
+      <td class="rv-num">{% if t.difficulty is not none %}{{ t.difficulty|f1 }}{% else %}—{% endif %}</td>
+      <td class="rv-num">{% if t.discrimination is not none %}{{ t.discrimination|f1 }} ({{ t.models_n }}){% else %}—{% endif %}</td>
+      <td class="rv-num">{% if t.stability is not none %}{{ t.stability|f1 }}{% else %}—{% endif %}</td>
+      <td class="rv-num">{% if t.group_consistency is not none %}{{ t.group_consistency|f1 }}{% else %}—{% endif %}</td>
+      <td>{% for fl in t.flags %}<span class="rv-flag">{{ fl }}</span> {% endfor %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {{ m.pager(page, pages, '/?dim=' + (f_dim or '') + '&topic=' + (f_topic or '') + '&sort=' + sort + '&flag_only=' + (flag_only or '') + '&config=' + (config_key or '') + '&') }}
+</main>
+<script>
+function f(k, v) { var u = new URL(location); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); u.searchParams.delete('page'); location = u; }
+</script>
+{% endblock %}

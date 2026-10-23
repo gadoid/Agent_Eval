@@ -1,53 +1,112 @@
 {% extends "base.html" %}
-{% block title %}比较 · Agent_Eval 复核{% endblock %}
+{% import "_macros.html" as m %}
+{% block title %}结果对比 · Agent_Eval 复核{% endblock %}
 {% block body %}
-<h1>比较（比较轴，按题目交集对齐）</h1>
-<form method="get" action="/compare" class="card" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-  <label>比较轴</label>
-  <select name="axis">
-    {% for a in attrs %}<option value="{{ a }}" {% if a == axis %}selected{% endif %}>{{ a }}</option>{% endfor %}
-  </select>
-  <label>固定（k=v，逗号分隔）</label>
-  <input type="text" name="fix" value="{{ fix }}" placeholder="mode=natural" style="width:180px">
-  <label>不限（逗号分隔）</label>
-  <input type="text" name="any" value="{{ any }}" placeholder="trial" style="width:120px">
-  <button class="primary" type="submit">比较</button>
-</form>
+<main class="rv-page">
+  <div class="rv-page-head"><h1>结果对比</h1>
+    <span class="rv-meta"><span>只在双方共有的题目上比</span><span>放行规则沿用比较轴护栏</span></span></div>
 
-{% if error %}<div class="err-box">{{ error }}</div>{% endif %}
-{% if rep %}
-  {% if rep.blocked %}<div class="err-box">已拒绝比较：{{ rep.blocked }}</div>
-  {% else %}
-  <div class="card">
-    <div>比较轴：{{ rep.axis }}（{{ rep.axis_values | join("、") }}）
-      {% if rep.fixed %} · 固定：{% for k, v in rep.fixed.items() %}{{ k }}={{ v }} {% endfor %}{% endif %}
-      {% if rep.any %} · 不限：{{ rep.any | join("、") }}{% endif %}</div>
-    {% if rep.pending_answers %}<div class="prov">{{ rep.pending_answers }} 段会话缺判定（待重判），未参与比较</div>{% endif %}
-    {% if rep.excluded_qkeys %}<div class="muted">按题目交集排除：{% for e in rep.excluded_qkeys %}{{ e.qkey }}（{{ e.reason }}）{% endfor %}</div>{% endif %}
-    {% if rep.anchor_tripwires %}
-    <div class="err-box">锚点绊线：
-      {% for t in rep.anchor_tripwires %}{{ t.qkey }}（{{ t.from_run }} → {{ t.to_run }}，上 run 全过本 run 全败）{% endfor %}
-    </div>
-    {% endif %}
+  <form method="get" action="/compare" class="rv-filterbar" style="margin-bottom:16px">
+    <div class="rv-field"><label>比较什么</label><select class="rv-select" name="axis">
+      {% for a, label in axis_labels.items() if a != 'trial' and a != 'run' %}
+      <option value="{{ a }}" {% if a == axis %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>基线</label><input class="rv-input" name="base" value="{{ base }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
+    <span class="rv-arrow" style="align-self:center;margin-top:20px">→</span>
+    <div class="rv-field"><label>对照</label><input class="rv-input" name="target" value="{{ target }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
+    <datalist id="avs">{% for v in axis_values %}<option value="{{ v }}"></option>{% endfor %}</datalist>
+    <div class="rv-field"><label>放开属性（不限）</label><select class="rv-select" name="any" multiple size="3" style="height:auto">
+      {% for a in attrs if a != axis %}<option value="{{ a }}" {% if a in (any or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>多组件分摊（选 2–3 个）</label><select class="rv-select" name="factors" multiple size="3" style="height:auto">
+      {% for a in attrs if a != axis %}<option value="{{ a }}" {% if a in (factors or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
+    <button class="rv-btn rv-btn--primary" type="submit" style="align-self:flex-end">对比</button>
+  </form>
+  {% if axis_values %}<div class="rv-meta" style="margin-bottom:12px">轴上的取值：{{ axis_values|join('、') }}</div>{% endif %}
+
+  {% if error %}<div class="rv-notice" data-tone="error" style="margin-bottom:12px"><b>已拒绝</b><span>{{ error }}</span></div>{% endif %}
+
+  {% if rep and rep.blocked %}
+  <div class="rv-notice" data-tone="error"><b>已拒绝比较</b><span>{{ rep.blocked }}</span></div>
+  {% elif rep %}
+  <div class="rv-delta" style="margin-bottom:16px">
+    {% set ups = rep.questions | selectattr('delta') | selectattr('delta', 'ge', 10) | list %}
+    {% set downs = rep.questions | selectattr('delta') | selectattr('delta', 'le', -10) | list %}
+    <div data-d="up"><div class="rv-delta-l">变好（题目分 +10 以上）</div><div class="rv-delta-n">{{ ups|length }}</div>
+      <div class="rv-meta"><span>题</span></div></div>
+    <div data-d="down"><div class="rv-delta-l">变差（−10 以下）</div><div class="rv-delta-n">{{ downs|length }}</div>
+      <div class="rv-meta"><span>题</span>{% if rep.anchor_tripwires %}<span>含锚点绊线 {{ rep.anchor_tripwires|length }}</span>{% endif %}</div></div>
+    <div><div class="rv-delta-l">不变</div><div class="rv-delta-n">{{ rep.n_shared - rep.questions|length }}</div>
+      <div class="rv-meta"><span>题</span><span>共有 {{ rep.n_shared }} 题 / {{ rep.n_shared_cases }} 用例</span></div></div>
   </div>
-  <h2>维度 × 轴值 通过率（95% 区间）</h2>
-  <table>
-    <tr><th>维度</th>{% for av in rep.axis_values %}<th>{{ av }}</th>{% endfor %}</tr>
-    {% for dim, per in rep.dims.items() %}
-    <tr><td>{{ dim }}</td>
-      {% for av in rep.axis_values %}{% set c = per.get(av) %}<td class="rate">{% if c and c.n %}{{ c.pass }}/{{ c.n }} = {{ c.rate }}<br><span class="muted">{{ c.ci[0] }} ~ {{ c.ci[1] }}</span>{% else %}—{% endif %}</td>{% endfor %}
-    </tr>
+
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px">
+    {% for side, label in [(rep.base, '基线'), (rep.target, '对照')] %}
+    {% set comp = rep.metrics[side].composite %}
+    <section class="rv-card rv-comp"><div class="rv-comp-head"><span class="rv-comp-n">{{ comp.score|f1 }}</span>
+      <span class="rv-meta"><span>{{ label }} · {{ side }}</span>{% if comp.provisional %}<span>临时</span>{% endif %}</span></div>
+      {% for d, p in comp.parts.items() %}
+      <div class="rv-comp-row"><span>{{ d }}</span><span class="rv-comp-w">×{{ p.weight|f1 }}</span>
+        <div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:{{ p.score }}%"></span><span class="rv-scorebar-mark" style="left:{{ pass_mark }}%;top:-3px;bottom:-3px"></span></div>
+        <span class="rv-comp-v">{{ p.score|f1 }}</span></div>
+      {% else %}<div class="rv-meta">没有可计分的会话</div>{% endfor %}</section>
     {% endfor %}
-  </table>
-  <h2>题目 × 轴值 通过矩阵</h2>
-  <table>
-    <tr><th>题目</th>{% for av in rep.axis_values %}<th>{{ av }}</th>{% endfor %}</tr>
-    {% for qkey, cells in rep.matrix.items() %}
-    <tr><td><a href="/question/{{ qkey | urlencode }}">{{ qkey }}</a></td>
-      {% for av in rep.axis_values %}{% set c = cells[av] %}<td class="rate">{% if c.n %}{{ c.pass }}/{{ c.n }}{% if c.rate is not none %} = {{ c.rate }}{% endif %}{% elif c.pending %}<span class="badge mid">待重判 {{ c.pending }}</span>{% else %}—{% endif %}</td>{% endfor %}
-    </tr>
+  </div>
+
+  <section class="rv-card rv-contrib" style="margin-bottom:16px">
+    <h2>组件贡献：{{ rep.base }} → {{ rep.target }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
+    {% set width = (rep.contributions | map(attribute='delta') | select | map('abs') | max) or 1 %}
+    {% for ctb in rep.contributions %}
+    <div class="rv-contrib-row" title="{{ ctb.name }}：{{ ctb.delta|f1 }} 分（{{ ctb.base|f1 }} → {{ ctb.target|f1 }}）">
+      <span>{{ ctb.name }}</span>
+      <span class="rv-contrib-track">
+        {% if ctb.delta is not none %}
+        <span class="rv-contrib-bar" {% if ctb.delta < 0 %}data-neg{% endif %} style="{% if ctb.delta >= 0 %}left:50%;width:{{ (ctb.delta / width * 50)|round(1) }}%{% else %}left:{{ 50 + (ctb.delta / width * 50)|round(1) }}%;width:{{ (-ctb.delta / width * 50)|round(1) }}%{% endif %}"></span>
+        <span class="rv-contrib-ci" style="left:{{ 50 + (ctb.lo / width * 50)|round(1) }}%;width:{{ ((ctb.hi - ctb.lo) / width * 50)|round(1) }}%"></span>{% endif %}
+      </span>
+      <span class="rv-contrib-v">{% if ctb.delta is not none %}{{ '+' if ctb.delta >= 0 else '−' }}{{ ctb.delta|abs|f1 }}{% else %}—{% endif %}
+        <small>{{ ctb.base|f1 if ctb.base is not none else '—' }} → {{ ctb.target|f1 if ctb.target is not none else '—' }}</small></span></div>
     {% endfor %}
+    <div class="rv-contrib-axis"><span></span><span><span>−{{ width|f1 }}</span><span>0</span><span>+{{ width|f1 }}</span></span><span></span></div>
+    <div class="rv-meta"><span>细线 = 95% 区间（按用例配对自助法）</span><span>区间跨 0 = 不能确定有影响</span></div>
+  </section>
+
+  {% if rep.warnings %}<div class="rv-notice" data-tone="info" style="margin-bottom:12px"><b>提示</b>{% for w in rep.warnings %}<span>{{ w }}</span>{% endfor %}</div>{% endif %}
+  {% if rep.excluded_qkeys %}<div class="rv-meta" style="margin-bottom:12px">已排除：{% for e in rep.excluded_qkeys %}{{ e.qkey }}（{{ e.reason }}）{% endfor %}</div>{% endif %}
+
+  {% if rep.questions %}
+  <h2>逐题差异 <span class="rv-meta" style="font-weight:400"><span>只列变化超过 {{ policy.score.compare_delta|f1 }} 分或锚点绊线的题</span></span></h2>
+  <div class="rv-table-wrap">
+  <table class="rv-table">
+    <thead><tr><th class="rv-sticky-col">题目</th><th>维度</th><th class="rv-num">基线</th><th class="rv-num">对照</th><th class="rv-num">变化</th><th>说明</th></tr></thead>
+    <tbody>{% for q in rep.questions %}
+      <tr><th scope="row" class="rv-sticky-col"><a href="/case/{{ q.case_id }}">{{ q.uid }}</a></th>
+        <td>{{ q.dim }}</td><td class="rv-num">{{ q.base|f1 }}</td><td class="rv-num">{{ q.target|f1 }}</td>
+        <td class="rv-num">{{ '+' if q.delta >= 0 else '−' }}{{ q.delta|abs|f1 }}</td>
+        <td>{% if q.anchor %}<span class="rv-verdict" data-tone="fail">锚点绊线</span> 上 run 全过、本 run 全败{% endif %}</td></tr>
+    {% endfor %}</tbody>
   </table>
+  </div>
   {% endif %}
-{% endif %}
+  {% endif %}
+
+  {% if shap %}
+    {% if shap.missing %}
+    <section class="rv-card rv-contrib"><h2>多组件分摊 <span class="rv-meta" style="font-weight:400">Shapley</span></h2>
+      <div class="rv-notice"><b>缺组合，不能分摊</b><span>需补跑：{{ shap.missing|join('；') }}</span></div></section>
+    {% else %}
+    <section class="rv-card rv-contrib" style="margin-bottom:16px">
+      <h2>多组件分摊：{{ shap.cells.keys()|join('；') }} <span class="rv-meta" style="font-weight:400"><span>Shapley</span></span></h2>
+      {% set width2 = shap.phi.values()|map('abs')|max or 1 %}
+      {% for f, val in shap.phi.items() %}
+      <div class="rv-contrib-row"><span>{{ f }}</span><span class="rv-contrib-track">
+        <span class="rv-contrib-bar" {% if val < 0 %}data-neg{% endif %} style="{% if val >= 0 %}left:50%;width:{{ (val / width2 * 50)|round(1) }}%{% else %}left:{{ 50 + (val / width2 * 50)|round(1) }}%;width:{{ (-val / width2 * 50)|round(1) }}%{% endif %}"></span></span>
+        <span class="rv-contrib-v">{{ '+' if val >= 0 else '−' }}{{ val|abs|f1 }}</span></div>
+      {% endfor %}
+      <div class="rv-contrib-row" data-total><span>总变化</span><span class="rv-contrib-track">
+        <span class="rv-contrib-bar" {% if shap.total < 0 %}data-neg{% endif %} style="{% if shap.total >= 0 %}left:50%;width:{{ (shap.total / width2 * 50)|round(1) }}%{% else %}left:{{ 50 + (shap.total / width2 * 50)|round(1) }}%;width:{{ (-shap.total / width2 * 50)|round(1) }}%{% endif %}"></span></span>
+        <span class="rv-contrib-v">{{ '+' if shap.total >= 0 else '−' }}{{ shap.total|abs|f1 }}</span></div>
+      <div class="rv-meta"><span>Σφ = 总变化；交互（同时改多组件多出的部分）已平分进各组件</span></div>
+    </section>
+    {% endif %}
+  {% endif %}
+</main>
 {% endblock %}

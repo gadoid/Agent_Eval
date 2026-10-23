@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}{{ case_id }} · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page">
+  <div class="rv-crumb"><a href="/">用例</a> / {{ case_id }}</div>
+  <div class="rv-page-head" style="margin-top:4px"><h1>{{ case_id }}</h1>
+    <span class="rv-meta"><span>{{ seed.dim or '?' }}</span><span>{{ seed.topic or '' }}</span>
+      <span>主口径 {{ headline }}</span></span></div>
+
+  <section class="rv-card">
+    <dl class="rv-caseinfo">
+      <div><dt>维度</dt><dd>{{ seed.dim or '?' }}</dd></div>
+      <div><dt>主题</dt><dd>{{ seed.topic or '—' }}</dd></div>
+      <div><dt>变体数</dt><dd>{{ members|length }}</dd></div>
+      <div><dt>可回答</dt><dd>{{ '否（拒答型）' if spec.answerable == false else '是' }}</dd></div>
+      <div><dt>对话方式</dt><dd>{{ spec.history if spec.history else 'live（逐轮实时）' }}</dd></div>
+      <div class="rv-wide"><dt>关键条件</dt><dd>
+        {% for p in spec.preconditions or [] %}{{ p.text }}{% if p.turn %}（第 {{ p.turn }} 轮）{% endif %} · {% endfor %}
+        {% for p in spec.path or [] %}必须加载 {{ (p.action or {}).skill or p.text }}{% endfor %}
+        {% if not (spec.preconditions or spec.path) %}—{% endif %}</dd></div>
+      <div class="rv-wide"><dt>知识注入</dt><dd>
+        {% for i in injections %}{{ i.point }} · {{ i.option }}（{{ i.rev or '' }}）{% else %}—{% endfor %}</dd></div>
+      <div class="rv-wide"><dt>标签</dt><dd>{% for t in tags %}<span class="rv-kind">{{ t }}</span> {% else %}—{% endfor %}</dd></div>
+    </dl>
+  </section>
+
+  <section class="rv-card">
+    <h2>期望 <span class="rv-meta" style="font-weight:400"><span>当前期望 {{ (judge_fp or '')[:8] }}</span>
+      {% if history|length > 1 %}<span>历史 {{ history|length }} 份</span>{% endif %}</span></h2>
+    {% if history|length > 1 %}
+    <div class="rv-meta" style="margin-bottom:6px">切换：
+      {% for h in history %}<a href="?judge_fp={{ h.judge_fp }}" {% if h.judge_fp == judge_fp %}style="font-weight:600"{% endif %}>{{ h.judge_fp[:8] }}（{{ h.evalset_version }}）</a> {% endfor %}</div>
+    {% endif %}
+    <div class="rv-expect">
+      {% for t in spec.turns or [] %}
+        {% if t.role == 'user' %}<div class="rv-expect-q"><b>第 {{ loop.index }} 轮</b>{{ t.content }}</div>{% endif %}
+      {% endfor %}
+      <ul class="rv-facts">
+        {% for p in spec.preconditions or [] %}
+        <li class="rv-fact"><span class="rv-kind">前提 {{ p.id }}</span><span class="rv-fact-text">{{ p.text }}<span class="rv-fact-meta">{% if p.turn %}第 {{ p.turn }} 轮 · {% endif %}门槛，不打分</span></span></li>
+        {% endfor %}
+        {% for p in spec.path or [] %}
+        <li class="rv-fact"><span class="rv-kind">路径</span><span class="rv-fact-text">必须加载技能 {{ (p.action or {}).skill }}<span class="rv-fact-meta">否决项</span></span></li>
+        {% endfor %}
+        {% for f in spec.facts or [] %}
+        <li class="rv-fact"><span class="rv-kind" {% if f.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ f.kind|kind_label }} {{ f.id }}</span>
+          <span class="rv-fact-text">{{ f.text }}<span class="rv-fact-meta">{% if f.turn %}第 {{ f.turn }} 轮 · {% endif %}
+            {% if f.keywords %}关键词：{{ f.keywords|join('、') }} · {% endif %}
+            {% if f.weight is defined %}<span class="rv-weight">权重 {{ f.weight }}</span>{% endif %}</span></span></li>
+        {% endfor %}
+      </ul>
+      {% if spec.reference_answer %}<div class="rv-answer-head" style="margin-top:8px"><b>参考答案</b></div>
+      <div class="rv-answer rv-md">{{ spec.reference_answer|md }}</div>{% endif %}
+    </div>
+  </section>
+
+  <section class="rv-card">
+    <h2>变体 <span class="rv-meta" style="font-weight:400"><span>{{ members|length }} 题</span></span></h2>
+    <ul class="rv-cq" style="border:0">
+      {% for q in members %}
+      <li><span class="rv-verdict" data-tone="{{ 'undecided' if not q.current_judge_fp else 'neutral' }}">{{ q.uid }}</span>
+        <div class="rv-cq-main"><div class="rv-cq-title">变体 #{{ q.variant_index or 0 }}{% if q.rewrite %} · {{ q.rewrite }}{% endif %}</div>
+          <div class="rv-meta"><span>{{ q.uid }}</span><span>当前期望 {{ (q.current_judge_fp or '无')[:8] }}</span></div></div>
+        <span class="rv-meta"><a class="rv-btn" href="/case/{{ case_id }}">查看对话 ↓</a></span></li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="rv-card">
+    <h2>对话 <span class="rv-meta" style="font-weight:400"><span>{{ convs|length }} 段</span>
+      <span>按 {{ axis_labels.get(axis, axis) }} 分组</span></span></h2>
+    {% set grouped = convs | groupby('axis_label') %}
+    {% for label, group in grouped %}
+    <div class="rv-meta" style="margin:8px 0 4px;font-weight:600">{{ axis_labels.get(axis, axis) }}：{{ label }}（{{ group|length }} 段）</div>
+    <ul class="rv-cq">
+      {% for c in group %}
+      <li>{{ m.verdict(c.concl.status or c.r.c_status, lg=True) }}
+        <div class="rv-cq-main">
+          <div class="rv-cq-title"><a href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">{{ c.r.uid }}</a>
+            {% if c.r.rewrite %}<span class="rv-kind">{{ c.r.rewrite }}</span>{% endif %}</div>
+          {{ m.runtag(c.r) }}
+          {% if c.concl.score is defined and c.concl.score is not none %}
+          <div class="rv-meta"><span>{{ m.scorebar(c.concl.score, mark=pass_mark, fail_below=pass_mark) if false else '' }}{{ c.concl.score|f1 }} 分</span>
+            {% if c.concl.score_min is not none and c.concl.score_max is not none and c.concl.score_min != c.concl.score_max %}<span>区间 {{ c.concl.score_min|f1 }}–{{ c.concl.score_max|f1 }}</span>{% endif %}
+            {% if c.concl.reason %}<span>{{ c.concl.reason }}</span>{% endif %}</div>
+          {% elif c.concl.status == 'undecided' %}<div class="rv-meta"><span>待判条目 {{ c.pending_items }}</span></div>{% endif %}
+        </div>
+        <span class="rv-cq-todo">
+          {% if c.concl.score is not none %}<span class="rv-pill rv-pill--mono">{{ c.concl.score|f1 }} 分</span>{% endif %}
+          {% if c.pending_items %}<span class="rv-state" data-s="need">待判 {{ c.pending_items }}</span>{% endif %}
+          <span class="rv-chips">{% for ch in c.chips %}<span class="rv-chip" {% if ch.source == 'human' %}data-overridden{% endif %}>
+            <span class="rv-chip-id">{{ ch.id }}</span>{{ m.vval(ch.value, ch.score) }}</span>{% endfor %}</span>
+          <a class="rv-btn" href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">复核</a></span></li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
+  </section>
+</main>
+{% endblock %}
