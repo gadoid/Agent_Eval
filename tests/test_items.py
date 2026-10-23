@@ -111,3 +111,16 @@ def test_seed_not_checked():
     rec = variant_record("kr-5#0", [{"role": "user", "content": "完全无关"}], COND_TURNS,
                          variant={"scope": "whole"})
     assert variant_leak_suspects([rec]) == []
+
+
+def test_weight_changes_judge_fp_not_item_sha():
+    from scoring.items import Item, item_sha_of, judge_fp_of, weight_of
+    from tests.helpers import fact, mk_record
+    case = mk_record()["case"]
+    weighted = dict(case, facts=[dict(f, weight=2) if f["id"] == "F1" else f for f in case["facts"]])
+    assert judge_fp_of(case) != judge_fp_of(weighted)
+    f1 = next(f for f in case["facts"] if f["id"] == "F1")
+    a = Item("required", "F1", f1["text"], f1["turn"], f1)
+    b = Item("required", "F1", f1["text"], f1["turn"], dict(f1, weight=2))
+    assert item_sha_of(a) == item_sha_of(b)
+    assert weight_of(a, 1) == 1 and weight_of(b, 1) == 2 and weight_of(Item("expected", "E1", "", None, fact("E1", weight=0)), 1) == 0

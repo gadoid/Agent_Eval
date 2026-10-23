@@ -49,11 +49,14 @@ def ability_view(verdicts: list[EpisodeVerdict], policy: Policy) -> dict:
         direct = [v for v in denom if v.ask_user == 0]
         after = [v for v in denom if v.ask_user > 0]
         rate = lambda xs: (sum(v.status == "pass" for v in xs), len(xs))  # noqa: E731
+        scores = [v.score for v in denom if v.score is not None]          # 区间未收敛为一点的不计均分
         out[f"{dim}|{mode}"] = {
             "n": len(denom),
             "pass": passes,
             "pass_rate": round(passes / len(denom), 4) if denom else None,
             "pass_ci": wilson(passes, len(denom)),
+            "score_mean": round(sum(scores) / len(scores), 1) if scores else None,
+            "score_n": len(scores),
             "precond_rate": round(precond_ok / len(precond_denom), 4) if precond_denom else None,
             "precond_ci": wilson(precond_ok, len(precond_denom)),
             "invalid": sum(v.status == "invalid" for v in vs),

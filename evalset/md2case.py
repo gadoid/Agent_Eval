@@ -138,6 +138,21 @@ H3 = re.compile(r"^###\s+(.+?)\s*$")
 FENCE = re.compile(r"^\s*```\s*([A-Za-z]*)\s*$")
 
 
+WEIGHT_RE = re.compile(r"[0-9]+(?:\.[0-9])?")
+
+
+def parse_weight_attr(attrs, no, errors):
+    """【权重：N】：N ≥ 0、至多一位小数；0 = 只记录不计分（打分口径见 doc/10 §4.2）。"""
+    raw = attrs.get("权重")
+    if raw is None:
+        return None
+    if not WEIGHT_RE.fullmatch(raw.strip()):
+        errors.append(f"第 {no} 行：权重应为非负数、至多一位小数，如「【权重：2】」「【权重：0.5】」")
+        return None
+    w = float(raw)
+    return int(w) if w.is_integer() else w
+
+
 def p_text(lines, rule, errors):
     value = "\n".join(t for _, t in lines).strip()
     if not value:
@@ -367,6 +382,8 @@ def p_facts(lines, rule, errors):
             item["turn"] = turn
         if (grp := attrs.get("组")) is not None:
             item["group"] = grp
+        if (w := parse_weight_attr(attrs, no, errors)) is not None:
+            item["weight"] = w
         if attrs.get("证据") is not None and "外部" in attrs:
             errors.append(f"第 {no} 行：{kv[0]} 【证据】与【外部】不能同时出现")
             continue
@@ -394,6 +411,8 @@ def p_path(lines, rule, errors):
                 "action": {"kind": "load_skill", "skill": m.group(1)}}
         if (turn := parse_turn_attr(attrs, no, errors)) is not None:
             item["turn"] = turn
+        if (w := parse_weight_attr(attrs, no, errors)) is not None:
+            item["weight"] = w
         out.append(item)
     return out
 
@@ -710,6 +729,9 @@ def check_cross(case, mapping, errors, warns):
     for g, members in groups.items():
         if len(members) == 1:
             errors.append(f"组 {g} 只有一个成员，要么再补同组事实，要么去掉【组】")
+        weights_in_g = {m.get("weight", 1) for m in members}
+        if len(weights_in_g) > 1:
+            warns.append(f"组 {g} 成员权重不一致（{'、'.join(str(w) for w in sorted(weights_in_g))}），计分取最大值")
         turns_in_g = {m.get("turn") for m in members}
         if len(turns_in_g) > 1:
             errors.append(f"组 {g} 内事实的轮次必须相同，当前为 {'、'.join(str(t) for t in sorted(turns_in_g, key=str))}")
@@ -865,6 +887,8 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
             row["turn"] = f.get("turn")
             row["group"] = f.get("group")
             row["evidence"] = f.get("evidence")
+            if "weight" in f:                      # 未写权重时不出现，读取方按 policy.default_weight
+                row["weight"] = f["weight"]
             out.append(row)
         return out
 
@@ -1158,10 +1182,11 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
                             + attrs_str({"关键词": "/".join(f["keywords"]) if f.get("keywords") else None,
                                          "轮次": f.get("turn"), "组": f.get("group"),
                                          "证据": f.get("evidence") if f.get("evidence") not in ("external", None) else None,
-                                         "外部": True if f.get("evidence") == "external" else None})
+                                         "外部": True if f.get("evidence") == "external" else None,
+                                         "权重": f.get("weight")})
                             for f in v],
         "path": lambda v: [f"- {'必须' if p['type'] == 'must' else '禁止'}：加载 skill {p['action']['skill']}"
-                           + attrs_str({"轮次": p.get("turn")}) for p in v],
+                           + attrs_str({"轮次": p.get("turn"), "权重": p.get("weight")}) for p in v],
         "evidence_ref": lambda v: [f"- {r['id']}：@{r['point']}" if r.get("point")
                                    else f"- {r['id']}：{r['inline']['doc']['skill']}:{r['inline']['doc']['file']}"
                                         + (f" / {r['inline']['section']}" if r['inline'].get("section") else "")
@@ -1191,7 +1216,7 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
 
 def attrs_str(attrs: dict) -> str:
     parts = [f"【{k}：{v}】" if not isinstance(v, bool) else f"【{k}】"
-             for k, v in attrs.items() if v not in (None, "", False)]
+             for k, v in attrs.items() if not (v is None or v == "" or v is False)]   # 权重 0 要保留
     return (" " + " ".join(parts)) if parts else ""
 
 

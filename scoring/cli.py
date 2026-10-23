@@ -106,6 +106,13 @@ def open_store(db: str | None) -> Store:
     return Store(db or DEFAULT_DB)
 
 
+def register_chain(store: Store, cfg) -> None:
+    """登记判定配置（复核服务的判定配置切换用）：算子清单 + 模型算子的判定模型（实例参数 model）。"""
+    models = sorted({str(spec["model"]) for spec in cfg.instance_specs.values() if spec.get("model")})
+    has_judge = any(op.source == "judge" for chain in cfg.chains.values() for op in chain)
+    store.register_chain(cfg.chain_sha, "规则+模型" if has_judge else "规则", operators_of_config(cfg), models)
+
+
 class DbCache(VerdictCache):
     """判定缓存读写评测库 verdict_cache 表（§6.2）；键规则与 jsonl 版一致。"""
 
@@ -165,7 +172,8 @@ def _print_summary(store: Store, chain_sha: str, policy, policy_sha: str, run_id
     for cell, m in ability.items():
         mark = "  ← 主口径" if m["headline"] else ""
         prov = "  临时（已排除未决）" if provisional else ""
-        print(f"  {cell}: 通过 {m['pass']}/{m['n']}"
+        avg = "" if m["score_mean"] is None else f"均分 {m['score_mean']}（{m['score_n']} 段）· "
+        print(f"  {cell}: {avg}通过 {m['pass']}/{m['n']}"
               f"{'' if m['pass_rate'] is None else f' = {m['pass_rate']}'} 区间 {m['pass_ci']}{mark}{prov}")
     if provisional:
         n_und = sum(c.get("undecided", 0) for c in ability.values())
@@ -211,6 +219,7 @@ def cmd_score(args) -> int:
     cfg = load_operator_config(args.operators or default_operators_path())
     policy, policy_sha = load_policy(args.policy or default_policy_path())
     run_id, n_records = ingest_run(store, args.run)
+    register_chain(store, cfg)
     pending = store.pending_rejudge(cfg.chain_sha, run_id=run_id)
     no_spec = [a for a in store.answers(run_id=run_id) if store.current_spec(a["qkey"]) is None]
     eps, items = judge_pending(store, pending, cfg, policy, policy_sha, DbCache(store))
@@ -225,6 +234,7 @@ def cmd_rejudge(args) -> int:
     store = open_store(args.db)
     cfg = load_operator_config(args.operators or default_operators_path())
     policy, policy_sha = load_policy(args.policy or default_policy_path())
+    register_chain(store, cfg)
     pending = store.pending_rejudge(cfg.chain_sha, qkey=args.question, run_id=args.run)
     if not pending:
         print("没有待重判的答案")
@@ -278,7 +288,8 @@ def _export_flat(store: Store, out: Path, chain_sha: str, policy_sha: str, run_i
                                     "item": {"kind": v["kind"], "id": v["item_id"], "turn": v["turn"]},
                                     "item_sha": v["item_sha"], "answer_sha": v["answer_sha"],
                                     "machine": {"value": v["value"], "source": v["source"],
-                                                "operator": v["operator"], "reason": v["reason"]},
+                                                "operator": v["operator"], "reason": v["reason"],
+                                                "score": v["score"]},
                                     "trace": json.loads(v["trace_json"] or "[]"), "status": v["status"]},
                                    ensure_ascii=False) + "\n")
     with (out / "reviews.jsonl").open("w", encoding="utf-8") as f:
@@ -288,22 +299,25 @@ def _export_flat(store: Store, out: Path, chain_sha: str, policy_sha: str, run_i
     with (out / "episodes.csv").open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["run_id", "episode_id", "uid", "qkey", "mode", "trial", "dim", "status", "reason",
+                    "score", "score_min", "score_max", "score_source",
                     "profile", "model", "skills_mode", "skills_base", "evalset_version"])
         for r in rows:
             w.writerow([r["run_id"], r["episode_id"], r["uid"], r["qkey"], r["mode"], r["trial"], r["dim"],
-                        r["c_status"] or "待重判", r["c_reason"] or "", r["profile_id"],
-                        views.model_label(r), r["skills_mode"], r["skills_base"], r["evalset_version"]])
+                        r["c_status"] or "待重判", r["c_reason"] or "",
+                        r["c_score"], r["c_score_min"], r["c_score_max"], r["c_score_source"] or "",
+                        r["profile_id"], views.model_label(r), r["skills_mode"], r["skills_base"],
+                        r["evalset_version"]])
     with (out / "items.csv").open("w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
         w.writerow(["answer_id", "uid", "kind", "item_id", "turn", "status", "machine_value",
-                    "machine_source", "eff_value", "eff_source", "reason"])
+                    "machine_score", "machine_source", "eff_value", "eff_score", "eff_source", "reason"])
         for r in rows:
             if not r["current_judge_fp"]:
                 continue
             for er in store.effective_rows(r["answer_id"], r["current_judge_fp"], chain_sha):
                 v, eff = er["row"], er["eff"]
                 w.writerow([r["answer_id"], r["uid"], v["kind"], v["item_id"], v["turn"], v["status"],
-                            v["value"], v["source"], eff.value, eff.source, eff.reason])
+                            v["value"], v["score"], v["source"], eff.value, eff.score, eff.source, eff.reason])
 
 
 def _export_bundle(store: Store, out: Path, run_id: str, chain_sha: str,

@@ -28,6 +28,19 @@ class BadScaleOp:
 
 
 @operator
+class ScoredOp:
+    id, version, source = "scored", "1", "judge"
+    scales = {"required": FACT_SCALE, "expected": FACT_SCALE}
+    inputs = ("item.text", "answer")
+
+    def __init__(self, score=90):
+        self._score = score
+
+    def judge(self, item, ctx):
+        return Verdict("对", self.source, f"{self.id}@{self.version}", score=self._score)
+
+
+@operator
 class BadAbstainOp:
     id, version, source = "bad-abstain", "1", "judge"
     scales = {"required": FACT_SCALE, "expected": FACT_SCALE}
@@ -246,3 +259,14 @@ def test_chain_sha_ignores_comments_and_unused_instance():
     reordered["operators"]["kw2"] = {"impl": "keyword"}
     reordered["chains"]["required"] = ["kw", "kw2"]   # 链上多一个实例：变
     assert config_from_dict(reordered).chain_sha != a.chain_sha
+
+
+def test_model_score_flows_into_row_and_is_validated():
+    ops = {"keyword": {"impl": "keyword"}, "skill-path": {"impl": "skill-path"},
+           "fake-forbid": {"impl": "fake-forbid"}, "fake-refusal": {"impl": "fake-refusal"},
+           "fake-precond": {"impl": "fake-precond"}}
+    row = judge_episode(mk_record(), fake_config(operators={**ops, "fake-fact": {"impl": "scored"}}), "r").rows[0]
+    assert row["machine"]["value"] == "对" and row["machine"]["score"] == 90 and row["status"] == "ok"
+    bad = judge_episode(mk_record(), fake_config(operators={**ops, "fake-fact": {"impl": "scored", "score": 120}}),
+                        "r").rows[0]
+    assert bad["status"] == "error" and "0–100" in bad["machine"]["reason"]

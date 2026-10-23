@@ -33,7 +33,7 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "3"
+    assert v["value"] == "4"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
     # 重复打开不重复迁移
@@ -340,8 +340,8 @@ def test_v1_upgrade_recompute_and_backfill(tmp_path):
     old_q = _build_v1_db(db_path, record)
     assert old_q != qkey_of(record["case"])          # 旧算法 qkey 不含 topic → 必然不同
 
-    store = Store(db_path)                           # 打开即完成 1→2→3 迁移
-    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "3"
+    store = Store(db_path)                           # 打开即完成 1→2→3→4 迁移
+    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "4"
     new_q = qkey_of(record["case"])
     qs = store.questions()
     assert len(qs) == 1 and qs[0]["qkey"] == new_q   # 没有拆成两题
@@ -500,3 +500,103 @@ def test_run_without_started_at_falls_back_stably(tmp_path):
     assert store.run("r1")["started_at"] == "2026-10-20T00:00:00Z"
     assert [r["run_id"] for r in store.runs()] == ["r1", "r2"]
     store.close()
+
+
+# ---------------------------------------------------------------- 百分制（schema v4，doc/10 §5–6）
+
+def _scored_answer(store, tmp_path, facts=None):
+    """F1（权重 2）、E1（期望，权重 1）、X1 的一段会话，机器全部判定为未决。"""
+    from tests.helpers import fact
+    case = mk_record()["case"]
+    case["facts"] = facts or [fact("F1", text="甲", weight=2), fact("E1", "expected", "乙"),
+                              fact("X1", "forbidden", "禁止")]
+    ingest(store, tmp_path, "demo", [mk_record(case=case)])
+    a = store.answers()[0]
+    fp = a["judge_fp_at_run"]
+    _write_verdicts(store, a["answer_id"], fp, "c1", [
+        dict(item_id="F1", value=None, status="undecided"),
+        dict(item_id="E1", kind="expected", value=None, status="undecided"),
+        dict(item_id="X1", kind="forbidden", value="未采信")])
+    return a, fp
+
+
+def test_v4_columns_and_chains_table(store):
+    cols = {t: {r["name"] for r in store.conn.execute(f"PRAGMA table_info({t})")}
+            for t in ("verdicts", "reviews", "conclusions", "answers", "verdict_cache")}
+    assert "score" in cols["verdicts"] and "score" in cols["reviews"] and "score" in cols["verdict_cache"]
+    assert {"score", "score_min", "score_max", "auto_score", "score_source"} <= cols["conclusions"]
+    assert "injection_observed_json" in cols["answers"]
+    store.register_chain("c1", "规则", ["keyword@1"])
+    store.register_chain("c1", None, ["keyword@1", "skill-path@1"], ["m-x"])   # 名称保留，算子清单更新
+    assert store.chains() == [{"chain_sha": "c1", "name": "规则", "operators": ["keyword@1", "skill-path@1"],
+                               "judge_models": ["m-x"], "created_at": store.chains()[0]["created_at"]}]
+
+
+def test_submit_reviews_scores_and_conclusion(store, tmp_path):
+    a, fp = _scored_answer(store, tmp_path)
+    store.recompute_conclusion(a["answer_id"], fp, "c1", POLICY, POLICY_SHA)
+    c0 = store.conclusion(a["answer_id"], fp, "c1", POLICY_SHA)
+    assert c0["status"] == "undecided" and (c0["score_min"], c0["score_max"]) == (0, 100)
+    c = store.submit_reviews(a["answer_id"], [
+        {"item_id": "F1", "value": "部分", "score": 70, "reason": "自定"},
+        {"item_id": "E1", "value": "对"}], None, "codfish", fp, "c1", POLICY, POLICY_SHA)
+    assert c["status"] == "pass" and c["score"] == 80 and c["score_source"] == "auto"   # (2×70 + 100) / 3
+    rows = store.reviews_for(a["answer_id"])
+    assert [(r["item_id"], r["value"], r["score"]) for r in rows] == [("F1", "部分", 70.0), ("E1", "对", None)]
+
+
+def test_submit_reviews_is_atomic(store, tmp_path):
+    a, fp = _scored_answer(store, tmp_path)
+    for bad in ([{"item_id": "F1", "value": "对"}, {"item_id": "E1", "value": "满足"}],      # 取值不合法
+                [{"item_id": "F1", "value": "对", "score": 101}],                         # 分数越界
+                [{"item_id": "F9", "value": "对"}]):                                       # 条目不存在
+        with pytest.raises(StoreError):
+            store.submit_reviews(a["answer_id"], bad, None, "codfish", fp, "c1", POLICY, POLICY_SHA)
+    with pytest.raises(StoreError):                                                         # 会话分缺理由
+        store.submit_reviews(a["answer_id"], [], {"score": 70, "reason": " "}, "codfish", fp, "c1",
+                             POLICY, POLICY_SHA)
+    assert store.reviews_for(a["answer_id"]) == []
+
+
+def test_human_total_override_and_voiding(store, tmp_path):
+    a, fp = _scored_answer(store, tmp_path)
+    c = store.submit_reviews(a["answer_id"], [{"item_id": "F1", "value": "未提及"}, {"item_id": "E1", "value": "对"}],
+                             {"score": 65, "reason": "表述到位，扣分过重"}, "codfish", fp, "c1", POLICY, POLICY_SHA)
+    assert c["status"] == "pass" and c["score"] == 65 and c["score_source"] == "human" and c["auto_score"] == 33
+    assert store.voided_reviews(a["answer_id"]) == []
+    # 期望修订（judge_fp 变）后人工会话分作废
+    store.conn.execute("UPDATE questions SET current_judge_fp='fp-new' WHERE qkey=?", (a["qkey"],))
+    store.conn.execute("INSERT INTO specs SELECT qkey, 'fp-new', spec_json, evalset_version, imported_at"
+                       " FROM specs WHERE qkey=? AND judge_fp=?", (a["qkey"], fp))
+    voided = store.voided_reviews(a["answer_id"])
+    assert any(v["review"]["item_id"] == "@total" and "期望已修订" in v["reason"] for v in voided)
+
+
+def test_preview_does_not_write(store, tmp_path):
+    a, fp = _scored_answer(store, tmp_path)
+    v = store.preview_conclusion(a["answer_id"], [{"item_id": "F1", "value": "对"}, {"item_id": "E1", "value": "部分"}],
+                                 None, fp, "c1", POLICY)
+    assert v.status == "pass" and v.score == 83                    # (200 + 50) / 3 = 83.3
+    v2 = store.preview_conclusion(a["answer_id"], [], {"score": 40, "reason": "r"}, fp, "c1", POLICY)
+    assert v2.status == "fail" and v2.score_source == "human"
+    assert store.reviews_for(a["answer_id"]) == []
+    assert store.conclusion(a["answer_id"], fp, "c1", POLICY_SHA) is None
+
+
+def test_undecided_items_include_weighted_expected(store, tmp_path):
+    from tests.helpers import fact
+    a, fp = _scored_answer(store, tmp_path)
+    assert {i["item_id"] for i in store.undecided_items("c1")[0]} == {"F1", "E1"}
+
+
+def test_undecided_items_skip_zero_weight_expected(store, tmp_path):
+    from tests.helpers import fact
+    a, fp = _scored_answer(store, tmp_path, facts=[fact("F1", text="甲"), fact("E1", "expected", "乙", weight=0),
+                                                   fact("X1", "forbidden", "禁止")])
+    assert {i["item_id"] for i in store.undecided_items("c1")[0]} == {"F1"}
+
+
+def test_cache_round_trips_score(store):
+    from scoring.operators import Verdict
+    store.cache_put("k", Verdict("对", "judge", "llm-fact@1", reason="r", score=90))
+    assert store.cache_get("k").score == 90

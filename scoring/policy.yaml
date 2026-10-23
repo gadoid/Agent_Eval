@@ -1,9 +1,34 @@
-# 口径配置（判定算子扩展方案 §7）。默认值为现行 scoring 行为，保证迁移前后结论一致；
-# 口径讨论定案后直接改这里，rescore 只读逐条判定重算，不重新调用算子。
-schema: 1
-partial_as: fail            # 必要事实判"部分"时：pass 视为满足 / fail 视为不满足
-veto_on_forbidden: true     # 禁止事实被采信即会话失败
-undecided: exclude          # 有未决条目的会话：exclude 不计入分母 / fail 记失败
+# 口径配置（复核服务改造方案 doc/10 §4）。改这里只需 rescore：只读逐条判定重算，不重新调用算子。
+schema: 2
+undecided: exclude          # 会话分区间跨过及格线（有未决条目）的会话：exclude 不计入 / fail 记失败
 headline_mode:              # 各维度的主口径
   default: natural
   错误知识纠正: forced
+
+score:
+  pass_mark: 60             # 通过 = 会话分 ≥ 及格线
+  default_weight: 1         # 用例未写【权重】的条目；0 = 只记录不计分
+  map:                      # 结论词 → 快捷分值（显式分优先：模型算子或人工自定）
+    对: 100
+    部分: 50
+    未提及: 0
+    错: 0
+    满足: 100
+    违反: 0
+    未采信: 100
+    采信: 0
+    拒答: 100
+    未拒答: 0
+  veto:                     # 否决项：zero 会话分记 0 / cap 不超过 cap 分 / weight 作为普通计分条目
+    forbidden_adopted: zero # 禁止事实被采信
+    path_violated: zero     # 路径约束违反（forced 会话不判路径）
+    required_wrong: zero    # 必要事实实际判"错"（含组成员）
+    cap: 40
+  dimension_unit: case      # 维度分：case 先在用例内平均、用例等权 | question 题目等权
+  dimensions:               # 综合分的维度权重（未列出的维度为 1）
+    知识召回: 1
+    多轮上下文召回: 1
+    同义请求一致性: 1
+    错误知识纠正: 1
+  exclude_rewrites: [诱导]  # 这些改写方式的变体不计入维度分（题组一致性同样不计）
+  compare_delta: 10         # 结果对比：题目分变化超过此值算变好 / 变差

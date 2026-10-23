@@ -377,3 +377,25 @@ def test_render_roundtrip(env):
     rows_b = md2case.compile_case(again, points, "v")
     strip = lambda rs: [{k: v for k, v in r.items()} for r in rs]
     assert strip(rows_a) == strip(rows_b)
+
+
+# ---------------------------------------------------------------- 权重（doc/10 §5.1）
+
+def test_weight_attr_compiles_and_round_trips(env):
+    text = (EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】", "保单号后三位应填 400 【轮次：2】【外部】【权重：2】")
+                   .replace("- 必须：加载 skill trade-company 【轮次：1】", "- 必须：加载 skill trade-company 【轮次：1】【权重：0】")
+                   .replace("后三位应填 500 【轮次：2】【证据：R1】", "后三位应填 500 【轮次：2】【证据：R1】【权重：0.5】"))
+    case = parse_ok(env, text, "ec-0102")
+    rows = md2case.compile_case(case, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")
+    weights = {f["id"]: f.get("weight") for f in rows[0]["facts"]}
+    assert weights == {"F1": 2, "X1": 0.5} and rows[0]["path"][0]["weight"] == 0
+    again = md2case.md_to_case(md2case.case_to_md(case), "<render>")      # 权重 0 不能在往返中丢失
+    assert again["path"][0]["weight"] == 0 and {f["id"]: f.get("weight") for f in again["facts"]} == weights
+
+
+def test_error_bad_weight(env):
+    for bad_w in ("-1", "两", "1.25"):
+        bad = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
+                              f"- F1：太保的倒签保函在开船时提供 【证据：R1】【权重：{bad_w}】")
+        e = parse_err(env, bad, "kr-0001")
+        assert any("权重" in x for x in e.errors), bad_w

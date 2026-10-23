@@ -15,12 +15,12 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from .items import (SCALES, build_context, episode_error, extract_items,
-                    input_fp_of, judge_fp_of, qkey_of, variant_leak_suspects)
+from .items import (SCALES, build_context, episode_error, extract_items, input_fp_of,
+                    judge_fp_of, qkey_of, variant_leak_suspects, TOTAL_ITEM, conversation_sha)
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -208,9 +208,31 @@ def _migrate_backfill_started_at(conn) -> None:
 
 _MIGRATIONS[3] = [_migrate_recompute_qkeys, _migrate_backfill_started_at]
 
+# v4（复核服务改造方案 §5.2，百分制）：只加列与表，不改写已有数据；会话分在下一次 rescore
+# 时按新口径（新 policy_sha）物化，旧口径的结论行保留。
+_MIGRATION_4_SQL = """
+    ALTER TABLE verdicts ADD COLUMN score REAL;
+    ALTER TABLE verdict_cache ADD COLUMN score REAL;
+    ALTER TABLE reviews ADD COLUMN score REAL;
+    ALTER TABLE conclusions ADD COLUMN score REAL;
+    ALTER TABLE conclusions ADD COLUMN score_min REAL;
+    ALTER TABLE conclusions ADD COLUMN score_max REAL;
+    ALTER TABLE conclusions ADD COLUMN auto_score REAL;
+    ALTER TABLE conclusions ADD COLUMN score_source TEXT;
+    ALTER TABLE answers ADD COLUMN injection_observed_json TEXT;
+    CREATE TABLE IF NOT EXISTS chains(
+      chain_sha TEXT PRIMARY KEY, name TEXT, operators_json TEXT, judge_models_json TEXT, created_at TEXT);
+    INSERT OR IGNORE INTO chains(chain_sha) SELECT DISTINCT chain_sha FROM verdicts;
+    """
+_MIGRATIONS[4] = [_MIGRATION_4_SQL]
+
 
 class StoreError(Exception):
     """评测库操作错误。"""
+
+
+def _valid_score(x) -> bool:
+    return not isinstance(x, bool) and isinstance(x, (int, float)) and 0 <= x <= 100
 
 
 def now() -> str:
@@ -465,11 +487,14 @@ class Store:
                               (answer_id, judge_fp, chain_sha))
             for r in rows:
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT OR REPLACE INTO verdicts(answer_id, judge_fp, chain_sha, item_id, kind, turn,"
+                    " item_sha, answer_sha, value, source, operator, reason, trace_json, status, judged_at, score)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (answer_id, judge_fp, chain_sha, r["item"]["id"], r["item"]["kind"], r["item"]["turn"],
                      r.get("item_sha"), r["answer_sha"], r["machine"].get("value"), r["machine"].get("source", ""),
                      r["machine"].get("operator", ""), r["machine"].get("reason", ""),
-                     json.dumps(r.get("trace") or [], ensure_ascii=False), r["status"], ts))
+                     json.dumps(r.get("trace") or [], ensure_ascii=False), r["status"], ts,
+                     r["machine"].get("score")))
         return len(rows)
 
     def verdicts(self, answer_id: str, judge_fp: str, chain_sha: str) -> list[dict]:
@@ -507,29 +532,31 @@ class Store:
         row = self.conn.execute("SELECT * FROM verdict_cache WHERE cache_key=?", (key,)).fetchone()
         if not row:
             return None
-        return Verdict(row["value"], row["source"] or "judge", row["operator"] or "", reason=row["reason"] or "")
+        return Verdict(row["value"], row["source"] or "judge", row["operator"] or "", reason=row["reason"] or "",
+                       score=row["score"])
 
     def cache_put(self, key: str, v: Verdict) -> None:
-        self._exec("INSERT OR REPLACE INTO verdict_cache VALUES(?,?,?,?,?)",
-                   (key, v.value, v.source, v.operator, v.reason))
+        self._exec("INSERT OR REPLACE INTO verdict_cache(cache_key, value, source, operator, reason, score)"
+                   " VALUES(?,?,?,?,?,?)", (key, v.value, v.source, v.operator, v.reason, v.score))
 
     def cache_bulk(self, rows: list[dict]) -> int:
         with self.lock, self.conn:
             for d in rows:
-                self.conn.execute("INSERT OR REPLACE INTO verdict_cache VALUES(?,?,?,?,?)",
+                self.conn.execute("INSERT OR REPLACE INTO verdict_cache(cache_key, value, source, operator,"
+                                  " reason, score) VALUES(?,?,?,?,?,?)",
                                   (d["key"], d.get("value"), d.get("source", "judge"),
-                                   d.get("operator", ""), d.get("reason", "")))
+                                   d.get("operator", ""), d.get("reason", ""), d.get("score")))
         return len(rows)
 
     # ---------------------------------------------------------------- 人工改判（C9）
 
-    def add_review(self, answer_id: str, item_id: str, value: str, reason: str, reviewer: str,
-                   item_sha: str | None, answer_sha: str) -> int:
+    def add_review(self, answer_id: str, item_id: str, value: str | None, reason: str, reviewer: str,
+                   item_sha: str | None, answer_sha: str, score: float | None = None) -> int:
         with self.lock, self.conn:
             cur = self.conn.execute(
-                "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at)"
-                " VALUES(?,?,?,?,?,?,?,?)",
-                (answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, now()))
+                "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at, score)"
+                " VALUES(?,?,?,?,?,?,?,?,?)",
+                (answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, now(), score))
             return int(cur.lastrowid)
 
     def add_legacy_review(self, answer_id: str, item_id: str, value: str, reason: str, reviewer: str,
@@ -547,26 +574,68 @@ class Store:
             "SELECT * FROM reviews WHERE answer_id=? ORDER BY review_id", (answer_id,))]
 
     def submit_review(self, answer_id: str, item_id: str, value: str, reason: str, reviewer: str,
-                      judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str) -> tuple[str, str]:
-        """改判提交（§8）：校验 → 追加改判 → 重算该答案的结论行。
-        校验失败抛 StoreError，不落任何数据（先校验后写入，改造方案 §3.4 C3）。"""
-        if self.answer(answer_id) is None:
+                      judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str,
+                      score: float | None = None) -> tuple[str, str]:
+        """单条改判（兼容入口）：等价于只含一条的 submit_reviews。"""
+        c = self.submit_reviews(answer_id, [{"item_id": item_id, "value": value, "score": score,
+                                             "reason": reason}], None, reviewer, judge_fp, chain_sha,
+                                policy, policy_sha)
+        return c["status"], c.get("reason") or ""
+
+    def _validate_entries(self, answer_id: str, entries: list[dict], total: dict | None,
+                          judge_fp: str, chain_sha: str) -> list[tuple]:
+        """校验一批人工打分（不写库）；返回待写入行 (item_id, value, score, reason, item_sha, answer_sha)。
+        任一条不合法抛 StoreError（带 item_id），整批不写。"""
+        a = self.answer(answer_id)
+        if a is None:
             raise StoreError("答案不存在")
-        vrow = self.conn.execute(
-            "SELECT * FROM verdicts WHERE answer_id=? AND judge_fp=? AND chain_sha=? AND item_id=?",
-            (answer_id, judge_fp, chain_sha, item_id)).fetchone()
-        if vrow is None:
-            raise StoreError("条目不存在（该期望 + 链配置下没有判定行，先 rejudge）")
-        if value not in SCALES.get(vrow["kind"], ()):
-            raise StoreError(f"取值不合法：{value}")
+        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, judge_fp, chain_sha)}
+        out: list[tuple] = []
+        for e in entries:
+            item_id = e.get("item_id")
+            vrow = vrows.get(item_id)
+            if vrow is None:
+                raise StoreError(f"条目不存在（该期望 + 链配置下没有判定行，先 rejudge）：{item_id}")
+            value, score = e.get("value"), e.get("score")
+            if value not in SCALES.get(vrow["kind"], ()):
+                raise StoreError(f"取值不合法：{item_id} = {value!r}")
+            if score is not None and not _valid_score(score):
+                raise StoreError(f"分数应为 0–100：{item_id} = {score!r}")
+            out.append((item_id, value, None if score is None else float(score), e.get("reason") or "",
+                        vrow["item_sha"], vrow["answer_sha"]))
+        if total is not None:
+            score = total.get("score")
+            if score is None or not _valid_score(score):
+                raise StoreError(f"人工会话分应为 0–100：{score!r}")
+            if not (total.get("reason") or "").strip():
+                raise StoreError("人工会话分必须写理由")
+            out.append((TOTAL_ITEM, None, float(score), total["reason"].strip(), judge_fp,
+                        self._conversation_sha(a, judge_fp)))
+        return out
+
+    def submit_reviews(self, answer_id: str, entries: list[dict], total: dict | None, reviewer: str,
+                       judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str) -> dict:
+        """一段对话的批量人工打分（复核服务改造方案 §6.4）：全部校验 → 同一事务追加 →
+        重算一次该答案的结论。任一条不合法则整体不写入。返回结论行。"""
+        rows = self._validate_entries(answer_id, entries, total, judge_fp, chain_sha)
+        ts = now()
         with self.lock, self.conn:
-            self.conn.execute(
-                "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at)"
-                " VALUES(?,?,?,?,?,?,?,?)",
-                (answer_id, item_id, vrow["item_sha"], vrow["answer_sha"], value, reason, reviewer, now()))
-        status = self.recompute_conclusion(answer_id, judge_fp, chain_sha, policy, policy_sha)
-        c = self.conclusion(answer_id, judge_fp, chain_sha, policy_sha)
-        return status, (c or {}).get("reason") or ""
+            for item_id, value, score, reason, item_sha, ans_sha in rows:
+                self.conn.execute(
+                    "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at, score)"
+                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                    (answer_id, item_id, item_sha, ans_sha, value, reason, reviewer, ts, score))
+        self.recompute_conclusion(answer_id, judge_fp, chain_sha, policy, policy_sha)
+        return self.conclusion(answer_id, judge_fp, chain_sha, policy_sha) or {}
+
+    def preview_conclusion(self, answer_id: str, entries: list[dict], total: dict | None,
+                           judge_fp: str, chain_sha: str, policy: Policy) -> EpisodeVerdict:
+        """按草稿重算结论（不落库）：草稿视作排在全部已有改判之后的人工记录。"""
+        rows = self._validate_entries(answer_id, entries, total, judge_fp, chain_sha)
+        drafts = [{"item_id": item_id, "value": value, "score": score, "reason": reason,
+                   "item_sha": item_sha, "answer_sha": ans_sha, "review_id": float("inf")}
+                  for item_id, value, score, reason, item_sha, ans_sha in rows]
+        return self._conclude(answer_id, judge_fp, chain_sha, policy, extra_reviews=drafts)
 
     # ---------------------------------------------------------------- 有效结论与物化（C9/C10）
 
@@ -579,11 +648,29 @@ class Store:
                  if r["item_id"] == vrow["item_id"]
                  and r["answer_sha"] == vrow["answer_sha"]
                  and r["item_sha"] is not None and r["item_sha"] == vrow["item_sha"]
-                 and r["value"] in SCALES.get(vrow["kind"], ())]
+                 and r["value"] in SCALES.get(vrow["kind"], ())
+                 and (r.get("score") is None or _valid_score(r["score"]))]
         if valid:
             r = valid[-1]
-            return Verdict(r["value"], "human", "review", reason=r["reason"] or "")
-        return Verdict(vrow["value"], vrow["source"] or "", vrow["operator"] or "", reason=vrow["reason"] or "")
+            return Verdict(r["value"], "human", "review", reason=r["reason"] or "", score=r.get("score"))
+        return Verdict(vrow["value"], vrow["source"] or "", vrow["operator"] or "", reason=vrow["reason"] or "",
+                       score=vrow.get("score"))
+
+    def _conversation_sha(self, a: dict, judge_fp: str) -> str:
+        spec = self.spec_of(a["qkey"], judge_fp)
+        return conversation_sha(build_context(json.loads(a["record_json"]), spec))
+
+    @staticmethod
+    def total_override(reviews: list[dict], judge_fp: str, conv_sha: str) -> dict | None:
+        """有效人工会话分：最后一条 item_id=@total、item_sha=judge_fp、answer_sha=整段回答指纹、
+        分数合法且有理由的记录（期望或回答变了即作废）。"""
+        valid = [r for r in reviews
+                 if r["item_id"] == TOTAL_ITEM and r["item_sha"] == judge_fp and r["answer_sha"] == conv_sha
+                 and r.get("score") is not None and _valid_score(r["score"]) and (r["reason"] or "").strip()]
+        if not valid:
+            return None
+        r = valid[-1]
+        return {"score": float(r["score"]), "reason": r["reason"], "reviewer": r.get("reviewer"), "at": r.get("at")}
 
     def effective_rows(self, answer_id: str, judge_fp: str, chain_sha: str) -> list[dict]:
         """(verdict 行, 有效结论) 对：所有展示与统计的唯一取数口。"""
@@ -606,7 +693,15 @@ class Store:
             for vrow in self.verdicts(answer_id, fp, chain):
                 refs[vrow["item_id"]] = vrow
         out = []
+        conv_sha = None
         for r in self.reviews_for(answer_id):
+            if r["item_id"] == TOTAL_ITEM:
+                conv_sha = conv_sha or self._conversation_sha(a, fp)
+                if r["item_sha"] != fp:
+                    out.append({"review": r, "reason": "期望已修订（人工会话分作废）"})
+                elif r["answer_sha"] != conv_sha:
+                    out.append({"review": r, "reason": "回答已变化（人工会话分作废）"})
+                continue
             ref = refs.get(r["item_id"])
             if ref is None:
                 why = "条目不存在"
@@ -616,6 +711,8 @@ class Store:
                 why = "item_sha 不匹配（期望已修订）"
             elif r["value"] not in SCALES.get(ref["kind"], ()):
                 why = f"取值不合法：{r['value']!r}"
+            elif r.get("score") is not None and not _valid_score(r["score"]):
+                why = f"分数不合法：{r['score']!r}"
             else:
                 continue
             out.append({"review": r, "reason": why})
@@ -632,7 +729,8 @@ class Store:
                         page: int = 0, size: int = 20) -> tuple[list[dict], int]:
         """未决队列（§6.3：按有效结论取数）：机器结论为空或异常、且没有效人工改判
         （answer_sha + item_sha 匹配、取值在 scale 内）的参与条目。已被短路的条目
-        （前提判不成立/路径违反后的事实、forced 会话的路径、期望事实）不进队列。"""
+        （前提判不成立/路径违反后的事实、forced 会话的路径、权重 0 的事实）不进队列。
+        期望事实按权重计分（doc/10 §4.2），未决时同样进队列。"""
         sql = """SELECT v.answer_id, v.item_id, v.kind, v.turn, v.value AS machine_value,
                  v.source AS machine_source, v.reason AS machine_reason, v.status,
                  q.uid, a.run_id, a.episode_id, a.mode, a.trial, a.qkey, q.current_judge_fp,
@@ -641,7 +739,7 @@ class Store:
                     ORDER BY r.review_id DESC LIMIT 1) AS review_value
                  FROM verdicts v JOIN answers a USING(answer_id) JOIN questions q ON a.qkey = q.qkey
                  WHERE q.current_judge_fp = v.judge_fp AND v.chain_sha = ?
-                   AND v.kind != 'expected' AND (v.status != 'ok' OR v.value IS NULL)"""
+                   AND (v.status != 'ok' OR v.value IS NULL)"""
         args: list = [chain_sha]
         if run_id:
             sql += " AND a.run_id = ?"
@@ -673,7 +771,9 @@ class Store:
                 first = items_[0]
                 forced = first["mode"] == "forced"
                 fp = first["current_judge_fp"]
-                answerable = (specs.get((first["qkey"], fp)) or {}).get("answerable", True) is not False
+                spec = specs.get((first["qkey"], fp)) or {}
+                answerable = spec.get("answerable", True) is not False
+                zero_weight = {f.get("id") for f in spec.get("facts") or [] if f.get("weight") == 0}
                 rows_ = [v for v in vr_by_answer.get(a_id, []) if v["judge_fp"] == fp]
                 precond_fail = any(v["kind"] == "precond" and v["value"] == "不成立" for v in rows_)
                 path_violate = (not forced and any(v["kind"] == "path" and v["value"] == "违反" for v in rows_))
@@ -685,7 +785,8 @@ class Store:
                         out.append(c)
                     elif c["kind"] == "refusal":
                         out.append(c)
-                    elif c["kind"] in ("required", "forbidden") and facts_live:
+                    elif c["kind"] in ("required", "forbidden", "expected") and facts_live \
+                            and c["item_id"] not in zero_weight:
                         out.append(c)
         out.sort(key=lambda c: (c["answer_id"], c["item_id"]))
         total = len(out)
@@ -725,9 +826,9 @@ class Store:
                                  "human": d["review_value"]})
         return mismatch, agree, total
 
-    def recompute_conclusion(self, answer_id: str, judge_fp: str, chain_sha: str,
-                             policy: Policy, policy_sha: str) -> str:
-        """重算并物化一个 (答案, 期望, 链配置, 口径) 的会话结论（不调用任何算子）。"""
+    def _conclude(self, answer_id: str, judge_fp: str, chain_sha: str, policy: Policy,
+                  extra_reviews: list[dict] | None = None) -> EpisodeVerdict:
+        """计算一个 (答案, 期望, 链配置, 口径) 的会话结论与会话分（不写库、不调用算子）。"""
         a = self.answer(answer_id)
         if a is None:
             raise StoreError(f"答案不存在：{answer_id}")
@@ -742,28 +843,36 @@ class Store:
         routing = ((manifest.get("profile") or {}).get("content") or {}).get("routing")
         err = episode_error(record, ctx)
         if err is not None:
-            v = EpisodeVerdict(uid=record.get("uid", "?"), mode=record.get("mode", "?"),
-                               trial=record.get("trial", 0), dim=spec.get("dim", "?"),
-                               status="error", error=err)
-        else:
-            items = extract_items(ctx)
-            reviews = self.reviews_for(answer_id)
-            eff: dict[str, Verdict] = {}
-            statuses: dict[str, str] = {}
-            for item in items:
-                vrow = next((r for r in self.verdicts(answer_id, judge_fp, chain_sha)
-                             if r["item_id"] == item.id), None)
-                if vrow is None:
-                    eff[item.id] = Verdict(None, "", "")
-                    statuses[item.id] = "undecided"
-                else:
-                    eff[item.id] = self.effective(vrow, reviews)
-                    # 人工改判覆盖后该条目已决（R10：异常按条目 status 判，单一判据）
-                    statuses[item.id] = "ok" if eff[item.id].source == "human" else vrow["status"]
-            v = session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses)
-        self._exec("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?)",
+            return EpisodeVerdict(uid=record.get("uid", "?"), mode=record.get("mode", "?"),
+                                  trial=record.get("trial", 0), dim=spec.get("dim", "?"),
+                                  status="error", error=err)
+        items = extract_items(ctx)
+        reviews = self.reviews_for(answer_id) + list(extra_reviews or [])
+        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, judge_fp, chain_sha)}
+        eff: dict[str, Verdict] = {}
+        statuses: dict[str, str] = {}
+        for item in items:
+            vrow = vrows.get(item.id)
+            if vrow is None:
+                eff[item.id] = Verdict(None, "", "")
+                statuses[item.id] = "undecided"
+            else:
+                eff[item.id] = self.effective(vrow, reviews)
+                # 人工改判覆盖后该条目已决（R10：异常按条目 status 判，单一判据）
+                statuses[item.id] = "ok" if eff[item.id].source == "human" else vrow["status"]
+        override = self.total_override(reviews, judge_fp, conversation_sha(ctx))
+        return session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses, override=override)
+
+    def recompute_conclusion(self, answer_id: str, judge_fp: str, chain_sha: str,
+                             policy: Policy, policy_sha: str) -> str:
+        """重算并物化一个 (答案, 期望, 链配置, 口径) 的会话结论与会话分（不调用任何算子）。"""
+        v = self._conclude(answer_id, judge_fp, chain_sha, policy)
+        self._exec("INSERT OR REPLACE INTO conclusions(answer_id, judge_fp, chain_sha, policy_sha, status, reason,"
+                   " detail_json, score, score_min, score_max, auto_score, score_source)"
+                   " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                    (answer_id, judge_fp, chain_sha, policy_sha, v.status,
-                    v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False)))
+                    v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False),
+                    v.score, v.score_min, v.score_max, v.auto_score, v.score_source))
         return v.status
 
     def rescore(self, policy: Policy, policy_sha: str, current_chain_sha: str | None = None) -> int:
@@ -813,12 +922,37 @@ class Store:
                a.run_status, {record_col}a.injection_found_gt1, a.variant_leak_json,
                q.uid, q.case_id, q.variant_index, q.rewrite,
                q.dim, q.topic, q.current_judge_fp, q.active,
-               c.status AS c_status, c.reason AS c_reason, c.detail_json
+               c.status AS c_status, c.reason AS c_reason, c.detail_json,
+               c.score AS c_score, c.score_min AS c_score_min, c.score_max AS c_score_max,
+               c.score_source AS c_score_source
         FROM answers a JOIN questions q ON a.qkey = q.qkey
         LEFT JOIN conclusions c ON c.answer_id = a.answer_id AND c.judge_fp = q.current_judge_fp
              AND c.chain_sha = ? AND c.policy_sha = ?
         ORDER BY a.answer_id"""
         return [dict(r) for r in self.conn.execute(sql, (chain_sha, policy_sha))]
+
+    # ---------------------------------------------------------------- 判定配置（chains，§6.4）
+
+    def register_chain(self, chain_sha: str, name: str | None, operators: list[str],
+                       judge_models: list[str] | None = None) -> None:
+        """登记一套判定配置（score / rejudge 时写入；已存在则补全名称与算子清单）。"""
+        with self.lock, self.conn:
+            self.conn.execute(
+                "INSERT INTO chains(chain_sha, name, operators_json, judge_models_json, created_at) VALUES(?,?,?,?,?)"
+                " ON CONFLICT(chain_sha) DO UPDATE SET name=COALESCE(excluded.name, chains.name),"
+                " operators_json=excluded.operators_json, judge_models_json=excluded.judge_models_json,"
+                " created_at=COALESCE(chains.created_at, excluded.created_at)",
+                (chain_sha, name, json.dumps(operators, ensure_ascii=False),
+                 json.dumps(judge_models or [], ensure_ascii=False), now()))
+
+    def chains(self) -> list[dict]:
+        out = []
+        for r in self.conn.execute("SELECT * FROM chains ORDER BY created_at, chain_sha"):
+            d = dict(r)
+            d["operators"] = json.loads(d.pop("operators_json") or "[]")
+            d["judge_models"] = json.loads(d.pop("judge_models_json") or "[]")
+            out.append(d)
+        return out
 
     # ---------------------------------------------------------------- 备份
 

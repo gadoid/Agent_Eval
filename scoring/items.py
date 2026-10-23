@@ -7,8 +7,9 @@
 题目指纹（评测结果管理改造方案 §4.1）也在本模块计算：
 - 输入指纹 input_fp：history + 用户消息序列 + 注入（point/option/rev/file/key/value）
 - 判定指纹 judge_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group）+ 路径约束
-- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组不进入）
+- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组、权重不进入）
 参考答案、备注、证据、标签、状态、关键条件的改动不影响任何指纹。
+权重（【权重：N】，复核服务改造方案 §4.2）进入判定指纹：改权重改变会话分。
 """
 from __future__ import annotations
 
@@ -132,10 +133,27 @@ def judge_fp_of(case: dict) -> str:
         "preconditions": [{"id": p.get("id"), "text": p.get("text"), "turn": p.get("turn")}
                           for p in (case.get("preconditions") or [])],
         "facts": [{"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text"),
-                   "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group")}
+                   "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group"),
+                   **({"weight": f["weight"]} if "weight" in f else {})}
                   for f in (case.get("facts") or [])],
         "path": case.get("path") or [],
     })
+
+
+def weight_of(item: Item, default: float = 1) -> float:
+    """条目权重：用例未写时取 policy 的 default_weight；0 = 只记录不计分。"""
+    w = item.attrs.get("weight")
+    return default if w is None else float(w)
+
+
+# 人工会话分（复核服务改造方案 §4.2）挂在这个伪条目 id 上：item_sha 存 judge_fp，
+# answer_sha 存整段回答指纹——期望或回答变了即作废。
+TOTAL_ITEM = "@total"
+
+
+def conversation_sha(ctx: EpisodeContext) -> str:
+    """整段回答指纹：全部 live 输出按轮拼接。"""
+    return hashlib.sha256("\n\u241e\n".join(ctx.outputs).encode("utf-8")).hexdigest()[:16]
 
 
 def qkey_of(case: dict) -> str:

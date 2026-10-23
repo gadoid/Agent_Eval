@@ -168,7 +168,8 @@ class VerdictCache:
                 if not line.strip():
                     continue
                 d = json.loads(line)
-                c._map[d["key"]] = Verdict(d.get("value"), d.get("source", "judge"), d.get("operator", ""), d.get("reason", ""))
+                c._map[d["key"]] = Verdict(d.get("value"), d.get("source", "judge"), d.get("operator", ""),
+                                           d.get("reason", ""), score=d.get("score"))
         return c
 
     def key(self, op: Operator, item: Item, ctx: EpisodeContext) -> str:
@@ -220,6 +221,9 @@ def judge_item(item: Item, ctx: EpisodeContext, chain: list[Operator], cache: Ve
         if v.value is None or v.value not in scale:
             trace.append(f"{op.id}:error")
             return Verdict(None, op.source, opid, reason=f"输出不在 scale {scale} 内：{v.value!r}"), trace, "error"
+        if v.score is not None and not (isinstance(v.score, (int, float)) and 0 <= v.score <= 100):
+            trace.append(f"{op.id}:error")
+            return Verdict(None, op.source, opid, reason=f"分数不在 0–100 内：{v.score!r}"), trace, "error"
         trace.append(f"{op.id}:hit")
         if use_cache:
             cache.put(key, v)

@@ -184,10 +184,12 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                 a_id = f"big/{ep}"
                 kind = ai % 3                                  # 0 未决 / 1 失败 / 2 通过
                 answers.append((a_id, qkey, "big", ep, fp, "p1", '["glm-5.3"]',
-                                "natural", ai + 1, "default-roots", "s1", "v1", "ok", rec_json, 0, "[]"))
+                                "natural", ai + 1, "default-roots", "s1", "v1", "ok", rec_json, 0, "[]", None))
                 status = "undecided" if kind == 0 else "pass"
                 concl_status = {"0": "undecided", "1": "fail", "2": "pass"}[str(kind)]
-                conclusions.append((a_id, fp, chain, policy_sha, concl_status, "", "{}"))
+                score = {"0": None, "1": 0.0, "2": 100.0}[str(kind)]
+                conclusions.append((a_id, fp, chain, policy_sha, concl_status, "", "{}",
+                                    score, score, score, score, "auto" if score is not None else None))
                 for fi, f in enumerate(facts):                 # 10 条判定/答案 → 10 万条
                     if kind == 0 and fi == 0:
                         v, st, src = None, "undecided", ""
@@ -196,14 +198,14 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                     else:
                         v, st, src = "对", "ok", "rule"
                     verdicts.append((a_id, fp, chain, f["id"], "required", 1, f"sha{qi}",
-                                     "asha", v, src, "keyword@1", "", "[]", st, "2026-01-01"))
+                                     "asha", v, src, "keyword@1", "", "[]", st, "2026-01-01", None))
                 if kind == 1 and ai == 1 and qi < 1000:        # 人工与机器不一致的改判
                     reviews.append((a_id, "F1", f"sha{qi}", "asha", "对", "回答明确", "codfish",
                                     "2026-01-01", None))
         conn.executemany("INSERT OR REPLACE INTO questions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", questions)
-        conn.executemany("INSERT OR REPLACE INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", answers)
-        conn.executemany("INSERT OR REPLACE INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
-        conn.executemany("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?)", conclusions)
+        conn.executemany("INSERT OR REPLACE INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", answers)
+        conn.executemany("INSERT OR REPLACE INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
+        conn.executemany("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", conclusions)
         conn.executemany("INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason,"
                          " reviewer, at, legacy_key) VALUES(?,?,?,?,?,?,?,?,?)", reviews)
     store.close()

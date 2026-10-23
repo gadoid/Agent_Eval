@@ -173,9 +173,12 @@ def cfg_map(mapping, adopted=False):
 
 # ---------------------------------------------------------------- 会话构造
 
-def fact(id, kind="required", text="", keywords=(), turn=None, group=None, evidence=None):
-    return {"id": id, "kind": kind, "text": text, "keywords": list(keywords), "turn": turn,
-            "group": group, "evidence": evidence}
+def fact(id, kind="required", text="", keywords=(), turn=None, group=None, evidence=None, weight=None):
+    f = {"id": id, "kind": kind, "text": text, "keywords": list(keywords), "turn": turn,
+         "group": group, "evidence": evidence}
+    if weight is not None:
+        f["weight"] = weight
+    return f
 
 
 def turn(output="答", skills=(), ask_user=0, status="ok", index=None, source="live"):
