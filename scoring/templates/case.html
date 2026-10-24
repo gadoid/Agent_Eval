@@ -2,7 +2,7 @@
 {% import "_macros.html" as m with context %}
 {% block title %}{{ case_id }} · Agent_Eval 复核{% endblock %}
 {% block body %}
-<main class="rv-page rv-case" data-case-page data-density="comfortable"
+<main class="rv-page rv-case" data-case-page
       data-focus-variant="{{ focus_variant }}" data-show-all="{{ 1 if show_all else 0 }}">
   <div class="rv-case-hero">
     <div class="rv-case-hero-main">
@@ -22,13 +22,6 @@
       </div>
       <div class="rv-meta rv-case-health"><span>用例体检</span>
         {% for f in health %}<span class="rv-flag">{{ f }}</span>{% else %}<span class="rv-ok">正常</span>{% endfor %}</div>
-    </div>
-    <div class="rv-case-hero-side">
-      <span class="rv-meta">显示密度</span>
-      <div class="rv-seg" role="group" aria-label="显示密度" data-density-toggle>
-        <button type="button" data-density-opt="comfortable" aria-pressed="true">舒适</button>
-        <button type="button" data-density-opt="compact" aria-pressed="false">紧凑</button>
-      </div>
     </div>
   </div>
 
@@ -102,7 +95,6 @@
     <h2>变体 <span class="rv-meta" style="font-weight:400"><span>{{ variant_cards|length }} 题</span>
       <span>选择变体查看提问与对应对话</span></span></h2>
     <div class="rv-vtabs" role="tablist" aria-label="选择变体" data-vtabs>
-      <span class="rv-vtabs-ind" data-vtabs-ind aria-hidden="true"></span>
       <a class="rv-vtab" role="tab" data-vtab="__all" aria-selected="{{ 'true' if show_all else 'false' }}"
          tabindex="{{ 0 if show_all else -1 }}"
          href="?{% if judge_fp %}judge_fp={{ judge_fp }}&{% endif %}variant=__all#variants">全部

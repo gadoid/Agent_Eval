@@ -7,56 +7,19 @@
   var page = $('[data-case-page]');
   if (!page) return;
 
-  // ---------------- 显示密度：localStorage 记忆；无 JS 时默认舒适
-  var DENSITY_KEY = 'rv-case-density';
-  var densityButtons = $$('[data-density-opt]', page);
-  function setDensity(mode) {
-    page.dataset.density = mode === 'compact' ? 'compact' : 'comfortable';
-    densityButtons.forEach(function (b) {
-      b.setAttribute('aria-pressed', String(b.dataset.densityOpt === page.dataset.density));
-    });
-    try { localStorage.setItem(DENSITY_KEY, page.dataset.density); } catch (e) { /* 隐私模式 */ }
-  }
-  var savedDensity = null;
-  try { savedDensity = localStorage.getItem(DENSITY_KEY); } catch (e) { /* 隐私模式 */ }
-  if (savedDensity) setDensity(savedDensity);
-  densityButtons.forEach(function (b) {
-    b.addEventListener('click', function () { setDensity(b.dataset.densityOpt); });
-  });
-
-  // ---------------- 变体选择：全部 / 单个变体（滑动指示条 + 面板淡入）
-  var tabsBox = $('[data-vtabs]', page);
+  // ---------------- 变体选择：全部 / 单个变体（按钮切换 + 面板淡入）
   var tabs = $$('[data-vtab]', page);
   var panels = $$('[data-vpanel]', page);
-  var indicator = $('[data-vtabs-ind]', page);
   var variantInput = $('[data-variant-input]', page);
   var selected = tabs.filter(function (t) { return t.getAttribute('aria-selected') === 'true'; })[0] || tabs[0];
   var activeVariant = selected ? selected.dataset.vtab : '__all';
 
-  function moveIndicator() {
-    if (!indicator || !tabsBox) return;
-    var tab = tabs.filter(function (t) { return t.dataset.vtab === activeVariant; })[0];
-    if (!tab) { indicator.style.width = '0px'; return; }
-    var box = tabsBox.getBoundingClientRect();
-    var r = tab.getBoundingClientRect();
-    indicator.style.width = r.width + 'px';
-    indicator.style.transform = 'translateX(' + (r.left - box.left - tabsBox.clientLeft + tabsBox.scrollLeft) + 'px)';
-  }
   function paintTabs() {
-    var activeTab = null;
     tabs.forEach(function (t) {
       var on = t.dataset.vtab === activeVariant;
       t.setAttribute('aria-selected', String(on));
       t.tabIndex = on ? 0 : -1;
-      if (on) activeTab = t;
     });
-    if (activeTab && tabsBox) {   // 窄屏横向滚动时把选中项带进视野
-      var l = activeTab.offsetLeft - tabsBox.clientLeft;
-      var r = l + activeTab.offsetWidth;
-      if (l < tabsBox.scrollLeft) tabsBox.scrollLeft = l;
-      else if (r > tabsBox.scrollLeft + tabsBox.clientWidth) tabsBox.scrollLeft = r - tabsBox.clientWidth;
-    }
-    moveIndicator();
   }
   function paintPanels() {
     panels.forEach(function (p) {
@@ -203,6 +166,4 @@
   paintTabs();
   applyConvFilter('all');
   prunePair();          // 初始选择变体时，隐藏变体里已勾选的段落退出并排
-  window.addEventListener('resize', moveIndicator);
-  if (tabsBox) tabsBox.addEventListener('scroll', moveIndicator, { passive: true });
 })();

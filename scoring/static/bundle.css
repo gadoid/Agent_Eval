@@ -542,19 +542,8 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-case-health { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rv-case-health .rv-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--pass-ink); font-weight: 600; }
 .rv-case-health .rv-ok::before { content: "✓"; }
-.rv-case-hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .rv-tagrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .rv-tagrow:empty::after { content: "—"; color: var(--ink-3); }
-
-/* 密度切换 */
-.rv-seg { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-sunken); }
-.rv-seg button {
-  height: 24px; padding: 0 var(--space-3);
-  border: 0; border-radius: var(--radius-sm); background: transparent;
-  color: var(--ink-2); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
-}
-.rv-seg button:hover { color: var(--ink); background: var(--bg-surface); }
-.rv-seg button[aria-pressed="true"] { background: var(--bg-surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-card); }
 
 .rv-case .rv-card { scroll-margin-top: 68px; transition: box-shadow .18s ease, border-color .18s ease; }
 .rv-case .rv-card:hover { box-shadow: var(--shadow-sticky); }
@@ -595,30 +584,39 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-fold-body { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); background: var(--bg-surface); }
 
 /* ---------------------------------------------------------------- 变体选择器 */
-.rv-vtabs {
-  position: relative; display: flex; gap: 2px;
-  padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-lg);
-  background: var(--bg-sunken); overflow-x: auto; scrollbar-width: none;
+.rv-vtabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.rv-app a.rv-vtab {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--bg-surface); color: var(--ink-2);
+  font-size: 13px; font-weight: 500; white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  transition: background .16s ease, border-color .16s ease, color .16s ease,
+              box-shadow .16s ease, transform .16s ease;
 }
-.rv-vtabs::-webkit-scrollbar { display: none; }
-.rv-vtabs-ind {
-  position: absolute; top: 4px; bottom: 4px; left: 0; width: 0;
-  border-radius: var(--radius-md); background: var(--bg-surface);
-  box-shadow: var(--shadow-card); pointer-events: none;
-  transition: transform .24s cubic-bezier(.2, .8, .2, 1), width .24s cubic-bezier(.2, .8, .2, 1);
+.rv-app a.rv-vtab:hover {
+  text-decoration: none; color: var(--ink);
+  border-color: var(--line-strong); transform: translateY(-1px);
+  box-shadow: var(--shadow-sticky);
 }
-.rv-vtab {
-  position: relative; z-index: 1; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px;
-  height: 34px; padding: 0 var(--space-3); border-radius: var(--radius-md);
-  color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap;
-  transition: color .15s ease;
+.rv-app a.rv-vtab:active { transform: translateY(0); }
+.rv-app a.rv-vtab[aria-selected="true"] {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  font-weight: 600; box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 32%, transparent);
 }
-.rv-app a.rv-vtab:hover { text-decoration: none; color: var(--ink); }
-.rv-vtab[aria-selected="true"] { color: var(--accent-ink); font-weight: 600; }
+.rv-vtab .rv-kind { height: 18px; padding: 0 5px; border-color: currentColor; color: inherit; font-weight: 500; opacity: .8; }
 .rv-vtab-id { font-family: var(--font-mono); font-size: 13px; }
-.rv-vtab-n { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.rv-vtab[aria-selected="true"] .rv-vtab-n { color: var(--accent-ink); }
+.rv-vtab-n {
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--bg-sunken); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.rv-app a.rv-vtab[aria-selected="true"] .rv-vtab-n {
+  background: color-mix(in srgb, var(--on-accent) 20%, transparent); color: var(--on-accent);
+}
 .rv-vtab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.rv-app a.rv-vtab[aria-selected="true"] .rv-vtab-dot { background: var(--on-accent); }
 .rv-vpanels { margin-top: var(--space-3); }
 .rv-vpanel[hidden] { display: none; }
 .rv-vpanel { animation: rv-panel-in .22s ease both; animation-delay: calc(var(--i, 0) * 35ms); }
@@ -661,26 +659,11 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-pair-cell { max-width: none; }
 .rv-pair-cell .rv-md { font-size: 14px; line-height: 23px; }
 
-/* ---------------------------------------------------------------- 紧凑密度 */
-.rv-case[data-density="compact"] .rv-case-hero { padding: var(--space-3) var(--space-4); }
-.rv-case[data-density="compact"] .rv-case-title h1 { font-size: 21px; line-height: 28px; }
-.rv-case[data-density="compact"] .rv-card { padding: var(--space-3); }
-.rv-case[data-density="compact"] .rv-card + .rv-card { margin-top: var(--space-2); }
-.rv-case[data-density="compact"] .rv-card > h2 { margin-bottom: var(--space-2); }
-.rv-case[data-density="compact"] .rv-expect { gap: 6px; }
-.rv-case[data-density="compact"] .rv-expect-qs { padding: var(--space-2) var(--space-3); }
-.rv-case[data-density="compact"] .rv-expect-q { font-size: 14px; line-height: 21px; }
-.rv-case[data-density="compact"] .rv-vtab { height: 30px; }
-.rv-case[data-density="compact"] .rv-vfocus { padding: var(--space-2) var(--space-3); }
-.rv-case[data-density="compact"] .rv-cq li { padding: var(--space-2) var(--space-3); }
-.rv-case[data-density="compact"] .rv-chips-bar { margin-bottom: var(--space-2); }
-.rv-case[data-density="compact"] .rv-pairbar { margin-bottom: var(--space-2); padding: 6px var(--space-2); }
-
 /* ---------------------------------------------------------------- 窄屏 */
 @media (max-width: 860px) {
   .rv-case-hero { padding: var(--space-3); }
-  .rv-case-hero-side { align-items: flex-start; }
   .rv-case .rv-card { scroll-margin-top: 96px; }
+  .rv-app a.rv-vtab { height: 36px; padding: 0 12px; }
   .rv-vfocus-link { margin-left: 0; }
   .rv-case .rv-cq li { grid-template-columns: 1fr; gap: var(--space-2); }
   .rv-cq-todo { justify-content: flex-start; }

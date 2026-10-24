@@ -163,11 +163,11 @@ def test_case_detail_reference_fold(tmp_path):
 
 
 def test_case_detail_dynamic_controls(served):
-    """用例详情：变体选择器、密度切换、对话筛选、并排计数与脚本钩子。"""
+    """用例详情：变体选择器、对话筛选、并排计数与脚本钩子。"""
     page = served[0].get("/case/ec-1").text
-    assert 'data-vtabs' in page and 'data-vtabs-ind' in page and 'data-vpanel="ec-1#0"' in page
+    assert 'data-vtabs' in page and 'data-vpanel="ec-1#0"' in page
     assert 'data-focus-variant="ec-1#0"' in page and 'data-show-all="0"' in page
-    assert 'data-density-opt="compact"' in page and "/static/case.js" in page
+    assert "/static/case.js" in page
     assert 'data-cfilter="failed"' in page and 'data-cfilter-count="undecided"' in page
     assert 'data-pair-count' in page and 'data-pair-submit' in page
     assert 'data-uid="ec-1#0"' in page and 'data-status="' in page and 'data-conv-scope' in page
