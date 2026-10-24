@@ -9,7 +9,7 @@ import type { TurnRecord } from '../lib/domain.js'
 import { forced, natural } from '../lib/interventions/index.js'
 import { mirrorSessions } from '../lib/mirror.js'
 import { parseEvalset, planEpisodes } from '../lib/planner.js'
-import { extractLoadedSkills } from '../lib/probes/index.js'
+import { extractInjectionsObserved, extractLoadedSkills } from '../lib/probes/index.js'
 import { buildForcedPrompt, ConfigError, forcedSkillsFor, parseProfile } from '../lib/profile.js'
 
 const PROFILE = `
@@ -101,6 +101,19 @@ describe('驱动、干预、探针', () => {
     expect(skills.map((s) => [s.name, s.ok])).toEqual([['order-intake', true], ['nope', false]])
     expect(skills[0]?.sha256).toMatch(/^[0-9a-f]{64}$/)
     expect(extractLoadedSkills([{ name: 'load_skill', argsJson: '{"name":"a"}' }], [], 'load_skill')).toHaveLength(1)
+  })
+
+  it('注入观测：改写命中为 true，删除看原 key 是否消失，未加载 skill 为 undefined', () => {
+    const call = { name: 'skill', callId: 'c1', argsJson: '{"name":"trade-documents"}' }
+    const rewrite = { id: 'J1', point: '电放时机', option: '反转', rev: 1, file: 'trade-documents.md', key: '收齐尾款后放单', value: '未收尾款也可先电放' }
+    const remove = { ...rewrite, id: 'J2', option: '删除', value: '' }
+    const loaded = (text: string) => ({ name: 'skill', callId: 'c1', text })
+    expect(extractInjectionsObserved([call], [loaded('<skill_content name="trade-documents">未收尾款也可先电放')], 'skill', [rewrite])).toEqual({ J1: true })
+    expect(extractInjectionsObserved([call], [loaded('<skill_content name="trade-documents">收齐尾款后放单')], 'skill', [rewrite])).toEqual({ J1: false })
+    expect(extractInjectionsObserved([call], [loaded('<skill_content name="trade-documents">没有该条')], 'skill', [remove])).toEqual({ J2: true })
+    expect(extractInjectionsObserved([call], [loaded('<skill_content name="trade-documents">收齐尾款后放单')], 'skill', [remove])).toEqual({ J2: false })
+    expect(extractInjectionsObserved([], [], 'skill', [rewrite])).toBeUndefined()
+    expect(extractInjectionsObserved([call], [loaded('<skill_content name="trade-documents">x')], 'skill', [])).toBeUndefined()
   })
 
   it('会话 id 取自目录名，否则取 header', () => {

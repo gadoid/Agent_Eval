@@ -15,6 +15,8 @@ export interface Snapshot extends Record<string, unknown> {
   eline_profile: { method: 'files'; sha256: string; files: string[] }
   skills_mode: string
   skills_base: string
+  /** 实体技能根与导出清单（<root>.manifest.json）记录的哈希不一致时为 true */
+  skills_base_stale?: boolean
   agent: { name: string; version: string | null }
   models_observed?: string[]
 }
@@ -86,17 +88,33 @@ async function elineProfileFingerprint(profile: Profile): Promise<Snapshot['elin
   return { method: 'files', sha256: sha256(parts.join('\n\u0000')), files: used }
 }
 
-async function skillsBaseFingerprint(profile: Profile): Promise<{ value: string; approx: boolean }> {
+async function manifestStale(root: string, value: string): Promise<boolean> {
+  const raw = await readFile(`${root}.manifest.json`, 'utf8').catch(() => null)
+  if (raw === null) return false
+  try {
+    const manifest = JSON.parse(raw) as { sha256?: string }
+    return typeof manifest.sha256 === 'string' && manifest.sha256 !== value
+  } catch {
+    return false
+  }
+}
+
+async function skillsBaseFingerprint(
+  profile: Profile,
+): Promise<{ value: string; approx: boolean; stale: boolean }> {
   if (profile.skills_mode === 'isolated' || profile.skills_mode === 'bundled-copy') {
-    return { value: await hashTree(profile.skills_roots ?? []), approx: false }
+    const roots = profile.skills_roots ?? []
+    const value = await hashTree(roots)
+    const stale = roots.length === 1 ? await manifestStale(roots[0], value) : false
+    return { value, approx: false, stale }
   }
   // 过渡期：默认根清单哈希的近似（盘点存在则用盘点，否则对 CLI 用户根兜底）
   const inv = profile.skills_inventory ? await loadInventory(profile.skills_inventory) : null
   if (inv) {
     const names = inv.skills.map((s) => `${s.name}\u0000${s.sha256 ?? ''}`).sort()
-    return { value: sha256(names.join('\u0001')), approx: false }
+    return { value: sha256(names.join('\u0001')), approx: false, stale: false }
   }
-  return { value: await hashTree([join(dshHome(profile), 'skills')]), approx: true }
+  return { value: await hashTree([join(dshHome(profile), 'skills')]), approx: true, stale: false }
 }
 
 export async function computeSnapshot(
@@ -115,6 +133,7 @@ export async function computeSnapshot(
     agent: { name: agent.name, version: agent.version },
   }
   if (base.approx) (snap as Record<string, unknown>).skills_base_approx = true
+  if (base.stale) snap.skills_base_stale = true
   return snap
 }
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}结果对比 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page">
@@ -14,6 +14,7 @@
     <span class="rv-arrow" style="align-self:center;margin-top:20px">→</span>
     <div class="rv-field"><label>对照</label><input class="rv-input" name="target" value="{{ target }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
     <datalist id="avs">{% for v in axis_values %}<option value="{{ v }}"></option>{% endfor %}</datalist>
+    <div class="rv-field"><label>固定条件（属性=取值，逗号分隔）</label><input class="rv-input" name="fix" value="{{ fix }}" placeholder="如 model=glm-5.3" style="width:200px"></div>
     <div class="rv-field"><label>放开属性（不限）</label><select class="rv-select" name="any" multiple size="3" style="height:auto">
       {% for a in attrs if a != axis %}<option value="{{ a }}" {% if a in (any or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
     <div class="rv-field"><label>多组件分摊（选 2–3 个）</label><select class="rv-select" name="factors" multiple size="3" style="height:auto">

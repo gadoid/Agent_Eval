@@ -45,6 +45,15 @@ def served_plain(tmp_path):
     return TestClient(app), db
 
 
+def test_rescore_notice(tmp_path):
+    """当前口径下无结论（只导入了期望）时，页面提示执行 rescore。"""
+    db = str(tmp_path / "fresh.db")
+    assert cli.main(["specs", "import", dist_jsonl(tmp_path), "--db", db]) == 0
+    client = TestClient(create_app(db))
+    assert "还没有会话结论" in client.get("/").text
+    assert "python -m scoring rescore" in client.get("/").text
+
+
 def test_cases_page(served, tmp_path):
     """用例页：综合分构成（ec 主口径 forced）、用例表（case_id 一行）。"""
     client, db, _, ops = served
@@ -55,6 +64,21 @@ def test_cases_page(served, tmp_path):
     assert r.status_code == 200
     assert "用例" in r.text and "ec-1" in r.text          # 按用例（case_id）分行
     assert "综合分" in r.text and "n=1" in r.text          # forced 一段（fail → 0 分）
+    assert "还没有会话结论" not in r.text
+
+
+def test_skills_base_stale_badge(served, tmp_path):
+    """快照标 skills_base_stale 的 run，其对话卡片带「技能基底过期」提示。"""
+    client, db, _, ops = served
+    stale = make_run(tmp_path, "stale", [mk_record()], run_id="stale",
+                     snapshot={"skills_mode": "bundled-copy", "skills_base_stale": True,
+                               "evalset": {"sha256": "a"}})
+    assert cli.main(["score", str(stale), "--operators", ops, "--db", db]) == 0
+    s = Store(db)
+    case_id = s.questions()[0]["case_id"]
+    s.close()
+    r = client.get(f"/case/{quote(case_id)}")
+    assert r.status_code == 200 and "技能基底过期" in r.text
 
 
 def test_case_detail(served):
@@ -69,6 +93,41 @@ def test_case_detail(served):
     assert "未收尾款不应电放" in r.text                    # 期望条目
     assert quote(answer_id) in r.text                    # 对话列表一行一段（链接编码）
     assert "参考答案" in r.text or "期望" in r.text
+
+
+def test_case_detail_health_variant_and_pair(served, tmp_path):
+    """用例详情：体检行与粒度、变体下钻只留该变体、勾选两段并排逐轮对照。"""
+    client, db, _, _ = served
+    s = Store(db)
+    q = s.questions()[0]
+    case_id = q["case_id"]
+    aids = [a["answer_id"] for a in s.answers()]
+    s.close()
+    page = client.get(f"/case/{quote(case_id)}").text
+    assert "用例体检" in page and "环节" in page
+
+    variant = mk_record()
+    variant["uid"] = "ec-1#1"
+    variant["case"] = {**variant["case"], "uid": "ec-1#1", "variant_index": 1,
+                       "variant": {"id": "V1", "rewrite": "口语"}, "granularity": "细节"}
+    run_dir = make_run(tmp_path, "var", [mk_record(), variant], run_id="var")
+    assert cli.main(["score", str(run_dir), "--db", db]) == 0
+    s = Store(db)
+    by_uid = {a["record_json"]: a["answer_id"] for a in s.answers()}
+    aid1 = next(aid for rec, aid in by_uid.items() if json.loads(rec)["uid"] == "ec-1#1")
+    other = next(aid for rec, aid in by_uid.items() if json.loads(rec)["uid"] == "ec-1#0")
+    s.close()
+    drill = client.get(f"/case/{quote(case_id)}", params={"variant": "ec-1#1"}).text
+    assert "只看 ec-1#1" in drill and quote(aid1) in drill and quote(other) not in drill
+
+    pair = client.get(f"/case/{quote(case_id)}", params=[("pair", aids[0]), ("pair", aids[1])]).text
+    assert "并排对照" in pair and "答：规则是收齐尾款后才能电放。" in pair
+
+
+def test_cases_granularity_filter(served):
+    client, db, _, _ = served
+    assert 'href="/case/ec-1"' in client.get("/?granularity=环节").text
+    assert 'href="/case/ec-1"' not in client.get("/?granularity=细节").text
 
 
 def test_review_page(served_plain):
@@ -190,6 +249,25 @@ def test_mismatch_and_failed_tabs(served):
                                      "value": "对", "reason": "回答明确", "reviewer": "codfish"})
     mm = client.get("/review?tab=mismatch").text
     assert a["qkey"].split("|")[0] in mm and quote(a["answer_id"]) in mm   # 一行一段对话，链接按 answer_id 编码
+
+
+def test_queue_spot_ratio_and_operator_filter(served):
+    """模型抽检比例可选；分歧链接带算子筛选，只列该算子的分歧对话。"""
+    client, db, _, _ = served
+    s = Store(db)
+    a = s.answers()[0]
+    op = s.conn.execute("SELECT DISTINCT operator FROM verdicts WHERE operator IS NOT NULL").fetchone()[0]
+    s.close()
+    spot = client.get("/review?tab=spot&spot=20").text
+    assert "抽检比例" in spot and 'value="20" selected' in spot
+
+    client.post("/api/review", json={"answer_id": a["answer_id"], "item_id": "F1",
+                                     "value": "对", "reason": "回答明确", "reviewer": "codfish"})
+    matched = client.get(f"/review?tab=mismatch&op={quote(op)}").text
+    assert quote(a["answer_id"]) in matched
+    assert "全部算子" in matched
+    other = client.get("/review?tab=mismatch&op=no-such-operator").text
+    assert quote(a["answer_id"]) not in other
 
 
 def test_review_urls_escape_hash(tmp_path):
@@ -358,7 +436,7 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
             record = {"uid": uid, "mode": "natural", "trial": 1, "status": "ok",
                       "turns": [{"index": 1, "source": "live", "input": "q", "output": "答",
                                  "status": "ok", "observations": {}}], "case": case}
-            questions.append((qkey, uid, case_id, 0, None, "知识召回", "t", "[]", fp, fp, 1, "2026-01-01"))
+            questions.append((qkey, uid, case_id, 0, None, "知识召回", "t", "环节", "[]", fp, fp, 1, "2026-01-01"))
             conn.execute("INSERT OR IGNORE INTO specs VALUES(?,?,?,'v1','2026-01-01')",
                          (qkey, fp, json.dumps(case, ensure_ascii=False)))
             rec_json = json.dumps(record, ensure_ascii=False)
@@ -385,7 +463,9 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                 if kind == 1 and ai == 1 and qi < 1000:        # 人工与机器不一致的改判
                     reviews.append((a_id, "F1", f"sha{qi}", "asha", "对", "回答明确", "codfish",
                                     "2026-01-01", None))
-        conn.executemany("INSERT OR REPLACE INTO questions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", questions)
+        conn.executemany("INSERT OR REPLACE INTO questions(qkey, uid, case_id, variant_index, rewrite, dim,"
+                         " topic, granularity, tags_json, input_fp, current_judge_fp, active, first_seen)"
+                         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", questions)
         conn.executemany("INSERT OR REPLACE INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", answers)
         conn.executemany("INSERT OR REPLACE INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
         conn.executemany("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", conclusions)

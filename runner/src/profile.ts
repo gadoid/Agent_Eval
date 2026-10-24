@@ -71,6 +71,9 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
   if ((skillsMode === 'isolated' || skillsMode === 'bundled-copy') && skillsRoots.length === 0) {
     errors.push(`skills_mode: ${skillsMode} 必须填写 skills_roots（bundled-copy 为从产品 asar 导出的实体技能根，tools/export-skills.mjs）`)
   }
+  if (skillsMode === 'bundled-copy' && skillsRoots.length > 1) {
+    errors.push('skills_mode: bundled-copy 只支持单个技能根（多份技能副本请用 isolated）')
+  }
   if (r.skills_inventory !== undefined && typeof r.skills_inventory !== 'string') {
     errors.push('skills_inventory 必须是字符串（盘点结果文件路径）')
   }

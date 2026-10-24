@@ -1,4 +1,4 @@
-import type { EpisodeRecord, EvalRow, Mode, Profile, TurnOutcome, TurnRecord, TurnStatus } from './domain.js'
+import type { EpisodeRecord, EvalRow, InjectionOp, Mode, Profile, TurnOutcome, TurnRecord, TurnStatus } from './domain.js'
 import { RECORD_SCHEMA, userTurnsOf } from './domain.js'
 import type { AppliedInjection } from './materialize.js'
 import { ScriptedDriver } from './drivers/scripted.js'
@@ -77,7 +77,7 @@ export async function runEpisode(spec: EpisodeSpec, deps: EpisodeDeps): Promise<
       } catch (err) {
         outcome = { status: 'error', error: `适配器异常：${(err as Error).message}`, durationMs: 0, trace: emptyTraceOutcome() }
       }
-      turns.push(liveRecord(index, input, outcome, profile))
+      turns.push(liveRecord(index, input, outcome, profile, row.injections ?? []))
       liveIndex++
       if (outcome.status !== 'ok') {
         failedTurn = index
@@ -115,6 +115,7 @@ export async function runEpisode(spec: EpisodeSpec, deps: EpisodeDeps): Promise<
     evalset_version: row.evalset_version,
     skills_sha256: spec.skills ? spec.skills.sha256 : null,
     injections_applied: spec.skills ? spec.skills.applied.map((a) => ({ point: a.point, option: a.option, rev: a.rev, found: a.found })) : undefined,
+    injection_observed: mergeInjectionObserved(turns, row.injections ?? []),
     anchor: spec.anchor,
     forced_skills: spec.plan.forcedSkills,
     status,
@@ -139,7 +140,7 @@ export function episodeId(uid: string, mode: Mode, trial: number): string {
   return `${uid}|${mode}|${String(trial)}`
 }
 
-function liveRecord(index: number, input: string, outcome: TurnOutcome, profile: Profile): TurnRecord {
+function liveRecord(index: number, input: string, outcome: TurnOutcome, profile: Profile, injections: readonly InjectionOp[]): TurnRecord {
   const record: TurnRecord = {
     index,
     source: 'live',
@@ -149,10 +150,20 @@ function liveRecord(index: number, input: string, outcome: TurnOutcome, profile:
     turn_end: outcome.trace.turnEnd ?? null,
     exit_code: outcome.exitCode ?? null,
     duration_ms: outcome.durationMs,
-    observations: observe(outcome.trace, profile),
+    observations: observe(outcome.trace, profile, injections),
   }
   if (outcome.error) record.error = outcome.error
   return record
+}
+
+/** 各轮观测取或：任一轮看见注入改写即为 true；一次 skill 都没加载时全部 false（= 未观测到） */
+function mergeInjectionObserved(turns: readonly TurnRecord[], injections: readonly InjectionOp[]): Record<string, boolean> | undefined {
+  if (injections.length === 0) return undefined
+  const merged: Record<string, boolean> = {}
+  for (const op of injections) {
+    merged[op.id] = turns.some((t) => t.observations?.injections_observed?.[op.id] === true)
+  }
+  return merged
 }
 
 function prefillRecord(index: number, pair: PrefillTurn): TurnRecord {

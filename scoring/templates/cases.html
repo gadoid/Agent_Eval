@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}用例 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page" data-page="cases">
@@ -38,7 +38,7 @@
       <div class="rv-stat"><div class="rv-stat-label">结论待定对话</div><div class="rv-stat-value">{{ nav_count }}</div><div class="rv-stat-note"><a href="/review?tab=undecided">去复核 →</a></div></div>
       <div class="rv-stat"><div class="rv-stat-label">待重判</div><div class="rv-stat-value">{{ pending_rejudge }}</div>
         <div class="rv-stat-note">{% if pending_rejudge %}<span class="rv-cmd">python -m scoring rejudge<button type="button">复制</button></span>{% else %}无{% endif %}</div></div>
-      <div class="rv-stat"><div class="rv-stat-label">用例体检</div><div class="rv-stat-value">{{ table | selectattr('flags') | list | length }}</div><div class="rv-stat-note">变体泄露 / 采样无效 / 注入 found&gt;1 / forced 前提偏低</div></div>
+      <div class="rv-stat"><div class="rv-stat-label">用例体检</div><div class="rv-stat-value">{{ table | selectattr('flags') | list | length }}</div><div class="rv-stat-note">变体泄露 / 采样无效 / 注入 found&gt;1 / 前提不成立 / forced 前提偏低</div></div>
     </div>
   </div>
   {% endif %}
@@ -48,6 +48,8 @@
       <option value="">全部维度</option>{% for d in dims %}<option value="{{ d }}" {% if d == f_dim %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
     <div class="rv-field"><label>主题</label><select class="rv-select" onchange="f('topic',this.value)">
       <option value="">全部主题</option>{% for t in topics %}<option value="{{ t }}" {% if t == f_topic %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>粒度</label><select class="rv-select" onchange="f('granularity',this.value)">
+      <option value="">全部粒度</option>{% for g in granularities %}<option value="{{ g }}" {% if g == f_granularity %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></div>
     <div class="rv-field"><label>排序</label><select class="rv-select" onchange="f('sort',this.value)">
       {% for k, label in [('pending','结论待定多的在前'),('score','用例分低的在前'),('difficulty','难度')] %}
       <option value="{{ k }}" {% if k == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>

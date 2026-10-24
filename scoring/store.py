@@ -23,7 +23,7 @@ from .items import (SCALES, build_context, episode_error, extract_items, input_f
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -230,6 +230,24 @@ _MIGRATION_4_SQL = """
 _MIGRATIONS[4] = [_MIGRATION_4_SQL]
 
 
+def _migrate_granularity(conn) -> None:
+    """v5：题目粒度（环节/细节）。已有题从当前期望的编译行回填。"""
+    conn.execute("ALTER TABLE questions ADD COLUMN granularity TEXT")
+    rows = conn.execute(
+        "SELECT q.qkey, s.spec_json FROM questions q"
+        " LEFT JOIN specs s ON s.qkey=q.qkey AND s.judge_fp=q.current_judge_fp").fetchall()
+    for row in rows:
+        try:
+            g = (json.loads(row["spec_json"] or "{}") or {}).get("granularity")
+        except (json.JSONDecodeError, TypeError):
+            g = None
+        if g:
+            conn.execute("UPDATE questions SET granularity=? WHERE qkey=?", (g, row["qkey"]))
+
+
+_MIGRATIONS[5] = [_migrate_granularity]
+
+
 class StoreError(Exception):
     """评测库操作错误。"""
 
@@ -319,10 +337,10 @@ class Store:
         variant = case.get("variant") or {}
         tags = [t.get("tag") if isinstance(t, dict) else t for t in (case.get("tags") or [])]
         sets = ["uid=?", "case_id=?", "variant_index=?", "rewrite=?", "dim=?", "topic=?",
-                "tags_json=?", "input_fp=?"]
+                "granularity=?", "tags_json=?", "input_fp=?"]
         args: list = [case.get("uid", "?"), case.get("case_id") or case.get("id"),
                       case.get("variant_index", 0), variant.get("rewrite"),
-                      case.get("dim"), case.get("topic"),
+                      case.get("dim"), case.get("topic"), case.get("granularity"),
                       json.dumps(tags, ensure_ascii=False), input_fp_of(case)]
         if active is not None:
             sets.append("active=?")
@@ -344,9 +362,9 @@ class Store:
             else:
                 fp = current_judge_fp if current_judge_fp is not None else current_if_absent
                 self.conn.execute(
-                    "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic, tags_json,"
-                    " input_fp, current_judge_fp, active, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (qkey, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
+                    "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic, granularity,"
+                    " tags_json, input_fp, current_judge_fp, active, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (qkey, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8],
                      fp, 1 if (active is None and fp) or active else 0, now()))
         return qkey
 
@@ -453,18 +471,20 @@ class Store:
         answer_id = answer_id_of(run_id, episode_id)
         found_gt1 = any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or [])
         leak_json = json.dumps(variant_leak_suspects([record]), ensure_ascii=False)
+        observed = record.get("injection_observed")
         self._exec(
             "INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id, judge_fp_at_run,"
             " profile_id, models_json, mode, trial, skills_mode, skills_base, evalset_version,"
-            " run_status, record_json, injection_found_gt1, variant_leak_json)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " run_status, record_json, injection_found_gt1, variant_leak_json, injection_observed_json)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
              profile_id_of(manifest),
              json.dumps(models, ensure_ascii=False) if models is not None else None,
              record.get("mode", "?"), record.get("trial", 0),
              snap.get("skills_mode"), snap.get("skills_base"), evalset_version_of(manifest),
              record.get("status", "?"), json.dumps(record, ensure_ascii=False),
-             1 if found_gt1 else 0, leak_json))
+             1 if found_gt1 else 0, leak_json,
+             json.dumps(observed, ensure_ascii=False) if observed is not None else None))
         return answer_id
 
     def answer(self, answer_id: str) -> dict | None:
@@ -822,20 +842,24 @@ class Store:
 
     # ---------------------------------------------------------------- 质量聚合（R7）
 
-    def human_machine_compare(self, chain_sha: str) -> tuple[list[dict], int, int]:
+    def human_machine_compare(self, chain_sha: str, operator: str | None = None) -> tuple[list[dict], int, int]:
         """人工与机器不一致清单 + 规则一致率（一条 SQL 聚合，R7）：
         只看有人工改判的条目；每条目取最后一条有效改判（sha 匹配 + 取值合法）。
-        返回 (mismatch 列表, rule_agree, rule_total)。"""
+        operator 非空时只看该算子的条目（判定质量页分歧链接）。返回 (mismatch 列表, rule_agree, rule_total)。"""
         sql = """SELECT v.answer_id, v.item_id, v.kind, v.value AS machine_value, v.source AS machine_source,
-                 q.uid, r.value AS review_value, r.review_id
+                 v.operator, q.uid, r.value AS review_value, r.review_id
                  FROM verdicts v
                  JOIN answers a ON a.answer_id = v.answer_id
                  JOIN questions q ON q.qkey = a.qkey AND q.current_judge_fp = v.judge_fp
                  JOIN reviews r ON r.answer_id = v.answer_id AND r.item_id = v.item_id
                     AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
                  WHERE v.chain_sha = ?"""
+        args: tuple = (chain_sha,)
+        if operator:
+            sql += " AND v.operator = ?"
+            args += (operator,)
         best: dict[tuple, dict] = {}
-        for row in self.conn.execute(sql, (chain_sha,)):
+        for row in self.conn.execute(sql, args):
             d = dict(row)
             if d["review_value"] not in SCALES.get(d["kind"], ()):
                 continue
@@ -1006,7 +1030,8 @@ class Store:
 
     def review_conversations(self, chain_sha: str, policy: Policy, policy_sha: str,
                              tab: str = "undecided", run_id: str | None = None, dim: str | None = None,
-                             spot_ratio: float = 0.1, page: int = 0, size: int = 20,
+                             spot_ratio: float = 0.1, operator: str | None = None,
+                             page: int = 0, size: int = 20,
                              first_input: bool = True) -> tuple[list[dict], dict]:
         """复核队列（以对话为单位，五个标签）：SQL 聚合 + 分页。
         undecided=结论待定（区间跨及格线/前提未判，含判定异常）；unjudged=结论已定仍有未判；
@@ -1021,7 +1046,7 @@ class Store:
         pend_by_answer: dict[str, list[dict]] = defaultdict(list)
         for c in pend_items:
             pend_by_answer[c["answer_id"]].append(c)
-        mismatch_ids = {m["answer_id"] for m in self.human_machine_compare(chain_sha)[0]}
+        mismatch_ids = {m["answer_id"] for m in self.human_machine_compare(chain_sha, operator)[0]}
         judge_ids = {r["answer_id"] for r in self.conn.execute(
             "SELECT DISTINCT answer_id FROM verdicts WHERE chain_sha=? AND source='judge'", (chain_sha,))}
         human_ids = {r["answer_id"] for r in self.conn.execute("SELECT DISTINCT answer_id FROM reviews")}

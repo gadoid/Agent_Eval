@@ -33,7 +33,7 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "4"
+    assert v["value"] == "5"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
     # 重复打开不重复迁移
@@ -70,6 +70,15 @@ def test_ingest_reads_profile_id_from_content(store, tmp_path):
     ingest_run(store, run_dir)
     assert store.runs()[0]["profile_id"] == "profile-a"
     assert {a["profile_id"] for a in store.answers()} == {"profile-a"}
+
+
+def test_ingest_persists_injection_observed(store, tmp_path):
+    """runner 的 injection_observed 原样入库；缺失（旧记录）为 NULL。"""
+    ingest(store, tmp_path, "inj", [mk_record(uid="ec-1#0", injection_observed={"J1": True, "J2": False}),
+                                    mk_record(uid="ec-1#1")])
+    by_uid = {json.loads(a["record_json"])["uid"]: a for a in store.answers()}
+    assert json.loads(by_uid["ec-1#0"]["injection_observed_json"]) == {"J1": True, "J2": False}
+    assert by_uid["ec-1#1"]["injection_observed_json"] is None
 
 
 def test_ingest_sets_current_when_absent(store, tmp_path):
@@ -353,8 +362,8 @@ def test_v1_upgrade_recompute_and_backfill(tmp_path):
     old_q = _build_v1_db(db_path, record)
     assert old_q != qkey_of(record["case"])          # 旧算法 qkey 不含 topic → 必然不同
 
-    store = Store(db_path)                           # 打开即完成 1→2→3→4 迁移
-    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "4"
+    store = Store(db_path)                           # 打开即完成 1→2→3→4→5 迁移
+    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "5"
     new_q = qkey_of(record["case"])
     qs = store.questions()
     assert len(qs) == 1 and qs[0]["qkey"] == new_q   # 没有拆成两题

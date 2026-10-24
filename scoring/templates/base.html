@@ -26,6 +26,11 @@
     </select>
   </label>
 </header>
+{% if needs_rescore %}
+<div class="rv-notice" data-tone="error" style="margin:12px 24px 0"><b>当前口径下还没有会话结论</b>
+  <span>改口径（policy）后需重算一次会话分，不调用算子：</span>
+  <span class="rv-cmd">python -m scoring rescore<button type="button">复制</button></span></div>
+{% endif %}
 {% block body %}{% endblock %}
 <script src="/static/highlight.js"></script>
 {% block scripts %}{% endblock %}

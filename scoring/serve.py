@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from urllib.parse import quote
+from typing import Annotated
+from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -141,11 +142,30 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             _nav_cache.update({"chain": chain, "n": n})
         return _nav_cache["n"]
 
+    def needs_rescore() -> bool:
+        """当前口径下尚无会话结论（改 policy 后未 rescore）：页面提示执行命令。"""
+        return store.conn.execute("SELECT 1 FROM conclusions WHERE policy_sha=? LIMIT 1",
+                                  (policy_sha,)).fetchone() is None
+
+    def stale_runs() -> list[str]:
+        """技能基底与导出清单不一致的 run（快照 skills_base_stale）。"""
+        out = []
+        for r in store.runs():
+            try:
+                manifest = json.loads(r.get("snapshot_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            snap = manifest.get("snapshot") if isinstance(manifest, dict) else None
+            if isinstance(snap, dict) and snap.get("skills_base_stale"):
+                out.append(r["run_id"])
+        return out
+
     def render(request: Request, name: str, **ctx):
         chain = chain_of(request)
         return templates.TemplateResponse(request=request, name=name, context={
             "db_path": str(store.path), "chain_sha": chain, "chain_short": chain[:8],
             "chains": store.chains(), "nav_count": nav_count(chain),
+            "needs_rescore": needs_rescore(), "stale_runs": stale_runs(),
             "policy": policy, "pass_mark": policy.score.pass_mark,
             "tab_labels": TAB_LABELS, "axis_labels": AXIS_LABELS, **ctx})
 
@@ -161,12 +181,15 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     # ---------------- 用例页（首页）
     @app.get("/")
     async def cases(request: Request, config: str = "", dim: str = "", topic: str = "",
-                    sort: str = "pending", flag_only: str = "", page: int = 0):
+                    granularity: str = "", sort: str = "pending", flag_only: str = "", page: int = 0):
         all_rows = rows(request)
         configs = configs_of(all_rows)
         sel = next((c for c in configs if c["key"] == config), configs[0] if configs else None)
         if sel is None:
-            return render(request, "cases.html", configs=[], summary=None, table=[], total=0)
+            return render(request, "cases.html", configs=[], summary=None, table=[], total=0,
+                          granularities=[], dims=[], topics=[], f_dim=dim, f_topic=topic,
+                          f_granularity=granularity, sort=sort, flag_only=flag_only,
+                          config_key="", page=0, pages=1)
         sel_key = tuple(sel["key"].split("|"))
         cfg_rows = [r for r in all_rows if views.config_value(r) == sel_key]
         summary = views.score_summary(cfg_rows, policy)
@@ -180,35 +203,19 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                 continue
             if topic and (q["topic"] or "") != topic:
                 continue
+            if granularity and (q["granularity"] or "") != granularity:
+                continue
             by_case.setdefault(q["case_id"] or q["uid"], []).append(q)
         conv_counts: dict[str, dict] = {}
-        leak_cases: set[str] = set()
-        inj_cases: set[str] = set()
-        forced_sts: dict[str, list[str]] = {}
         for r in cfg_rows:
-            cid = r["case_id"]
-            c = conv_counts.setdefault(cid, {"n": 0, "undecided": 0})
+            c = conv_counts.setdefault(r["case_id"], {"n": 0, "undecided": 0})
             c["n"] += 1
             c["undecided"] += r["c_status"] == "undecided"
-            if cid not in leak_cases and json.loads(r.get("variant_leak_json") or "[]"):
-                leak_cases.add(cid)
-            if r.get("injection_found_gt1"):
-                inj_cases.add(cid)
-            if r["mode"] == "forced" and r["c_status"]:
-                forced_sts.setdefault(cid, []).append(r["c_status"])
+        health = views.case_health(cfg_rows, summary["cases"])
         table = []
         for case, members in by_case.items():
             cs = summary["cases"].get(case, {})
-            flags = []
-            if case in leak_cases:
-                flags.append("变体泄露嫌疑")
-            if cs.get("all_unscored"):
-                flags.append("全部采样无效")
-            if case in inj_cases:
-                flags.append("注入 found>1")
-            sts = forced_sts.get(case) or []
-            if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5:
-                flags.append("forced 前提成立率偏低")
+            flags = list(health.get(case, []))
             member_stats = [stats.get(q["qkey"], {}) for q in members]
             diffs = [s["difficulty"] for s in member_stats if s.get("difficulty") is not None]
             discs = [s["discrimination"] for s in member_stats if s.get("discrimination") is not None]
@@ -237,11 +244,14 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                       pages=max(1, (total + size - 1) // size),
                       dims=sorted({q["dim"] for q in qs if q["dim"]}),
                       topics=sorted({q["topic"] for q in qs if q["topic"]}),
-                      f_dim=dim, f_topic=topic, sort=sort, flag_only=flag_only)
+                      granularities=sorted({q["granularity"] for q in qs if q["granularity"]}),
+                      f_dim=dim, f_topic=topic, f_granularity=granularity, sort=sort,
+                      flag_only=flag_only)
 
     # ---------------- 用例详情
     @app.get("/case/{case_id}")
-    async def case_detail(request: Request, case_id: str, axis: str = "profile", judge_fp: str = ""):
+    async def case_detail(request: Request, case_id: str, axis: str = "profile", judge_fp: str = "",
+                          variant: str = "", pair: Annotated[list[str], Query()] = []):
         members = [q for q in store.questions() if (q["case_id"] or q["uid"]) == case_id]
         if not members:
             return render(request, "error.html", message=f"未知用例：{case_id}")
@@ -267,32 +277,64 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             convs.append({"r": r, "concl": concl, "chips": chips,
                           "axis_label": views.attr_value(r, axis),
                           "pending_items": sum(1 for c in chips if c["value"] is None)})
+        health = views.case_health(case_rows, views.case_scores(case_rows, policy)).get(case_id, [])
+        variants = sorted({c["r"]["uid"] for c in convs})
+        if variant:
+            convs = [c for c in convs if c["r"]["uid"] == variant]
+        # 勾选两段并排看：逐轮左右对照（§5.4）
+        pair_data, pair_rows = [], []
+        if len(pair) == 2:
+            by_aid = {c["r"]["answer_id"]: c for c in convs}
+            for aid in pair:
+                c = by_aid.get(aid)
+                if c is None:
+                    continue
+                record = json.loads((store.answer(aid) or {}).get("record_json") or "{}")
+                live = [t for t in record.get("turns") or [] if t.get("source") not in ("prefill", "preset")]
+                pair_data.append({**c, "turns": live})
+        if len(pair_data) == 2:
+            n = max(len(p["turns"]) for p in pair_data)
+            pair_rows = [{"index": i + 1,
+                          "cells": [p["turns"][i] if i < len(p["turns"]) else None for p in pair_data]}
+                         for i in range(n)]
         injections = spec.get("injections") or []
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
                       judge_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
-                      injections=injections,
+                      injections=injections, health=health, variants=variants,
+                      variant=variant, pair=pair, pair_data=pair_data, pair_rows=pair_rows,
                       headline=policy.headline(seed["dim"] or "?"),
                       summary_dim=(spec.get("dim") or "?"))
 
     # ---------------- 复核队列
     @app.get("/review")
     async def review_queue(request: Request, tab: str = "undecided", run_id: str = "",
-                           dim: str = "", page: int = 0):
+                           dim: str = "", op: str = "", spot: int = 10, page: int = 0):
         if tab not in TAB_LABELS:
             tab = "undecided"
-        convs, meta = store.review_conversations(chain_of(request), policy, policy_sha, tab=tab,
-                                                 run_id=run_id or None, dim=dim or None, page=page)
+        spot = spot if spot in (10, 20, 100) else 10
+        chain = chain_of(request)
+        convs, meta = store.review_conversations(chain, policy, policy_sha, tab=tab,
+                                                 run_id=run_id or None, dim=dim or None,
+                                                 spot_ratio=spot / 100, operator=op or None, page=page)
+        operators = [r[0] for r in store.conn.execute(
+            "SELECT DISTINCT operator FROM verdicts WHERE chain_sha=? AND operator IS NOT NULL"
+            " ORDER BY operator", (chain,))]
+        keep = {"run_id": run_id, "dim": dim, "op": op, **({"spot": spot} if tab == "spot" else {})}
         return render(request, "review_queue.html", tab=tab, convs=convs, meta=meta,
                       run_ids=[r["run_id"] for r in store.runs()],
                       dims=sorted({q["dim"] for q in store.questions() if q["dim"]}),
-                      q_run=run_id, q_dim=dim, page=meta["page"],
+                      operators=operators, q_run=run_id, q_dim=dim, q_op=op, spot=spot,
+                      queue_url=lambda t: "/review?" + urlencode({**keep, "tab": t}),
+                      pager_base="/review?" + urlencode({**keep, "tab": tab}) + "&",
+                      page=meta["page"],
                       pages=max(1, (meta["total"] + 19) // 20),
-                      pending_rejudge=len(store.pending_rejudge(chain_of(request))))
+                      pending_rejudge=len(store.pending_rejudge(chain)))
 
     # ---------------- 复核页
     @app.get("/review/{answer_id:path}")
-    async def review_page(request: Request, answer_id: str, tab: str = "undecided"):
+    async def review_page(request: Request, answer_id: str, tab: str = "undecided",
+                          op: str = "", spot: int = 10):
         chain = chain_of(request)
         try:
             v = store.conversation_view(answer_id, chain, policy, policy_sha)
@@ -300,21 +342,26 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             return render(request, "error.html", message=str(e))
         if tab not in TAB_LABELS:
             tab = "undecided"
+        spot = spot if spot in (10, 20, 100) else 10
         convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6,
+                                              spot_ratio=spot / 100, operator=op or None,
                                               first_input=False)
         ids = [c["answer_id"] for c in convs]
+        extra = urlencode({**({"op": op} if op else {}), **({"spot": spot} if tab == "spot" else {})})
+        suffix = f"&{extra}" if extra else ""
         prev_url = next_url = ""
         if answer_id in ids:
             i = ids.index(answer_id)
             # uid 带 #（如 ec-0201#0），拼 URL 必须转义，否则被浏览器当锚点截断
-            prev_url = f"/review/{quote(ids[i - 1], safe='/')}?tab={tab}" if i > 0 else ""
-            next_url = f"/review/{quote(ids[i + 1], safe='/')}?tab={tab}" if i + 1 < len(ids) else ""
+            prev_url = f"/review/{quote(ids[i - 1], safe='/')}?tab={tab}{suffix}" if i > 0 else ""
+            next_url = f"/review/{quote(ids[i + 1], safe='/')}?tab={tab}{suffix}" if i + 1 < len(ids) else ""
             pos, total = i + 1, len(ids)
         else:
             pos, total = 0, 0
         m = policy.score.map
         return render(request, "review.html", v=v, tab=tab, pos=pos, total_q=total,
                       prev_url=prev_url, next_url=next_url, score_map=m,
+                      extra_qs=extra,
                       scales={k: list(v_) for k, v_ in SCALES.items()},
                       pass_mark=policy.score.pass_mark,
                       detail=(v["conclusion"] or {}).get("detail") or {})
@@ -322,16 +369,21 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     # ---------------- 结果对比
     @app.get("/compare")
     async def compare(request: Request, axis: str = "skills_base", base: str = "", target: str = "",
-                      any: str = "", factors: str = "", run: str = ""):
+                      any: str = "", fix: str = "", factors: str = "", run: str = ""):
         rep = error = shap = None
         rs = rows(request, with_records=True)
         run_order = {r["run_id"]: i for i, r in enumerate(store.runs())}
         axis_values = sorted({views.attr_value(r, axis) for r in rs})
         anys = tuple(a.strip() for a in (any or "").split(",") if a.strip())
+        fixes: dict[str, str] = {}
+        for part in (fix or "").split(","):
+            k, sep, v = part.partition("=")
+            if sep and k.strip() and v.strip():
+                fixes[k.strip()] = v.strip()
         if base and target:
             try:
                 rep = views.compare_scores(rs, axis=axis, base=base, target=target, policy=policy,
-                                           anys=anys, run_order=run_order)
+                                           fixes=fixes, anys=anys, run_order=run_order)
             except ValueError as e:
                 error = str(e)
         if factors and not error:
@@ -342,7 +394,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             except ValueError as e:
                 error = str(e)
         return render(request, "compare.html", axis=axis, axis_values=axis_values,
-                      base=base, target=target, any=any, factors=factors,
+                      base=base, target=target, any=any, fix=fix, factors=factors,
                       rep=rep, error=error, shap=shap, attrs=[a for a in views.ATTRS if a != "skills_mode"],
                       axis_labels=AXIS_LABELS)
 

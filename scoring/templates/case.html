@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}{{ case_id }} · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page">
@@ -12,6 +12,7 @@
     <dl class="rv-caseinfo">
       <div><dt>维度</dt><dd>{{ seed.dim or '?' }}</dd></div>
       <div><dt>主题</dt><dd>{{ seed.topic or '—' }}</dd></div>
+      <div><dt>粒度</dt><dd>{{ seed.granularity or '—' }}</dd></div>
       <div><dt>变体数</dt><dd>{{ members|length }}</dd></div>
       <div><dt>可回答</dt><dd>{{ '否（拒答型）' if spec.answerable == false else '是' }}</dd></div>
       <div><dt>对话方式</dt><dd>{{ spec.history if spec.history else 'live（逐轮实时）' }}</dd></div>
@@ -22,6 +23,7 @@
       <div class="rv-wide"><dt>知识注入</dt><dd>
         {% for i in injections %}{{ i.point }} · {{ i.option }}（{{ i.rev or '' }}）{% else %}—{% endfor %}</dd></div>
       <div class="rv-wide"><dt>标签</dt><dd>{% for t in tags %}<span class="rv-kind">{{ t }}</span> {% else %}—{% endfor %}</dd></div>
+      <div class="rv-wide"><dt>用例体检</dt><dd>{% for f in health %}<span class="rv-flag">{{ f }}</span> {% else %}—{% endfor %}</dd></div>
     </dl>
   </section>
 
@@ -62,39 +64,70 @@
       <li><span class="rv-verdict" data-tone="{{ 'undecided' if not q.current_judge_fp else 'neutral' }}">{{ q.uid }}</span>
         <div class="rv-cq-main"><div class="rv-cq-title">变体 #{{ q.variant_index or 0 }}{% if q.rewrite %} · {{ q.rewrite }}{% endif %}</div>
           <div class="rv-meta"><span>{{ q.uid }}</span><span>当前期望 {{ (q.current_judge_fp or '无')[:8] }}</span></div></div>
-        <span class="rv-meta"><a class="rv-btn" href="/case/{{ case_id }}">查看对话 ↓</a></span></li>
+        <span class="rv-meta"><a class="rv-btn" href="/case/{{ case_id }}?variant={{ q.uid|urlencode }}#convs">查看对话 ↓</a></span></li>
       {% endfor %}
     </ul>
   </section>
 
-  <section class="rv-card">
+  <section class="rv-card" id="convs">
     <h2>对话 <span class="rv-meta" style="font-weight:400"><span>{{ convs|length }} 段</span>
-      <span>按 {{ axis_labels.get(axis, axis) }} 分组</span></span></h2>
-    {% set grouped = convs | groupby('axis_label') %}
-    {% for label, group in grouped %}
-    <div class="rv-meta" style="margin:8px 0 4px;font-weight:600">{{ axis_labels.get(axis, axis) }}：{{ label }}（{{ group|length }} 段）</div>
-    <ul class="rv-cq">
-      {% for c in group %}
-      <li>{{ m.verdict(c.concl.status or c.r.c_status, lg=True) }}
-        <div class="rv-cq-main">
-          <div class="rv-cq-title"><a href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">{{ c.r.uid }}</a>
-            {% if c.r.rewrite %}<span class="rv-kind">{{ c.r.rewrite }}</span>{% endif %}</div>
-          {{ m.runtag(c.r) }}
-          {% if c.concl.score is defined and c.concl.score is not none %}
-          <div class="rv-meta"><span>{{ m.scorebar(c.concl.score, mark=pass_mark, fail_below=pass_mark) if false else '' }}{{ c.concl.score|f1 }} 分</span>
-            {% if c.concl.score_min is not none and c.concl.score_max is not none and c.concl.score_min != c.concl.score_max %}<span>区间 {{ c.concl.score_min|f1 }}–{{ c.concl.score_max|f1 }}</span>{% endif %}
-            {% if c.concl.reason %}<span>{{ c.concl.reason }}</span>{% endif %}</div>
-          {% elif c.concl.status == 'undecided' %}<div class="rv-meta"><span>待判条目 {{ c.pending_items }}</span></div>{% endif %}
-        </div>
-        <span class="rv-cq-todo">
-          {% if c.concl.score is not none %}<span class="rv-pill rv-pill--mono">{{ c.concl.score|f1 }} 分</span>{% endif %}
-          {% if c.pending_items %}<span class="rv-state" data-s="need">待判 {{ c.pending_items }}</span>{% endif %}
-          <span class="rv-chips">{% for ch in c.chips %}<span class="rv-chip" {% if ch.source == 'human' %}data-overridden{% endif %}>
-            <span class="rv-chip-id">{{ ch.id }}</span>{{ m.vval(ch.value, ch.score) }}</span>{% endfor %}</span>
-          <a class="rv-btn" href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">复核</a></span></li>
+      <span>按 {{ axis_labels.get(axis, axis) }} 分组</span>
+      {% if variant %}<span>只看 {{ variant }} · <a href="/case/{{ case_id }}#convs">显示全部</a></span>{% endif %}</span></h2>
+    <form method="get" action="/case/{{ case_id }}#pair">
+      <input type="hidden" name="axis" value="{{ axis }}">
+      {% if judge_fp %}<input type="hidden" name="judge_fp" value="{{ judge_fp }}">{% endif %}
+      {% if variant %}<input type="hidden" name="variant" value="{{ variant }}">{% endif %}
+      <div class="rv-meta" style="margin-bottom:6px">勾选两段对话可逐轮并排对照
+        <button class="rv-btn" type="submit">并排查看选中两段</button></div>
+      {% set grouped = convs | groupby('axis_label') %}
+      {% for label, group in grouped %}
+      <div class="rv-meta" style="margin:8px 0 4px;font-weight:600">{{ axis_labels.get(axis, axis) }}：{{ label }}（{{ group|length }} 段）</div>
+      <ul class="rv-cq">
+        {% for c in group %}
+        <li>{{ m.verdict(c.concl.status or c.r.c_status, lg=True) }}
+          <div class="rv-cq-main">
+            <div class="rv-cq-title"><label style="display:inline-flex;gap:6px;align-items:center">
+              <input type="checkbox" name="pair" value="{{ c.r.answer_id }}" {% if c.r.answer_id in pair %}checked{% endif %}>
+              <a href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">{{ c.r.uid }}</a></label>
+              {% if c.r.rewrite %}<span class="rv-kind">{{ c.r.rewrite }}</span>{% endif %}</div>
+            {{ m.runtag(c.r) }}
+            {% if c.concl.score is defined and c.concl.score is not none %}
+            <div class="rv-meta"><span>{{ m.scorebar(c.concl.score, mark=pass_mark, fail_below=pass_mark) if false else '' }}{{ c.concl.score|f1 }} 分</span>
+              {% if c.concl.score_min is not none and c.concl.score_max is not none and c.concl.score_min != c.concl.score_max %}<span>区间 {{ c.concl.score_min|f1 }}–{{ c.concl.score_max|f1 }}</span>{% endif %}
+              {% if c.concl.reason %}<span>{{ c.concl.reason }}</span>{% endif %}</div>
+            {% elif c.concl.status == 'undecided' %}<div class="rv-meta"><span>待判条目 {{ c.pending_items }}</span></div>{% endif %}
+          </div>
+          <span class="rv-cq-todo">
+            {% if c.concl.score is defined and c.concl.score is not none %}<span class="rv-pill rv-pill--mono">{{ c.concl.score|f1 }} 分</span>{% endif %}
+            {% if c.pending_items %}<span class="rv-state" data-s="need">待判 {{ c.pending_items }}</span>{% endif %}
+            <span class="rv-chips">{% for ch in c.chips %}<span class="rv-chip" {% if ch.source == 'human' %}data-overridden{% endif %}>
+              <span class="rv-chip-id">{{ ch.id }}</span>{{ m.vval(ch.value, ch.score) }}</span>{% endfor %}</span>
+            <a class="rv-btn" href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">复核</a></span></li>
+        {% endfor %}
+      </ul>
       {% endfor %}
-    </ul>
-    {% endfor %}
+    </form>
+    {% if pair_rows %}
+    <div id="pair" style="margin-top:16px">
+      <h2>并排对照 <span class="rv-meta" style="font-weight:400">
+        <span>{{ pair_data[0].r.uid }} · {{ pair_data[0].concl.get('score')|f1 or '—' }} 分</span>
+        <span>{{ pair_data[1].r.uid }} · {{ pair_data[1].concl.get('score')|f1 or '—' }} 分</span></span></h2>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px">
+        {% for t in pair_rows %}
+          {% for cell in t.cells %}
+          <div class="rv-answer">
+            {% if cell %}<div class="rv-meta">第 {{ cell.index }} 轮{% if cell.source == 'prefill' %}（预置）{% endif %}</div>
+            <div class="rv-answer-head"><b>用户</b></div><div class="rv-md">{{ cell.input|md }}</div>
+            <div class="rv-answer-head"><b>助手</b></div><div class="rv-md">{{ cell.output|md }}</div>
+            {% else %}<div class="rv-meta">（无第 {{ t.index }} 轮）</div>{% endif %}
+          </div>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    </div>
+    {% elif pair|length %}
+    <div class="rv-notice" data-tone="error" style="margin-top:12px"><b>请恰选两段</b><span>当前选了 {{ pair|length }} 段。</span></div>
+    {% endif %}
   </section>
 </main>
 {% endblock %}

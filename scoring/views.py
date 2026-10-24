@@ -467,6 +467,39 @@ def case_scores(rows: list[dict], policy, headline: bool = True) -> dict[str, di
     return out
 
 
+def case_health(rows: list[dict], cases: dict[str, dict] | None = None) -> dict[str, list[str]]:
+    """用例体检标记（§5.4）：变体泄露嫌疑、全部采样无效、注入 found>1、
+    前提不成立、forced 前提成立率偏低。一次扫描，用例页与用例详情共用。"""
+    leak, inj, invalid = set(), set(), set()
+    forced: dict[str, list[str]] = defaultdict(list)
+    for r in rows:
+        cid = r["case_id"]
+        if json.loads(r.get("variant_leak_json") or "[]"):
+            leak.add(cid)
+        if r.get("injection_found_gt1"):
+            inj.add(cid)
+        if r["c_status"] == "invalid":
+            invalid.add(cid)
+        if r["mode"] == "forced" and r["c_status"]:
+            forced[cid].append(r["c_status"])
+    out: dict[str, list[str]] = {}
+    for cid in {r["case_id"] for r in rows}:
+        flags = []
+        if cid in leak:
+            flags.append("变体泄露嫌疑")
+        if (cases or {}).get(cid, {}).get("all_unscored"):
+            flags.append("全部采样无效")
+        if cid in inj:
+            flags.append("注入 found>1")
+        if cid in invalid:
+            flags.append("前提不成立")
+        sts = forced.get(cid) or []
+        if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5:
+            flags.append("forced 前提成立率偏低")
+        out[cid] = flags
+    return out
+
+
 def dimension_scores(rows: list[dict], policy, headline: bool = True) -> dict[str, dict]:
     """维度分（§6.3）：dimension_unit=case 按用例分平均（question 按题目分）；
     95% 区间按用例（题目）自助法；维度临时 = 其下任一会话未决被排除。"""

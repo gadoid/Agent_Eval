@@ -111,6 +111,10 @@ describe('Profile 新字段校验', () => {
     expect(ok.skills_mode).toBe('bundled-copy')
     expect(ok.skills_roots).toEqual(['D:/eval-skills/base'])
   })
+  it('bundled-copy 只允许单个技能根（多份技能用 isolated）', () => {
+    expect(() => parseProfile('id: a\nskills_mode: bundled-copy\nskills_roots: [D:/s0, D:/s1]\n'))
+      .toThrow(/单个技能根/)
+  })
 })
 
 describe('锚点与 trials 提升（01 §9）', () => {
@@ -145,6 +149,18 @@ describe('环境快照（01 §5）', () => {
     await writeFile(join(root, 'x.md'), 'v2', 'utf8')
     const s3 = await computeSnapshot(prof, 'e.jsonl', 'sha', { name: 'dsh-cli', version: '1' })
     expect(s3.skills_base).not.toBe(s1.skills_base)
+    expect(s3.skills_base_stale).toBeUndefined()
+  })
+
+  it('导出清单与实体根一致时不标过期，根被改动后标记 skills_base_stale', async () => {
+    const root = await makeRoot({ 'x.md': 'v1' })
+    const prof = parseProfile(`id: a\nskills_mode: bundled-copy\nskills_roots: [${root.replace(/\\/g, '/')}]\n`)
+    await writeFile(`${root}.manifest.json`, JSON.stringify({ sha256: await hashTree([root]) }), 'utf8')
+    const ok = await computeSnapshot(prof, 'e.jsonl', 'sha', { name: 'dsh-cli', version: '1' })
+    expect(ok.skills_base_stale).toBeUndefined()
+    await writeFile(join(root, 'x.md'), 'v2', 'utf8')
+    const stale = await computeSnapshot(prof, 'e.jsonl', 'sha', { name: 'dsh-cli', version: '1' })
+    expect(stale.skills_base_stale).toBe(true)
   })
 })
 

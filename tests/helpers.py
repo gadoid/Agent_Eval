@@ -195,6 +195,7 @@ def mk_record(**over):
         "turns": [turn(output="答：规则是收齐尾款后才能电放。", skills=("trade-documents",))],
         "case": {
             "id": "ec-1", "uid": "ec-1#0", "dim": "错误知识纠正", "answerable": True,
+            "granularity": "环节",
             "facts": [
                 fact("F1", "required", "未收尾款不应电放"),
                 fact("X1", "forbidden", "未收尾款也可以先电放", evidence="R1"),
