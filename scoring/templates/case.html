@@ -2,15 +2,45 @@
 {% import "_macros.html" as m with context %}
 {% block title %}{{ case_id }} · Agent_Eval 复核{% endblock %}
 {% block body %}
-<main class="rv-page">
-  <div class="rv-crumb"><a href="/">用例</a> / {{ case_id }}</div>
-  <div class="rv-page-head" style="margin-top:4px"><h1>{{ case_id }}</h1>
-    <span class="rv-meta"><span>{{ seed.dim or '?' }}</span><span>{{ seed.topic or '' }}</span>
-      <span>主口径 {{ headline }}</span></span>
-    <span class="rv-meta rv-case-health"><span>用例体检</span>
-      {% for f in health %}<span class="rv-flag">{{ f }}</span>{% else %}<span>正常</span>{% endfor %}</span></div>
+<main class="rv-page rv-case" data-case-page data-density="comfortable">
+  <div class="rv-case-hero">
+    <div class="rv-case-hero-main">
+      <div class="rv-crumb"><a href="/">用例</a> / {{ case_id }}</div>
+      <div class="rv-case-title">
+        <h1>{{ case_id }}</h1>
+        {% if seed.dim %}<span class="rv-pill">{{ seed.dim }}</span>{% endif %}
+        {% if seed.topic %}<span class="rv-pill">{{ seed.topic }}</span>{% endif %}
+        {% if seed.granularity %}<span class="rv-pill">{{ seed.granularity }}</span>{% endif %}
+      </div>
+      <div class="rv-meta rv-case-sub">
+        <span>主口径 {{ headline }}</span>
+        <span>{{ variant_stats.all }} 变体</span>
+        <span>{{ conv_stats.all }} 对话</span>
+        {% if conv_stats.undecided %}<span>待定 {{ conv_stats.undecided }}</span>{% endif %}
+        {% if conv_stats.failed %}<span>异常 {{ conv_stats.failed }}</span>{% endif %}
+        {% if variant %}<span>只看 {{ variant }} · <a href="/case/{{ case_id }}{% if judge_fp %}?judge_fp={{ judge_fp }}{% endif %}#convs">显示全部</a></span>{% endif %}
+      </div>
+      <div class="rv-meta rv-case-health"><span>用例体检</span>
+        {% for f in health %}<span class="rv-flag">{{ f }}</span>{% else %}<span class="rv-ok">正常</span>{% endfor %}</div>
+    </div>
+    <div class="rv-case-hero-side">
+      <span class="rv-meta">显示密度</span>
+      <div class="rv-seg" role="group" aria-label="显示密度" data-density-toggle>
+        <button type="button" data-density-opt="comfortable" aria-pressed="true">舒适</button>
+        <button type="button" data-density-opt="compact" aria-pressed="false">紧凑</button>
+      </div>
+    </div>
+  </div>
 
-  <section class="rv-card">
+  <nav class="rv-subnav" aria-label="用例分区" data-subnav>
+    <a href="#overview" data-spy="overview" aria-current="true">概览</a>
+    <a href="#expect" data-spy="expect">期望</a>
+    <a href="#variants" data-spy="variants">变体 <span class="rv-count">{{ variant_stats.all }}</span></a>
+    <a href="#convs" data-spy="convs">对话 <span class="rv-count">{{ conv_stats.all }}</span></a>
+  </nav>
+
+  <section class="rv-card" id="overview">
+    <h2>概览 <span class="rv-meta" style="font-weight:400"><span>用例静态信息与体检结果</span></span></h2>
     <dl class="rv-caseinfo">
       <div><dt>维度</dt><dd>{{ seed.dim or '?' }}</dd></div>
       <div><dt>主题</dt><dd>{{ seed.topic or '—' }}</dd></div>
@@ -25,25 +55,32 @@
       {% endif %}
       {% if injections %}
       <div class="rv-wide"><dt>知识注入</dt><dd>
-        {% for i in injections %}{{ i.point }} · {{ i.option }}（{{ i.rev or '' }}）{% endfor %}</dd></div>
+        {% for i in injections %}<span class="rv-inj" data-s="na">{{ i.point }}</span> {{ i.option }}（{{ i.rev or '' }}）{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
       {% endif %}
       {% if tags %}
-      <div class="rv-wide"><dt>标签</dt><dd>{% for t in tags %}<span class="rv-kind">{{ t }}</span> {% endfor %}</dd></div>
+      <div class="rv-wide"><dt>标签</dt><dd class="rv-tagrow">{% for t in tags %}<span class="rv-kind">{{ t }}</span>{% endfor %}</dd></div>
       {% endif %}
+      <div class="rv-wide"><dt>用例体检</dt><dd class="rv-tagrow">
+        {% for f in health %}<span class="rv-flag">{{ f }}</span>{% else %}<span class="rv-meta">正常，无提示项</span>{% endfor %}</dd></div>
     </dl>
   </section>
 
-  <section class="rv-card">
+  <section class="rv-card" id="expect">
     <h2>期望 <span class="rv-meta" style="font-weight:400"><span>当前期望 {{ (judge_fp or '')[:8] }}</span>
       {% if history|length > 1 %}<span>历史 {{ history|length }} 份</span>{% endif %}</span></h2>
     {% if history|length > 1 %}
-    <div class="rv-meta" style="margin-bottom:6px">切换：
-      {% for h in history %}<a href="?judge_fp={{ h.judge_fp }}" {% if h.judge_fp == judge_fp %}style="font-weight:600"{% endif %}>{{ h.judge_fp[:8] }}（{{ h.evalset_version }}）</a> {% endfor %}</div>
+    <div class="rv-chips-bar" style="margin-bottom:8px"><span class="rv-meta">切换期望版本</span>
+      {% for h in history %}<a class="rv-chip-filter" {% if h.judge_fp == judge_fp %}aria-pressed="true"{% else %}aria-pressed="false"{% endif %}
+        href="?judge_fp={{ h.judge_fp }}">{{ h.judge_fp[:8] }} <span class="rv-chip-n">{{ h.evalset_version }}</span></a> {% endfor %}</div>
     {% endif %}
     <div class="rv-expect">
-      {% for t in spec.turns or [] %}
-        {% if t.role == 'user' %}<div class="rv-expect-q"><b>第 {{ loop.index }} 轮</b>{{ t.content }}</div>{% endif %}
-      {% endfor %}
+      <div class="rv-eyebrow">提问（全文）</div>
+      <div class="rv-expect-qs">
+        {% for t in spec.turns or [] %}
+          {% if t.role == 'user' %}<div class="rv-expect-q"><b>第 {{ loop.index }} 轮</b>{{ t.content }}</div>{% endif %}
+        {% else %}<span class="rv-meta">（当前期望没有提问文本）</span>{% endfor %}
+      </div>
+      <div class="rv-eyebrow">判定条目（全文）</div>
       <ul class="rv-facts">
         {% for p in spec.preconditions or [] %}
         <li class="rv-fact"><span class="rv-kind">前提 {{ p.id }}</span><span class="rv-fact-text">{{ p.text }}<span class="rv-fact-meta">{% if p.turn %}第 {{ p.turn }} 轮 · {% endif %}门槛，不打分</span></span></li>
@@ -58,37 +95,48 @@
             {% if f.weight is defined %}<span class="rv-weight">权重 {{ f.weight }}</span>{% endif %}</span></span></li>
         {% endfor %}
       </ul>
-      {% if spec.reference_answer %}<div class="rv-answer-head" style="margin-top:8px"><b>参考答案</b></div>
-      <div class="rv-answer rv-md">{{ spec.reference_answer|md }}</div>{% endif %}
+      {% if spec.reference_answer %}
+      <details class="rv-fold">
+        <summary><span class="rv-fold-title">参考答案</span><span class="rv-meta">{{ spec.reference_answer|length }} 字</span>
+          <span class="rv-fold-hint" data-closed>展开</span><span class="rv-fold-hint" data-open>收起</span></summary>
+        <div class="rv-fold-body rv-md">{{ spec.reference_answer|md }}</div>
+      </details>
+      {% endif %}
     </div>
   </section>
 
   <section class="rv-card" id="variants">
     <h2>变体 <span class="rv-meta" style="font-weight:400"><span>{{ variant_cards|length }} 题</span>
-      <span>每题提问直接列出；「只看对话」筛选下方</span></span></h2>
+      <span>每题提问直接列出；筛选只影响本表</span></span></h2>
+    <div class="rv-chips-bar" role="group" aria-label="筛选变体" data-vfilter-group>
+      <button type="button" class="rv-chip-filter" data-vfilter="all" aria-pressed="true">全部 <span class="rv-chip-n">{{ variant_stats.all }}</span></button>
+      <button type="button" class="rv-chip-filter" data-vfilter="undecided" aria-pressed="false">含待定 <span class="rv-chip-n">{{ variant_stats.undecided }}</span></button>
+      <button type="button" class="rv-chip-filter" data-vfilter="with_convs" aria-pressed="false">有对话 <span class="rv-chip-n">{{ variant_stats.with_convs }}</span></button>
+      <span class="rv-meta" data-variant-note>显示 {{ variant_stats.all }} / {{ variant_stats.all }}</span>
+    </div>
     <div class="rv-table-wrap" style="border:0">
       <table class="rv-table rv-variants">
         <thead><tr><th>变体</th><th>提问</th><th class="rv-num">对话</th><th>状态</th><th></th></tr></thead>
-        <tbody>
+        <tbody data-variants-body>
         {% for v in variant_cards %}
-        <tr {% if v.uid == variant %}data-current{% endif %}>
+        <tr data-uid="{{ v.uid }}" data-undecided="{{ 1 if v.undecided else 0 }}" data-convs="{{ v.convs }}" {% if v.uid == variant %}data-current{% endif %}>
           <th scope="row">
-            <div>#{{ v.index }} {% if v.rewrite %}<span class="rv-kind">{{ v.rewrite }}</span>{% else %}<span class="rv-kind">种子</span>{% endif %}</div>
+            <div class="rv-variant-id">#{{ v.index }} {% if v.rewrite %}<span class="rv-kind">{{ v.rewrite }}</span>{% else %}<span class="rv-kind">种子</span>{% endif %}</div>
             <div class="rv-meta rv-pill--mono">{{ v.uid }}</div>
             <div class="rv-meta">期望 {{ (v.judge_fp or '无')[:8] }}</div>
           </th>
-          <td>
+          <td data-label="提问">
             {% for q in v.questions %}<div class="rv-expect-q">{% if v.questions|length > 1 %}<b>第 {{ loop.index }} 轮</b>{% endif %}{{ q }}</div>
             {% else %}<span class="rv-meta">（当前期望没有提问文本）</span>{% endfor %}
           </td>
-          <td class="rv-num">{{ v.convs }}</td>
-          <td>
+          <td class="rv-num" data-label="对话">{{ v.convs }}</td>
+          <td data-label="状态">
             {% if v.undecided %}<span class="rv-state" data-s="need">待定 {{ v.undecided }}</span>{% endif %}
             {% if v.pending %}<span class="rv-meta">待判 {{ v.pending }}</span>{% endif %}
             {% if v.score is not none %}<span class="rv-pill rv-pill--mono">{{ v.score|f1 }} 分</span>{% endif %}
             {% if not v.undecided and v.pending == 0 and v.score is none %}<span class="rv-meta">—</span>{% endif %}
           </td>
-          <td>
+          <td data-label="操作">
             {% if v.uid == variant %}
             <a class="rv-btn" href="/case/{{ case_id }}{% if judge_fp %}?judge_fp={{ judge_fp }}{% endif %}#convs">显示全部</a>
             {% else %}
@@ -97,6 +145,7 @@
           </td>
         </tr>
         {% endfor %}
+        <tr data-empty-row hidden><td colspan="5"><div class="rv-empty" style="padding:16px"><b>没有符合条件的变体</b><span>切换到「全部」查看所有变体。</span></div></td></tr>
         </tbody>
       </table>
     </div>
@@ -105,50 +154,70 @@
   <section class="rv-card" id="convs">
     <h2>对话 <span class="rv-meta" style="font-weight:400"><span>{{ convs|length }} 段</span>
       <span>按 {{ axis_labels.get(axis, axis) }} 分组</span>
-      {% if variant %}<span>只看 {{ variant }} · <a href="/case/{{ case_id }}#convs">显示全部</a></span>{% endif %}</span></h2>
+      {% if variant %}<span>只看 {{ variant }} · <a href="/case/{{ case_id }}{% if judge_fp %}?judge_fp={{ judge_fp }}{% endif %}#convs">显示全部</a></span>{% endif %}</span></h2>
     <form method="get" action="/case/{{ case_id }}#pair">
       <input type="hidden" name="axis" value="{{ axis }}">
       {% if judge_fp %}<input type="hidden" name="judge_fp" value="{{ judge_fp }}">{% endif %}
       {% if variant %}<input type="hidden" name="variant" value="{{ variant }}">{% endif %}
-      <div class="rv-meta" style="margin-bottom:6px">勾选两段对话可逐轮并排对照
-        <button class="rv-btn" type="submit">并排查看选中两段</button></div>
+      <div class="rv-chips-bar" role="group" aria-label="筛选对话" data-cfilter-group>
+        <button type="button" class="rv-chip-filter" data-cfilter="all" aria-pressed="true">全部 <span class="rv-chip-n">{{ conv_stats.all }}</span></button>
+        <button type="button" class="rv-chip-filter" data-cfilter="undecided" aria-pressed="false">待定 <span class="rv-chip-n">{{ conv_stats.undecided }}</span></button>
+        <button type="button" class="rv-chip-filter" data-cfilter="failed" aria-pressed="false">异常 <span class="rv-chip-n">{{ conv_stats.failed }}</span></button>
+        <span class="rv-meta" data-conv-note>显示 {{ conv_stats.all }} / {{ conv_stats.all }}</span>
+      </div>
+      <div class="rv-pairbar">
+        <span class="rv-pairbar-hint">勾选两段对话，可逐轮并排对照</span>
+        <span class="rv-pair-count" data-pair-count aria-live="polite">已选 {{ pair|length }} / 2</span>
+        <button class="rv-btn" type="submit" data-pair-submit {% if pair|length != 2 %}disabled{% endif %}>并排查看选中两段</button>
+        <button class="rv-btn rv-btn--ghost" type="button" data-pair-clear>清空</button>
+      </div>
       {% set grouped = convs | groupby('axis_label') %}
       {% for label, group in grouped %}
-      <div class="rv-meta" style="margin:8px 0 4px;font-weight:600">{{ axis_labels.get(axis, axis) }}：{{ label }}（{{ group|length }} 段）</div>
-      <ul class="rv-cq">
-        {% for c in group %}
-        <li>{{ m.verdict(c.concl.status or c.r.c_status, lg=True) }}
-          <div class="rv-cq-main">
-            <div class="rv-cq-title"><label style="display:inline-flex;gap:6px;align-items:center">
-              <input type="checkbox" name="pair" value="{{ c.r.answer_id }}" {% if c.r.answer_id in pair %}checked{% endif %}>
-              <a href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">{{ c.r.uid }}</a></label>
-              {% if c.r.rewrite %}<span class="rv-kind">{{ c.r.rewrite }}</span>{% endif %}</div>
-            {{ m.runtag(c.r) }}
-            {% if c.concl.score is defined and c.concl.score is not none %}
-            <div class="rv-meta"><span>{{ m.scorebar(c.concl.score, mark=pass_mark, fail_below=pass_mark) if false else '' }}{{ c.concl.score|f1 }} 分</span>
-              {% if c.concl.score_min is not none and c.concl.score_max is not none and c.concl.score_min != c.concl.score_max %}<span>区间 {{ c.concl.score_min|f1 }}–{{ c.concl.score_max|f1 }}</span>{% endif %}
-              {% if c.concl.reason %}<span>{{ c.concl.reason }}</span>{% endif %}</div>
-            {% elif c.concl.status == 'undecided' %}<div class="rv-meta"><span>待判条目 {{ c.pending_items }}</span></div>{% endif %}
-          </div>
-          <span class="rv-cq-todo">
-            {% if c.concl.score is defined and c.concl.score is not none %}<span class="rv-pill rv-pill--mono">{{ c.concl.score|f1 }} 分</span>{% endif %}
-            {% if c.pending_items %}<span class="rv-state" data-s="need">待判 {{ c.pending_items }}</span>{% endif %}
-            <span class="rv-chips">{% for ch in c.chips %}<span class="rv-chip" {% if ch.source == 'human' %}data-overridden{% endif %}>
-              <span class="rv-chip-id">{{ ch.id }}</span>{{ m.vval(ch.value, ch.score) }}</span>{% endfor %}</span>
-            <a class="rv-btn" href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">复核</a></span></li>
-        {% endfor %}
-      </ul>
+      <div class="rv-cq-group" data-cq-group>
+        <div class="rv-cq-group-head">{{ axis_labels.get(axis, axis) }}：{{ label }} <span class="rv-meta">{{ group|length }} 段</span></div>
+        <ul class="rv-cq">
+          {% for c in group %}
+          {% set st = c.concl.get('status') or c.r.c_status %}
+          <li data-status="{{ st }}" {% if c.r.answer_id in pair %}data-pair-selected{% endif %}>
+            {{ m.verdict(st, lg=True) }}
+            <div class="rv-cq-main">
+              <div class="rv-cq-title"><label class="rv-pair-pick">
+                <input type="checkbox" name="pair" value="{{ c.r.answer_id }}" {% if c.r.answer_id in pair %}checked{% endif %}>
+                <a href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">{{ c.r.uid }}</a></label>
+                {% if c.r.rewrite %}<span class="rv-kind">{{ c.r.rewrite }}</span>{% endif %}</div>
+              {{ m.runtag(c.r) }}
+              {% if c.concl.score is defined and c.concl.score is not none %}
+              <div class="rv-meta"><span>{{ c.concl.score|f1 }} 分</span>
+                {% if c.concl.score_min is not none and c.concl.score_max is not none and c.concl.score_min != c.concl.score_max %}<span>区间 {{ c.concl.score_min|f1 }}–{{ c.concl.score_max|f1 }}</span>{% endif %}
+                {% if c.concl.reason %}<span>{{ c.concl.reason }}</span>{% endif %}</div>
+              {% elif st == 'undecided' %}<div class="rv-meta"><span>待判条目 {{ c.pending_items }}</span></div>{% endif %}
+            </div>
+            <span class="rv-cq-todo">
+              {% if c.concl.score is defined and c.concl.score is not none %}<span class="rv-pill rv-pill--mono">{{ c.concl.score|f1 }} 分</span>{% endif %}
+              {% if c.pending_items %}<span class="rv-state" data-s="need">待判 {{ c.pending_items }}</span>{% endif %}
+              <span class="rv-chips">{% for ch in c.chips %}<span class="rv-chip" {% if ch.source == 'human' %}data-overridden{% endif %}>
+                <span class="rv-chip-id">{{ ch.id }}</span>{{ m.vval(ch.value, ch.score) }}</span>{% endfor %}</span>
+              <a class="rv-btn" href="/review/{{ c.r.answer_id|urlencode }}?tab=undecided">复核</a></span></li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <div class="rv-empty"><b>还没有对话</b><span>该用例尚未跑出运行结果。</span></div>
       {% endfor %}
+      <div class="rv-empty" data-empty="convs" hidden><b>没有符合条件的对话</b><span>切换到「全部」查看其他对话。</span></div>
     </form>
     {% if pair_rows %}
-    <div id="pair" style="margin-top:16px">
-      <h2>并排对照 <span class="rv-meta" style="font-weight:400">
-        <span>{{ pair_data[0].r.uid }} · {{ pair_data[0].concl.get('score')|f1 or '—' }} 分</span>
-        <span>{{ pair_data[1].r.uid }} · {{ pair_data[1].concl.get('score')|f1 or '—' }} 分</span></span></h2>
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px">
+    <div id="pair" class="rv-pair">
+      <h2>并排对照 <span class="rv-meta" style="font-weight:400"><span>逐轮左右对照</span></span></h2>
+      <div class="rv-pair-grid">
+        {% for p in pair_data %}
+        <div class="rv-pair-head"><b>{{ p.r.uid }}</b>
+          <span class="rv-pill rv-pill--mono">{% if p.concl.get('score') is not none %}{{ p.concl.get('score')|f1 }} 分{% else %}—{% endif %}</span>
+          {% if p.r.rewrite %}<span class="rv-kind">{{ p.r.rewrite }}</span>{% endif %}</div>
+        {% endfor %}
         {% for t in pair_rows %}
           {% for cell in t.cells %}
-          <div class="rv-answer">
+          <div class="rv-answer rv-pair-cell">
             {% if cell %}<div class="rv-meta">第 {{ cell.index }} 轮{% if cell.source == 'prefill' %}（预置）{% endif %}</div>
             <div class="rv-answer-head"><b>用户</b></div><div class="rv-md">{{ cell.input|md }}</div>
             <div class="rv-answer-head"><b>助手</b></div><div class="rv-md">{{ cell.output|md }}</div>
@@ -164,3 +233,4 @@
   </section>
 </main>
 {% endblock %}
+{% block scripts %}<script src="/static/case.js"></script>{% endblock %}

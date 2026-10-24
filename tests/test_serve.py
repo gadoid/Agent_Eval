@@ -140,6 +140,31 @@ def test_case_detail_variant_questions(served, tmp_path):
     assert "只看对话" in page and "#1" in page
 
 
+def test_case_detail_reference_fold(tmp_path):
+    """参考答案是可选项：native details 折叠，不占首屏；无对话时也有空状态。"""
+    db = str(tmp_path / "fold.db")
+    case = dict(mk_record()["case"])
+    row = {**case, "evalset_version": "v1", "reference_answer": "参考答案正文",
+           "turns": [{"role": "user", "content": "单据要准备什么？"}]}
+    spec = tmp_path / "fold.jsonl"
+    spec.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert cli.main(["specs", "import", str(spec), "--db", db]) == 0
+    page = TestClient(create_app(db)).get("/case/ec-1").text
+    assert 'class="rv-fold"' in page and "参考答案正文" in page
+    assert "还没有对话" in page
+
+
+def test_case_detail_dynamic_controls(served):
+    """用例详情：分区导航、密度切换、变体/对话筛选、并排计数与脚本钩子。"""
+    page = served[0].get("/case/ec-1").text
+    assert 'data-subnav' in page and 'data-spy="convs"' in page
+    assert 'data-density-opt="compact"' in page and "/static/case.js" in page
+    assert 'data-vfilter="undecided"' in page and 'data-cfilter="failed"' in page
+    assert 'data-pair-count' in page and 'data-pair-submit' in page
+    assert 'data-label="提问"' in page and 'data-status="' in page
+    assert 'data-variant-note' in page and 'data-conv-note' in page
+
+
 def test_cases_granularity_filter(served):
     client, db, _, _ = served
     assert 'href="/case/ec-1"' in client.get("/?granularity=环节").text

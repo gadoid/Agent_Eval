@@ -299,8 +299,20 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                                  if (c["concl"].get("status") or c["r"]["c_status"]) == "undecided"),
                 "pending": sum(c["pending_items"] for c in rows_v),
             })
+        variant_stats = {
+            "all": len(variant_cards),
+            "undecided": sum(1 for v in variant_cards if v["undecided"]),
+            "with_convs": sum(1 for v in variant_cards if v["convs"]),
+        }
         if variant:
             convs = [c for c in convs if c["r"]["uid"] == variant]
+        def status_of(c):
+            return c["concl"].get("status") or c["r"]["c_status"]
+        conv_stats = {
+            "all": len(convs),
+            "undecided": sum(1 for c in convs if status_of(c) == "undecided"),
+            "failed": sum(1 for c in convs if status_of(c) in ("invalid", "error")),
+        }
         # 勾选两段并排看：逐轮左右对照（§5.4）
         pair_data, pair_rows = [], []
         if len(pair) == 2:
@@ -322,6 +334,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                       judge_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
                       injections=injections, health=health, variant_cards=variant_cards,
+                      variant_stats=variant_stats, conv_stats=conv_stats,
                       variant=variant, pair=pair, pair_data=pair_data, pair_rows=pair_rows,
                       headline=policy.headline(seed["dim"] or "?"),
                       summary_dim=(spec.get("dim") or "?"))
