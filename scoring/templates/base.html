@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>{% block title %}Agent_Eval 复核{% endblock %}</title>
+<script>try{var t=localStorage.getItem('rv-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
 <link rel="stylesheet" href="/static/tokens.css">
 <link rel="stylesheet" href="/static/bundle.css">
 </head>
@@ -17,14 +19,21 @@
     <a href="/compare" {% if request.url.path == '/compare' %}aria-current="page"{% endif %}>结果对比</a>
     <a href="/judging" {% if request.url.path == '/judging' %}aria-current="page"{% endif %}>判定质量</a>
   </nav>
-  <label class="rv-judge">判定配置
-    <select class="rv-select" onchange="var u=new URL(location);if(this.value)u.searchParams.set('chain',this.value);else u.searchParams.delete('chain');location=u">
-      {% for ch in chains %}
-      <option value="{{ ch.chain_sha }}" {% if ch.chain_sha == chain_sha %}selected{% endif %}>
-        {{ ch.name or '未命名' }} · {{ ch.chain_sha[:8] }}{% if ch.judge_models %}（判定模型 {{ ch.judge_models|join('、') }}）{% endif %}</option>
-      {% endfor %}
-    </select>
-  </label>
+  <div class="rv-header-tools">
+    <label class="rv-judge">判定配置
+      <select class="rv-select" onchange="var u=new URL(location);if(this.value)u.searchParams.set('chain',this.value);else u.searchParams.delete('chain');location=u">
+        {% for ch in chains %}
+        <option value="{{ ch.chain_sha }}" {% if ch.chain_sha == chain_sha %}selected{% endif %}>
+          {{ ch.name or '未命名' }} · {{ ch.chain_sha[:8] }}{% if ch.judge_models %}（判定模型 {{ ch.judge_models|join('、') }}）{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="rv-theme" role="group" aria-label="配色方案" data-theme-toggle>
+      <button type="button" data-theme-opt="light" aria-pressed="false" title="白（浅色）">白</button>
+      <button type="button" data-theme-opt="system" aria-pressed="true" title="跟随系统">系统</button>
+      <button type="button" data-theme-opt="dark" aria-pressed="false" title="黑（深色）">黑</button>
+    </div>
+  </div>
 </header>
 {% if needs_rescore %}
 <div class="rv-notice" data-tone="error" style="margin:12px 24px 0"><b>当前口径下还没有会话结论</b>
@@ -33,6 +42,7 @@
 {% endif %}
 {% block body %}{% endblock %}
 <script src="/static/highlight.js"></script>
+<script src="/static/theme.js"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

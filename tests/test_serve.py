@@ -168,6 +168,7 @@ def test_case_detail_dynamic_controls(served):
     assert 'data-vtabs' in page and 'data-vpanel="ec-1#0"' in page
     assert 'data-focus-variant="ec-1#0"' in page and 'data-show-all="0"' in page
     assert "/static/case.js" in page
+    assert 'data-theme-opt="dark"' in page and 'data-theme-opt="system"' in page and "/static/theme.js" in page
     assert 'data-cfilter="failed"' in page and 'data-cfilter-count="undecided"' in page
     assert 'data-pair-count' in page and 'data-pair-submit' in page
     assert 'data-uid="ec-1#0"' in page and 'data-status="' in page and 'data-conv-scope' in page
