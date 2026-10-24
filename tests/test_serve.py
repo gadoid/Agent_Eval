@@ -1,6 +1,7 @@
 """复核服务集成测试（doc/10 §10）：新六页面路由、旧路由 301、批量提交与预览接口、
 markdown 渲染、页面数字与导出同源、合成大库下全页面响应时间。"""
 import json
+import re
 import time
 from urllib.parse import quote
 
@@ -117,8 +118,15 @@ def test_case_detail_health_variant_and_pair(served, tmp_path):
     aid1 = next(aid for rec, aid in by_uid.items() if json.loads(rec)["uid"] == "ec-1#1")
     other = next(aid for rec, aid in by_uid.items() if json.loads(rec)["uid"] == "ec-1#0")
     s.close()
+    # 变体选择只决定初始聚焦；全部对话仍渲染，前端按变体收敛（可随时切「全部」）
     drill = client.get(f"/case/{quote(case_id)}", params={"variant": "ec-1#1"}).text
-    assert "只看 ec-1#1" in drill and quote(aid1) in drill and quote(other) not in drill
+    assert 'data-focus-variant="ec-1#1"' in drill and "只看 ec-1#1" in drill
+    assert 'data-vtab="ec-1#1"' in drill and 'data-vpanel="ec-1#1"' in drill
+    assert quote(aid1) in drill and quote(other) in drill
+    assert "显示 1 / 1" in drill   # 服务端按初始聚焦渲染计数，无 JS 也自洽
+    assert re.search(r'data-uid="ec-1#0"[^>]*hidden', drill)
+    all_page = client.get(f"/case/{quote(case_id)}", params={"variant": "__all"}).text
+    assert 'data-show-all="1"' in all_page and "全部变体" in all_page
 
     pair = client.get(f"/case/{quote(case_id)}", params=[("pair", aids[0]), ("pair", aids[1])]).text
     assert "并排对照" in pair and "答：规则是收齐尾款后才能电放。" in pair
@@ -137,7 +145,7 @@ def test_case_detail_variant_questions(served, tmp_path):
     assert cli.main(["specs", "import", str(spec), "--db", db]) == 0
     page = client.get("/case/ec-1").text
     assert "口语变体：单据要准备什么？" in page
-    assert "只看对话" in page and "#1" in page
+    assert 'data-vtab="ec-1#1"' in page and 'data-vpanel="ec-1#1"' in page
 
 
 def test_case_detail_reference_fold(tmp_path):
@@ -155,14 +163,14 @@ def test_case_detail_reference_fold(tmp_path):
 
 
 def test_case_detail_dynamic_controls(served):
-    """用例详情：分区导航、密度切换、变体/对话筛选、并排计数与脚本钩子。"""
+    """用例详情：变体选择器、密度切换、对话筛选、并排计数与脚本钩子。"""
     page = served[0].get("/case/ec-1").text
-    assert 'data-subnav' in page and 'data-spy="convs"' in page
+    assert 'data-vtabs' in page and 'data-vtabs-ind' in page and 'data-vpanel="ec-1#0"' in page
+    assert 'data-focus-variant="ec-1#0"' in page and 'data-show-all="0"' in page
     assert 'data-density-opt="compact"' in page and "/static/case.js" in page
-    assert 'data-vfilter="undecided"' in page and 'data-cfilter="failed"' in page
+    assert 'data-cfilter="failed"' in page and 'data-cfilter-count="undecided"' in page
     assert 'data-pair-count' in page and 'data-pair-submit' in page
-    assert 'data-label="提问"' in page and 'data-status="' in page
-    assert 'data-variant-note' in page and 'data-conv-note' in page
+    assert 'data-uid="ec-1#0"' in page and 'data-status="' in page and 'data-conv-scope' in page
 
 
 def test_cases_granularity_filter(served):

@@ -304,15 +304,31 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             "undecided": sum(1 for v in variant_cards if v["undecided"]),
             "with_convs": sum(1 for v in variant_cards if v["convs"]),
         }
-        if variant:
-            convs = [c for c in convs if c["r"]["uid"] == variant]
+        # 变体选择只决定初始聚焦，不裁剪对话：前端可无刷新切换，全部对话也始终可筛
+        uids = {v["uid"] for v in variant_cards}
+        if variant == "__all":
+            show_all, focus_variant = True, ""
+        elif variant in uids:
+            show_all, focus_variant = False, variant
+        else:
+            show_all, focus_variant = False, (variant_cards[0]["uid"] if variant_cards else "")
         def status_of(c):
             return c["concl"].get("status") or c["r"]["c_status"]
+        # 服务端先按初始聚焦渲染对话（无 JS 也自洽），前端可再切变体/全部
+        scope_convs = convs if show_all else [c for c in convs if c["r"]["uid"] == focus_variant]
         conv_stats = {
+            "all": len(scope_convs),
+            "undecided": sum(1 for c in scope_convs if status_of(c) == "undecided"),
+            "failed": sum(1 for c in scope_convs if status_of(c) in ("invalid", "error")),
+        }
+        conv_totals = {
             "all": len(convs),
             "undecided": sum(1 for c in convs if status_of(c) == "undecided"),
             "failed": sum(1 for c in convs if status_of(c) in ("invalid", "error")),
         }
+        conv_group_counts: dict[str, int] = {}
+        for c in scope_convs:
+            conv_group_counts[c["axis_label"]] = conv_group_counts.get(c["axis_label"], 0) + 1
         # 勾选两段并排看：逐轮左右对照（§5.4）
         pair_data, pair_rows = [], []
         if len(pair) == 2:
@@ -335,7 +351,9 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
                       injections=injections, health=health, variant_cards=variant_cards,
                       variant_stats=variant_stats, conv_stats=conv_stats,
-                      variant=variant, pair=pair, pair_data=pair_data, pair_rows=pair_rows,
+                      conv_totals=conv_totals, conv_group_counts=conv_group_counts,
+                      focus_variant=focus_variant, show_all=show_all,
+                      pair=pair, pair_data=pair_data, pair_rows=pair_rows,
                       headline=policy.headline(seed["dim"] or "?"),
                       summary_dim=(spec.get("dim") or "?"))
 
