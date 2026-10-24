@@ -59,6 +59,19 @@ def test_ingest_idempotent(store, tmp_path):
     assert a["qkey"] == records[0]["case"]["uid"] + "|" + input_fp_of(records[0]["case"])
 
 
+def test_ingest_reads_profile_id_from_content(store, tmp_path):
+    """run.json 的 profile 为 {path, sha256, content}：profile_id 取 content.id（不是顶层 id）。"""
+    from scoring.cli import ingest_run
+    records = [mk_record()]
+    run_dir = make_run(tmp_path, "pid", records)
+    manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    manifest["profile"] = {"path": "p.yaml", "sha256": "x", "content": {"id": "profile-a"}}
+    (run_dir / "run.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    ingest_run(store, run_dir)
+    assert store.runs()[0]["profile_id"] == "profile-a"
+    assert {a["profile_id"] for a in store.answers()} == {"profile-a"}
+
+
 def test_ingest_sets_current_when_absent(store, tmp_path):
     """R5：空库 ingest 即设当前期望并置活跃 → 首次 score 直接可判定。"""
     ingest(store, tmp_path, "demo", [mk_record()])

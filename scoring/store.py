@@ -261,6 +261,12 @@ def evalset_version_of(manifest: dict | None) -> str:
     return str(ev or "?")
 
 
+def profile_id_of(manifest: dict | None) -> str:
+    """run.json 的 profile 现为 {path, sha256, content}，id 在 content 内；兼容旧的顶层 id。"""
+    p = (manifest or {}).get("profile") or {}
+    return str(p.get("id") or (p.get("content") or {}).get("id") or "?")
+
+
 class Store:
     """面向业务的评测库接口（§9）：入库答案、写入判定、追加改判、查询与聚合。"""
 
@@ -414,7 +420,7 @@ class Store:
 
     def register_run(self, run_id: str, run_dir: str | Path, manifest: dict | None) -> None:
         snap = (manifest or {}).get("snapshot") or {}
-        profile_id = ((manifest or {}).get("profile") or {}).get("id") or "?"
+        profile_id = profile_id_of(manifest)
         snapshot_json = json.dumps(manifest or {}, ensure_ascii=False)
         # started_at 只认 run.json 的真实值；缺失时首次导入以导入时间回填落列（与 v3
         # 迁移同语义），重导沿用已落列的值、真实值一旦出现即覆盖——不会被反复刷新。
@@ -453,7 +459,7 @@ class Store:
             " run_status, record_json, injection_found_gt1, variant_leak_json)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
-             ((manifest or {}).get("profile") or {}).get("id") or "?",
+             profile_id_of(manifest),
              json.dumps(models, ensure_ascii=False) if models is not None else None,
              record.get("mode", "?"), record.get("trial", 0),
              snap.get("skills_mode"), snap.get("skills_base"), evalset_version_of(manifest),
