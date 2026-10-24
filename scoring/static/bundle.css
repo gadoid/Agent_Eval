@@ -514,3 +514,11 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-inj[data-s="na"]     { background: var(--neutral-soft); color: var(--neutral-ink); }
 
 .rv-proto-note{padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)}.rv-proto-note a{margin:0 2px}[hidden]{display:none!important}
+
+/* 用例详情：体检收进页头；变体表把提问摊在行内，选中变体高亮 */
+.rv-case-health { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rv-variants td { vertical-align: top; }
+.rv-variants td:nth-child(3), .rv-variants td:nth-child(4) { white-space: nowrap; }
+.rv-variants .rv-expect-q { font-size: 14px; line-height: 22px; }
+.rv-variants td .rv-state, .rv-variants td .rv-pill { margin-right: 6px; }
+.rv-variants tr[data-current] > * { background: var(--bg-page); }

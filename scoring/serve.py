@@ -278,7 +278,27 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                           "axis_label": views.attr_value(r, axis),
                           "pending_items": sum(1 for c in chips if c["value"] is None)})
         health = views.case_health(case_rows, views.case_scores(case_rows, policy)).get(case_id, [])
-        variants = sorted({c["r"]["uid"] for c in convs})
+        by_uid: dict[str, list] = {}
+        for c in convs:
+            by_uid.setdefault(c["r"]["uid"], []).append(c)
+        variant_cards = []
+        for q in members:
+            cur_v = store.current_spec(q["qkey"])
+            vspec = cur_v[1] if cur_v else {}
+            rows_v = by_uid.get(q["uid"], [])
+            scores = [c["concl"].get("score") for c in rows_v
+                      if c["concl"].get("score") is not None]
+            variant_cards.append({
+                "uid": q["uid"], "index": q["variant_index"] or 0, "rewrite": q["rewrite"] or "",
+                "judge_fp": q["current_judge_fp"] or "",
+                "questions": [t.get("content") or "" for t in vspec.get("turns") or []
+                              if t.get("role") == "user"],
+                "convs": len(rows_v),
+                "score": sum(scores) / len(scores) if scores else None,
+                "undecided": sum(1 for c in rows_v
+                                 if (c["concl"].get("status") or c["r"]["c_status"]) == "undecided"),
+                "pending": sum(c["pending_items"] for c in rows_v),
+            })
         if variant:
             convs = [c for c in convs if c["r"]["uid"] == variant]
         # 勾选两段并排看：逐轮左右对照（§5.4）
@@ -301,7 +321,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
                       judge_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
-                      injections=injections, health=health, variants=variants,
+                      injections=injections, health=health, variant_cards=variant_cards,
                       variant=variant, pair=pair, pair_data=pair_data, pair_rows=pair_rows,
                       headline=policy.headline(seed["dim"] or "?"),
                       summary_dim=(spec.get("dim") or "?"))

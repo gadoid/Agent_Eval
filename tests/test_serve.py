@@ -124,6 +124,22 @@ def test_case_detail_health_variant_and_pair(served, tmp_path):
     assert "并排对照" in pair and "答：规则是收齐尾款后才能电放。" in pair
 
 
+def test_case_detail_variant_questions(served, tmp_path):
+    """变体表直接列出该变体的提问（不必先点进对话）。"""
+    client, db, _, _ = served
+    case = dict(mk_record()["case"])
+    row = {**case, "uid": "ec-1#1", "variant_index": 1,
+           "variant": {"id": "V1", "rewrite": "口语"},
+           "turns": [{"role": "user", "content": "口语变体：单据要准备什么？"}],
+           "evalset_version": "v2"}
+    spec = tmp_path / "variant.jsonl"
+    spec.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert cli.main(["specs", "import", str(spec), "--db", db]) == 0
+    page = client.get("/case/ec-1").text
+    assert "口语变体：单据要准备什么？" in page
+    assert "只看对话" in page and "#1" in page
+
+
 def test_cases_granularity_filter(served):
     client, db, _, _ = served
     assert 'href="/case/ec-1"' in client.get("/?granularity=环节").text
