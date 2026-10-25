@@ -43,9 +43,10 @@
 {%- endmacro %}
 
 {% macro rate_cell(p, n, ci=None) -%}
+{% set pct = (p / n * 100)|round|int if n else 0 %}
 <span class="rv-rate">
-  <span class="rv-rate-main"><span class="rv-rate-pct">{{ (p * 100)|round|int }}%</span><span class="rv-rate-n">{{ p }}/{{ n }}</span></span>
-  <span class="rv-rate-bar"><i style="width:{{ (p * 100)|round|int }}%"></i></span>
+  <span class="rv-rate-main"><span class="rv-rate-pct">{{ pct }}%</span><span class="rv-rate-n">{{ p }}/{{ n }}</span></span>
+  <span class="rv-rate-bar"><i style="width:{{ pct }}%"></i></span>
   {% if ci %}<span class="rv-rate-ci">{{ (ci[0]*100)|round }}–{{ (ci[1]*100)|round }}%</span>{% endif %}
 </span>
 {%- endmacro %}
