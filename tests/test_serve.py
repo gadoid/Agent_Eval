@@ -455,14 +455,17 @@ def test_compare_scores_page(served, tmp_path):
 def test_judging_page(served):
     client, db, _, _ = served
     s = Store(db)
-    a = s.answers()[0]
+    answers = [a["answer_id"] for a in s.answers()]
     s.close()
-    client.post("/api/review", json={"answer_id": a["answer_id"], "item_id": "F1",
-                                     "value": "对", "reason": "r", "reviewer": "codfish"})
+    for aid in answers:                                     # 同一算子两条改判 → 分母 > 1
+        client.post("/api/review", json={"answer_id": aid, "item_id": "F1",
+                                         "value": "未提及", "reason": "r", "reviewer": "codfish"})
     r = client.get("/judging")
     assert r.status_code == 200
     assert "判定质量" in r.text and "数据来源" in r.text
     assert "keyword" in r.text                              # 算子行
+    assert 'rv-rate-pct">100%' in r.text and ">2/2<" in r.text
+    assert 'rv-rate-pct">200%' not in r.text                # 计数不能当 0–1 比率
 
 
 # ---------------------------------------------------------------- 大库性能（R7/doc-10 §G6）
