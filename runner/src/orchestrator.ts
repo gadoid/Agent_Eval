@@ -25,6 +25,8 @@ export interface EvaluationOptions extends PlanOptions {
   concurrency: number
   resume?: boolean
   keepWorkspace?: boolean
+  /** 执行记录标题（--title）：写进 run.json，入库为 runs.title；纯展示层，不参与任何键 */
+  title?: string
   /** 成本估算基数：上一同 Profile run 的每轮平均 token / 小时（cli 从历史 run.json 取） */
   lastAverages?: { tokensPerTurn: number; hoursPerTurn: number }
   onEpisodeDone?: (record: EpisodeRecord, done: number, total: number) => void
@@ -101,6 +103,7 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
   const manifest: RunManifest = {
     schema: RECORD_SCHEMA,
     run_id: runId,
+    title: options.title?.trim() || previousManifest?.title || null,
     started_at: previousManifest?.started_at ?? new Date().toISOString(),
     finished_at: null,
     evalset: {

@@ -100,6 +100,17 @@ class WeightsIn(BaseModel):
     qkey: str
     judge_fp: str = ""
     weights: dict[str, float]
+    label: str = "权重调整"
+
+
+class RunRenameIn(BaseModel):
+    run_id: str
+    title: str = ""
+
+
+class ChainRenameIn(BaseModel):
+    chain_sha: str
+    name: str = ""
 
 
 def _ev_dict(v) -> dict:
@@ -415,8 +426,9 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             "SELECT DISTINCT operator FROM verdicts WHERE chain_sha=? AND operator IS NOT NULL"
             " ORDER BY operator", (chain,))]
         keep = {"run_id": run_id, "dim": dim, "op": op, **({"spot": spot} if tab == "spot" else {})}
+        labels = store.run_labels()
         return render(request, "review_queue.html", tab=tab, convs=convs, meta=meta,
-                      run_ids=[r["run_id"] for r in store.runs()],
+                      run_ids=[r["run_id"] for r in store.runs()], run_labels=labels,
                       dims=sorted({q["dim"] for q in store.questions() if q["dim"]}),
                       operators=operators, q_run=run_id, q_dim=dim, q_op=op, spot=spot,
                       queue_url=lambda t: "/review?" + urlencode({**keep, "tab": t}),
@@ -490,7 +502,8 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         return render(request, "compare.html", axis=axis, axis_values=axis_values,
                       base=base, target=target, any=any, fix=fix, factors=factors,
                       rep=rep, error=error, shap=shap, attrs=[a for a in views.ATTRS if a != "skills_mode"],
-                      axis_labels=AXIS_LABELS)
+                      axis_labels=AXIS_LABELS,
+                      value_labels=store.run_labels() if axis == "run" else {})
 
     # ---------------- 判定质量
     @app.get("/judging")
@@ -580,12 +593,30 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     @app.post("/api/case/weights")
     async def case_weights(body: WeightsIn):
         """权重分配保存（用例详情页）：写成新 judge_fp 的期望并设为当前期望；
-        总和 ≤ 100% 在两端都校验。"""
+        总和 ≤ 100% 在两端都校验。label 为期望版本标签（可自定义命名）。"""
         try:
-            res = store.revise_weights(body.qkey, body.judge_fp, dict(body.weights))
+            res = store.revise_weights(body.qkey, body.judge_fp, dict(body.weights), body.label)
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return res
+
+    @app.post("/api/run/rename")
+    async def run_rename(body: RunRenameIn):
+        """执行记录命名（命名改造）：改展示标题，空串回默认拼接标题；run_id 不变。"""
+        try:
+            store.rename_run(body.run_id, body.title)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"run_id": body.run_id, "title": body.title.strip() or None}
+
+    @app.post("/api/chain/rename")
+    async def chain_rename(body: ChainRenameIn):
+        """判定配置命名：改名称，空串清除；chain_sha 不变。"""
+        try:
+            store.rename_chain(body.chain_sha, body.name)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"chain_sha": body.chain_sha, "name": body.name.strip() or None}
 
     # ---------------- 旧路由 301（§4.1）
     @app.get("/question/{qkey}")

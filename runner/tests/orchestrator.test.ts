@@ -167,4 +167,14 @@ describe('runEvaluation', () => {
     expect(m.run_id).toBe(first.run_id)
     await expect(runEvaluation(base(new FakeAdapter(), { profile: parseProfile('id: p2\n'), resume: true }))).rejects.toThrow(/Profile p1/)
   })
+
+  it('--title 写入 run.json，续跑未再给时保留原标题', async () => {
+    await runEvaluation(base(new FakeAdapter(), { modes: ['natural'], trials: 1, only: ['kr-1'], title: '基线-glm53low' }))
+    expect((await manifest()).title).toBe('基线-glm53low')
+    await runEvaluation(base(new FakeAdapter(), { modes: ['natural'], trials: 1, only: ['kr-1'], resume: true }))
+    expect((await manifest()).title).toBe('基线-glm53low')
+    await runEvaluation(base(new FakeAdapter(), { modes: ['natural'], trials: 1, only: ['kr-2'], outDir: join(dir, 'out-2') }))
+    const m2 = JSON.parse(await readFile(join(dir, 'out-2', 'run.json'), 'utf8')) as RunManifest
+    expect(m2.title).toBeNull()                                      // 不给 --title → 不命名
+  })
 })

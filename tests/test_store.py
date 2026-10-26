@@ -21,11 +21,16 @@ def store(tmp_path):
 
 
 def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=None):
-    """落 run 目录并入库；目录只建一次，重复调用等价重复 ingest。"""
+    """落 run 目录并入库；目录只建一次，重复调用等价重复 ingest。
+    manifest 为并入 run.json 顶层的键（如 title / profile），可多次 ingest 传不同值。"""
     from scoring.cli import ingest_run
     run_dir = tmp_path / name
     if not run_dir.exists():
         run_dir = make_run(tmp_path, name, records, snapshot=snapshot, run_id=run_id)
+    if manifest:
+        m = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        m.update(manifest)
+        (run_dir / "run.json").write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
     return ingest_run(store, run_dir)
 
 
@@ -33,7 +38,7 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "6"
+    assert v["value"] == "7"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
     # 重复打开不重复迁移
@@ -362,8 +367,8 @@ def test_v1_upgrade_recompute_and_backfill(tmp_path):
     old_q = _build_v1_db(db_path, record)
     assert old_q != qkey_of(record["case"])          # 旧算法 qkey 不含 topic → 必然不同
 
-    store = Store(db_path)                           # 打开即完成 1→2→…→6 迁移
-    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "6"
+    store = Store(db_path)                           # 打开即完成 1→2→…→7 迁移
+    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "7"
     new_q = qkey_of(record["case"])
     qs = store.questions()
     assert len(qs) == 1 and qs[0]["qkey"] == new_q   # 没有拆成两题
@@ -661,6 +666,10 @@ def test_revise_weights_new_spec_and_validation(store, tmp_path):
         store.revise_weights(q["qkey"], res["judge_fp"], {"X1": 50})
     again = store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 40})
     assert again["changed"] is False                          # 同值幂等
+    lab = store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 50}, label=" 权重-提高F1 ")
+    assert lab["changed"] and lab["judge_fp"] != res["judge_fp"]
+    assert store.conn.execute("SELECT evalset_version FROM specs WHERE qkey=? AND judge_fp=?",
+                              (q["qkey"], lab["judge_fp"])).fetchone()["evalset_version"] == "权重-提高F1"
 
 
 def test_migrate_weight_percent_backfills_marker(store, tmp_path):
@@ -679,3 +688,45 @@ def test_migrate_weight_percent_backfills_marker(store, tmp_path):
     from scoring.store import _migrate_weight_percent
     _migrate_weight_percent(store.conn)
     assert store.spec_of(q["qkey"], fp)["weight_percent"] is True
+
+
+# ---------------------------------------------------------------- 执行记录与判定配置命名（命名改造）
+
+def test_run_title_manifest_default_and_rename(store, tmp_path):
+    """runs.title：manifest.title 入库（无标题重导不冲掉已有标题）；默认标题由
+    快照拼「评测集版本 · profile · modes×trials」；rename_run 改名/空白清除。"""
+    snap = {"skills_mode": "default-roots", "evalset": {"version": "v20261026-1"},
+            "modes": ["natural", "forced"], "trials": 2}
+    prof = {"content": {"id": "eline-glm53-defaultroots@glm-5.3-low", "routing": {}}}
+    ingest(store, tmp_path, "t1", [mk_record()])                    # make_run 缺省快照：无版本无 profile
+    rid = store.runs()[0]["run_id"]
+    assert store.runs()[0]["title"] is None
+    assert store.run_labels()[rid] == "? · ?"
+
+    ingest(store, tmp_path, "t1", [mk_record()],
+           manifest={"title": " 基线-glm53low ", "profile": prof, "snapshot": snap})
+    assert store.runs()[0]["title"] == "基线-glm53low"
+    ingest(store, tmp_path, "t1", [mk_record()],
+           manifest={"title": None, "profile": prof, "snapshot": snap})   # 无标题重导 → 保留
+    assert store.runs()[0]["title"] == "基线-glm53low"
+    assert store.run_labels()[rid] == "基线-glm53low"
+
+    store.rename_run(rid, "修订验证-021")
+    assert store.run_labels()[rid] == "修订验证-021"
+    store.rename_run(rid, "   ")                                     # 空白 = 清除 → 回默认拼接
+    assert store.run_labels()[rid] == "v20261026-1 · eline-glm53-defaultroots@glm-5.3-low · natural+forced×2"
+    with pytest.raises(StoreError):
+        store.rename_run("no-such", "x")
+
+
+def test_rename_chain(store):
+    """判定配置命名：注册 → 改名 → 空白清除（未命名）；chain_sha 不变；未知链报错。"""
+    sha = "ab12cd34"
+    store.register_chain(sha, "规则", ["keyword@1"])
+    assert store.chains()[0]["name"] == "规则"
+    store.rename_chain(sha, "规则+llm-v2")
+    assert store.chains()[0]["name"] == "规则+llm-v2" and store.chains()[0]["chain_sha"] == sha
+    store.rename_chain(sha, "")
+    assert store.chains()[0]["name"] is None
+    with pytest.raises(StoreError):
+        store.rename_chain("no-such", "x")

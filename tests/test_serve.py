@@ -487,7 +487,8 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
     store = Store(db_path)
     conn = store.conn
     with conn:
-        conn.execute("INSERT INTO runs VALUES('big','/x','v1','p1','{}','2026-01-01','2026-01-01')")
+        conn.execute("INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json,"
+                     " imported_at, started_at) VALUES('big','/x','v1','p1','{}','2026-01-01','2026-01-01')")
         questions, answers, verdicts, conclusions, reviews = [], [], [], [], []
         for qi in range(n_q):
             qkey, fp = f"q{qi}|fp{qi}", f"fp{qi}"
@@ -602,3 +603,31 @@ def test_case_weights_editor(served):
     assert "权重已保存为新期望 abcd1234" in page2.text and "rejudge --question" in page2.text
     bad = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 101}})
     assert bad.status_code == 400 and "0–100" in bad.json()["error"]   # 该用例只有 1 个计分条目，逐值上限先触发
+    # 版本标签可自定义命名（历史版本切换条显示）
+    ok2 = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 30}, "label": "权重-降F1"})
+    assert ok2.status_code == 200 and ok2.json()["changed"]
+    assert "权重-降F1" in client.get(f"/case/{case_id}").text
+
+
+def test_run_and_chain_rename(served):
+    """命名改造：队列 run 选项显示「标题 · 短 id」；改名 API 两端校验；
+    链改名后导航选择器更新；runtag 徽标带完整 run_id 提示。"""
+    client, db, _, _ = served
+    s = Store(db)
+    rid = s.runs()[0]["run_id"]
+    label = s.run_labels()[rid]
+    chain_sha = s.chains()[0]["chain_sha"]
+    s.close()
+    page = client.get("/review")
+    assert f"{label} · {rid[:8]}" in page.text
+    ok = client.post("/api/run/rename", json={"run_id": rid, "title": "基线-glm53low"})
+    assert ok.status_code == 200 and ok.json()["title"] == "基线-glm53low"
+    assert f"基线-glm53low · {rid[:8]}" in client.get("/review").text
+    assert client.post("/api/run/rename", json={"run_id": "no-such", "title": "x"}).status_code == 400
+    okc = client.post("/api/chain/rename", json={"chain_sha": chain_sha, "name": "规则+llm-v2"})
+    assert okc.status_code == 200
+    assert "规则+llm-v2" in client.get("/judging").text
+    assert client.post("/api/chain/rename", json={"chain_sha": "no-such", "name": "x"}).status_code == 400
+    # runtag 徽标显示标题、悬停给完整 run_id（抽检队列的对话行）
+    queue = client.get("/review?tab=spot&spot=100&run_id=" + quote(rid))
+    assert f'title="{rid}"' in queue.text and "基线-glm53low" in queue.text

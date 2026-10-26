@@ -374,13 +374,15 @@
     });
   });
 
-  // ---------------- 保存（服务端再校验 ≤100%；同值幂等）
+  // ---------------- 保存（服务端再校验 ≤100%；同值幂等；版本标签可自定义命名）
   document.getElementById('w-save').addEventListener('click', function () {
     var weights = {};
     items.forEach(function (it) { weights[it.id] = it.pct; });
+    var labelEl = document.getElementById('w-label');
     fetch(box.dataset.saveUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qkey: box.dataset.qkey, judge_fp: box.dataset.fp, weights: weights })
+      body: JSON.stringify({ qkey: box.dataset.qkey, judge_fp: box.dataset.fp, weights: weights,
+                             label: labelEl ? labelEl.value : '' })
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
         if (!res.ok) {

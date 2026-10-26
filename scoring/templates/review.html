@@ -27,7 +27,7 @@
     <span class="rv-pill"><b>{{ v.models|join('、') if v.models else '?' }}</b>{% if v.reasoning_effort %} · 努力 {{ v.reasoning_effort }}{% endif %}</span>
     <span class="rv-pill rv-pill--mono">{{ v.profile }}</span>
     <span class="rv-pill">{{ v.mode }} · 第 {{ v.trial }} 次</span>
-    <span class="rv-pill rv-pill--mono">{{ v.run_id }}</span>
+    <span class="rv-pill rv-pill--mono" title="{{ v.run_id }}">{{ v.run_label or v.run_id }}</span>
     <span class="rv-pill">技能 {{ v.skills_mode or '?' }}</span>
     {% for inj in v.injections_applied %}<span class="rv-pill">注入 {{ inj.point }} · {{ inj.option }}</span>{% endfor %}
   </div>

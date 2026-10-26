@@ -22,7 +22,7 @@
   <span class="rv-pill"><b>{{ r.models|join('、') if r.models else '?' }}</b>{% if r.reasoning_effort %} · 努力 {{ r.reasoning_effort }}{% endif %}</span>
   <span class="rv-pill rv-pill--mono">{{ r.profile or r.run_id }}</span>
   <span class="rv-pill">{{ r.mode }} · 第 {{ r.trial }} 次</span>
-  {% if r.run_id %}<span class="rv-pill rv-pill--mono">{{ r.run_id }}</span>{% endif %}
+  {% if r.run_id %}<span class="rv-pill rv-pill--mono" title="{{ r.run_id }}">{{ r.run_label or r.run_id }}</span>{% endif %}
   {% if r.run_id and r.run_id in (stale_runs or []) %}<span class="rv-pill" data-tone="error">技能基底过期</span>{% endif %}
 </span>
 {%- endmacro %}

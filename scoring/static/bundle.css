@@ -329,6 +329,13 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-judge .rv-select { height: 28px; font-size: 12px; max-width: 260px; }
 .rv-header-tools { display: flex; align-items: center; gap: var(--space-3); margin-left: auto; min-width: 0; }
 
+/* 命名改造：run / 判定配置 重命名的小图标按钮（rename.js 内联编辑入口） */
+.rv-icon-btn { flex: none; width: 26px; height: 26px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg-surface); color: var(--ink-2); cursor: pointer; font-size: 13px; line-height: 1; }
+.rv-icon-btn:hover { border-color: var(--accent); color: var(--accent-ink); }
+.rv-icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
 /* ---------------------------------------------------------------- ThemeSwitch：配色方案 */
 .rv-theme {
   display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px;

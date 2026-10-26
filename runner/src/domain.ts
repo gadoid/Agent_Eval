@@ -231,6 +231,8 @@ export interface SkippedRow {
 export interface RunManifest {
   schema: number
   run_id: string
+  /** 执行记录标题（--title 命名改造）：纯展示层元数据，run_id 始终是机器身份 */
+  title?: string | null
   started_at: string
   finished_at: string | null
   evalset: { path: string; sha256: string; versions: string[]; rows: number }

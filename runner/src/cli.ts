@@ -47,6 +47,8 @@ run 选项：
   --model <名>              覆盖会话模型（经每会话 overlay 覆盖 agent-default-model；需与
                             --reasoning-effort 同时给，生效 profile id 追加 @模型-努力程度）
   --reasoning-effort <级别> 努力程度（low/medium/high 等，以平台实际支持为准）
+  --title <名>              执行记录标题（写入 run.json，复核服务显示为 run 名；
+                            不给时服务端按 评测集·profile·modes×trials 拼默认标题）
 `
 
 export async function main(argv: string[], out = process.stdout, err = process.stderr): Promise<number> {
@@ -90,6 +92,7 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
       adapter: { type: 'string', default: 'dsh-cli' },
       model: { type: 'string' },
       'reasoning-effort': { type: 'string' },
+      title: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
     },
     strict: true,
@@ -192,6 +195,7 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
       profileSha256,
       outDir: values.out as string,
       adapter,
+      title: values.title ?? undefined,
       modes,
       trials,
       concurrency,
@@ -213,7 +217,7 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
     })
     const c = manifest.status_counts
     out.write(
-      `完成 ${manifest.run_id}：执行 ${String(manifest.episodes.executed)} 段会话，续跑跳过 ${String(manifest.episodes.resumed)}，` +
+      `完成 ${manifest.run_id}${manifest.title ? `（${manifest.title}）` : ''}：执行 ${String(manifest.episodes.executed)} 段会话，续跑跳过 ${String(manifest.episodes.resumed)}，` +
         `ok ${String(c.ok)} / incomplete ${String(c.incomplete)} / timeout ${String(c.timeout)} / error ${String(c.error)}，` +
         `用例跳过 ${String(manifest.skipped.length)} 项\n`,
     )

@@ -21,12 +21,13 @@
   </nav>
   <div class="rv-header-tools">
     <label class="rv-judge">判定配置
-      <select class="rv-select" onchange="var u=new URL(location);if(this.value)u.searchParams.set('chain',this.value);else u.searchParams.delete('chain');location=u">
+      <select class="rv-select" id="chain-select" data-chain="{{ chain_sha }}" onchange="var u=new URL(location);if(this.value)u.searchParams.set('chain',this.value);else u.searchParams.delete('chain');location=u">
         {% for ch in chains %}
-        <option value="{{ ch.chain_sha }}" {% if ch.chain_sha == chain_sha %}selected{% endif %}>
+        <option value="{{ ch.chain_sha }}" data-name="{{ ch.name or '' }}" {% if ch.chain_sha == chain_sha %}selected{% endif %}>
           {{ ch.name or '未命名' }} · {{ ch.chain_sha[:8] }}{% if ch.judge_models %}（判定模型 {{ ch.judge_models|join('、') }}）{% endif %}</option>
         {% endfor %}
       </select>
+      <button class="rv-icon-btn" type="button" id="chain-name-btn" title="重命名当前判定配置" aria-label="重命名判定配置">✎</button>
     </label>
     <div class="rv-theme" role="group" aria-label="配色方案" data-theme-toggle>
       <button type="button" data-theme-opt="light" aria-pressed="false" aria-label="浅色" title="浅色">
@@ -52,6 +53,15 @@
 {% block body %}{% endblock %}
 <script src="/static/highlight.js"></script>
 <script src="/static/theme.js"></script>
+<script src="/static/rename.js"></script>
+<script>
+  rvRename({ btn: document.getElementById('chain-name-btn'), host: document.getElementById('chain-select'),
+    getId: function () { return document.getElementById('chain-select').dataset.chain; },
+    getLabel: function () { var s = document.getElementById('chain-select');
+      return s.selectedOptions[0] ? (s.selectedOptions[0].dataset.name || '') : ''; },
+    url: '/api/chain/rename', key: 'chain_sha', field: 'name',
+    placeholder: '如 规则+llm-v2（空 = 未命名）' });
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
