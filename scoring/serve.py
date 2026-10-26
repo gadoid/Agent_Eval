@@ -96,6 +96,12 @@ class ReviewBatchIn(BaseModel):
     reviewer: str = ""
 
 
+class WeightsIn(BaseModel):
+    qkey: str
+    judge_fp: str = ""
+    weights: dict[str, float]
+
+
 def _ev_dict(v) -> dict:
     return {"status": v.status, "score": v.score, "score_min": v.score_min, "score_max": v.score_max,
             "auto_score": v.auto_score, "score_source": v.score_source,
@@ -251,7 +257,8 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     # ---------------- 用例详情
     @app.get("/case/{case_id}")
     async def case_detail(request: Request, case_id: str, axis: str = "profile", judge_fp: str = "",
-                          variant: str = "", pair: Annotated[list[str], Query()] = []):
+                          variant: str = "", saved: str = "",
+                          pair: Annotated[list[str], Query()] = []):
         members = [q for q in store.questions() if (q["case_id"] or q["uid"]) == case_id]
         if not members:
             return render(request, "error.html", message=f"未知用例：{case_id}")
@@ -346,10 +353,46 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                           "cells": [p["turns"][i] if i < len(p["turns"]) else None for p in pair_data]}
                          for i in range(n)]
         injections = spec.get("injections") or []
+        # 权重分配编辑器（doc/10 §5.4 权重在线调整）：只列计分条目。带 weight_percent
+        # 标记的期望（revise_weights 写入）权值即百分比、剩余为未分配，不能重新归一
+        # （否则带未分配保存后回显会被折算掉）；旧期望权重是相对值，展示时归一成百分比。
+        weight_facts = []
+        wf = [f for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")]
+        total_w = sum(float(f.get("weight", 1)) for f in wf)
+        weight_map: dict[str, int] = {}
+        for f in wf:
+            w = float(f.get("weight", 1))
+            if spec.get("weight_percent"):
+                pct = round(w)
+            else:
+                pct = round(w / total_w * 100) if total_w else round(100 / len(wf))
+            weight_map[f["id"]] = pct
+            weight_facts.append({"id": f["id"], "kind": f["kind"], "pct": pct})
+        # 条目详情（简要列表点「详情」下钻）：全部条目类型
+        item_details = []
+        for p in spec.get("preconditions") or []:
+            item_details.append({"id": p.get("id"), "kind": "precond", "text": p.get("text") or "",
+                                 "turn": p.get("turn"), "keywords": [], "group": None,
+                                 "weight": None, "note": "门槛：不成立 → 会话无效，不计分"})
+        for p in spec.get("path") or []:
+            item_details.append({"id": "path", "kind": "path", "text": f"必须加载技能 {(p.get('action') or {}).get('skill')}",
+                                 "turn": None, "keywords": [], "group": None,
+                                 "weight": None, "note": "否决项：违反 → 总分 0"})
+        for f in spec.get("facts") or []:
+            note = {"forbidden": "否决项：被采信 → 总分 0",
+                    "required": "按权重计分；判「错」→ 总分 0",
+                    "expected": "按权重计分"}.get(f.get("kind"), "")
+            item_details.append({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text") or "",
+                                 "turn": f.get("turn"), "keywords": f.get("keywords") or [],
+                                 "group": f.get("group"),
+                                 "weight": weight_map.get(f.get("id")) if f.get("kind") in ("required", "expected") else None,
+                                 "note": note})
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
                       judge_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
                       injections=injections, health=health, variant_cards=variant_cards,
+                      weight_facts=weight_facts, weight_map=weight_map,
+                      item_details=item_details, saved=saved,
                       variant_stats=variant_stats, conv_stats=conv_stats,
                       conv_totals=conv_totals, conv_group_counts=conv_group_counts,
                       focus_variant=focus_variant, show_all=show_all,
@@ -533,6 +576,16 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             return JSONResponse({"error": str(e)}, status_code=400)
         _nav_cache.clear()
         return {"episode_status": status, "reason": reason}
+
+    @app.post("/api/case/weights")
+    async def case_weights(body: WeightsIn):
+        """权重分配保存（用例详情页）：写成新 judge_fp 的期望并设为当前期望；
+        总和 ≤ 100% 在两端都校验。"""
+        try:
+            res = store.revise_weights(body.qkey, body.judge_fp, dict(body.weights))
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return res
 
     # ---------------- 旧路由 301（§4.1）
     @app.get("/question/{qkey}")

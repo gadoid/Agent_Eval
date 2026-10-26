@@ -33,7 +33,7 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "5"
+    assert v["value"] == "6"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
     # 重复打开不重复迁移
@@ -362,8 +362,8 @@ def test_v1_upgrade_recompute_and_backfill(tmp_path):
     old_q = _build_v1_db(db_path, record)
     assert old_q != qkey_of(record["case"])          # 旧算法 qkey 不含 topic → 必然不同
 
-    store = Store(db_path)                           # 打开即完成 1→2→3→4→5 迁移
-    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "5"
+    store = Store(db_path)                           # 打开即完成 1→2→…→6 迁移
+    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "6"
     new_q = qkey_of(record["case"])
     qs = store.questions()
     assert len(qs) == 1 and qs[0]["qkey"] == new_q   # 没有拆成两题
@@ -635,3 +635,47 @@ def test_spot_sampling_stable_per_answer():
         assert _spot_picked(a, 0.3) == (a in picked)   # 逐段独立、可复现
     assert all(_spot_picked(a, 1.0) for a in ids[:10])
     assert not any(_spot_picked(a, 0.0) for a in ids[:10])
+
+
+# ---------------------------------------------------------------- 权重在线调整（doc/10 §5.4）
+
+def test_revise_weights_new_spec_and_validation(store, tmp_path):
+    """权重调整写成新 judge_fp 的期望并设为当前；≤100% 与可调条目校验；重复保存幂等。"""
+    ingest(store, tmp_path, "demo", [mk_record()])
+    q = store.questions()[0]
+    old_fp = q["current_judge_fp"]
+    spec0 = store.spec_of(q["qkey"], old_fp)
+    assert all("weight" not in f for f in spec0["facts"])    # 原始未写权重
+
+    res = store.revise_weights(q["qkey"], old_fp, {"F1": 40})
+    assert res["changed"] and res["judge_fp"] != old_fp
+    assert store.current_spec(q["qkey"])[0] == res["judge_fp"]
+    f1 = next(f for f in store.spec_of(q["qkey"], res["judge_fp"])["facts"] if f["id"] == "F1")
+    assert f1["weight"] == 40
+    assert store.spec_of(q["qkey"], res["judge_fp"])["weight_percent"] is True  # 百分制标记（回显不归一）
+    assert "rejudge" in res["rejudge"]
+
+    with pytest.raises(StoreError):                          # 超 100%
+        store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 101})
+    with pytest.raises(StoreError):                          # 禁止事实不可调（否决项）
+        store.revise_weights(q["qkey"], res["judge_fp"], {"X1": 50})
+    again = store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 40})
+    assert again["changed"] is False                          # 同值幂等
+
+
+def test_migrate_weight_percent_backfills_marker(store, tmp_path):
+    """v6 迁移：早期「权重调整」落库的期望（无标记）补 weight_percent，
+    否则用例页把权值重新归一到 100%，未分配丢失、像没保存。"""
+    ingest(store, tmp_path, "demo", [mk_record()])
+    q = store.questions()[0]
+    fp = store.revise_weights(q["qkey"], q["current_judge_fp"], {"F1": 40})["judge_fp"]
+    legacy = store.spec_of(q["qkey"], fp)
+    assert legacy["weight_percent"] is True                   # 新落库即带标记
+    legacy = json.loads(json.dumps(legacy)); legacy.pop("weight_percent")
+    with store.lock, store.conn:                             # 模拟修复前落库的旧结构
+        store.conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
+                           (json.dumps(legacy, ensure_ascii=False), q["qkey"], fp))
+    assert not store.spec_of(q["qkey"], fp).get("weight_percent")
+    from scoring.store import _migrate_weight_percent
+    _migrate_weight_percent(store.conn)
+    assert store.spec_of(q["qkey"], fp)["weight_percent"] is True

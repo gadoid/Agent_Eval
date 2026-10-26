@@ -108,6 +108,9 @@ def attr_value(row: dict, name: str) -> str:
         return model_label(row)
     if name == "run":
         return str(row.get("run_id"))
+    if name == "evalset_version":
+        from .items import version_label
+        return version_label(row.get(name))
     return str(row.get(name))
 
 

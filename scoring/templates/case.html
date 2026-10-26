@@ -52,6 +52,12 @@
   </section>
 
   <section class="rv-card" id="expect">
+    {% if saved %}
+    <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+      <b>权重已保存为新期望 {{ saved }}</b><span>分数需按新期望重判后才会更新（已有人工判定保留）</span>
+      <span class="rv-cmd">python -m scoring rejudge --question {{ seed.qkey }}<button type="button">复制</button></span>
+    </div>
+    {% endif %}
     <h2>期望 <span class="rv-meta" style="font-weight:400"><span>当前期望 {{ (judge_fp or '')[:8] }}</span>
       {% if history|length > 1 %}<span>历史 {{ history|length }} 份</span>{% endif %}</span></h2>
     {% if history|length > 1 %}
@@ -66,21 +72,62 @@
           {% if t.role == 'user' %}<div class="rv-expect-q"><b>第 {{ loop.index }} 轮</b>{{ t.content }}</div>{% endif %}
         {% else %}<span class="rv-meta">（当前期望没有提问文本）</span>{% endfor %}
       </div>
-      <div class="rv-eyebrow">判定条目（全文）</div>
-      <ul class="rv-facts">
-        {% for p in spec.preconditions or [] %}
-        <li class="rv-fact"><span class="rv-kind">前提 {{ p.id }}</span><span class="rv-fact-text">{{ p.text }}<span class="rv-fact-meta">{% if p.turn %}第 {{ p.turn }} 轮 · {% endif %}门槛，不打分</span></span></li>
-        {% endfor %}
-        {% for p in spec.path or [] %}
-        <li class="rv-fact"><span class="rv-kind">路径</span><span class="rv-fact-text">必须加载技能 {{ (p.action or {}).skill }}<span class="rv-fact-meta">否决项</span></span></li>
-        {% endfor %}
-        {% for f in spec.facts or [] %}
-        <li class="rv-fact"><span class="rv-kind" {% if f.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ f.kind|kind_label }} {{ f.id }}</span>
-          <span class="rv-fact-text">{{ f.text }}<span class="rv-fact-meta">{% if f.turn %}第 {{ f.turn }} 轮 · {% endif %}
-            {% if f.keywords %}关键词：{{ f.keywords|join('、') }} · {% endif %}
-            {% if f.weight is defined %}<span class="rv-weight">权重 {{ f.weight }}</span>{% endif %}</span></span></li>
-        {% endfor %}
-      </ul>
+      <div class="rv-eyebrow">判定条目（简要，点「详情」或饼图扇区查看全文）</div>
+      <div class="rv-expect-grid">
+        <div class="rv-items-col">
+          <ul class="rv-facts rv-facts-brief" id="item-list">
+            {% for p in spec.preconditions or [] %}
+            <li class="rv-fact rv-item" data-id="{{ p.id }}">
+              <span class="rv-kind">前提 {{ p.id }}</span>
+              <span class="rv-fact-text">{{ (p.text or '')[:36] }}{% if (p.text or '')|length > 36 %}…{% endif %}</span>
+              <button class="rv-btn rv-detail-btn" type="button" data-id="{{ p.id }}">详情</button>
+            </li>
+            {% endfor %}
+            {% for p in spec.path or [] %}
+            <li class="rv-fact rv-item" data-id="path">
+              <span class="rv-kind">路径</span>
+              <span class="rv-fact-text">必须加载技能 {{ (p.action or {}).skill }}</span>
+              <button class="rv-btn rv-detail-btn" type="button" data-id="path">详情</button>
+            </li>
+            {% endfor %}
+            {% for f in spec.facts or [] %}
+            <li class="rv-fact rv-item" data-id="{{ f.id }}">
+              <span class="rv-kind" {% if f.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ f.kind|kind_label }} {{ f.id }}</span>
+              <span class="rv-fact-text">{{ (f.text or '')[:36] }}{% if (f.text or '')|length > 36 %}…{% endif %}</span>
+              {% if f.id in weight_map %}<span class="rv-weight rv-wpct-chip" data-wchip="{{ f.id }}">{{ weight_map[f.id] }}%</span>{% endif %}
+              <button class="rv-btn rv-detail-btn" type="button" data-id="{{ f.id }}">详情</button>
+            </li>
+            {% endfor %}
+          </ul>
+          <div id="item-detail" class="rv-item-detail" hidden>
+            {% for d in item_details %}
+            <div class="rv-detail-card" data-detail="{{ d.id }}" hidden>
+              <div class="rv-row-top" style="margin-bottom:6px">
+                <span class="rv-kind" {% if d.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ d.kind|kind_label }} {{ d.id }}</span>
+                {% if d.weight is not none %}<span class="rv-weight">权重 {{ d.weight }}%</span>{% endif %}
+                <span class="rv-meta"><span>{% if d.turn %}第 {{ d.turn }} 轮{% endif %}</span>
+                  {% if d.group %}<span>组 {{ d.group }}</span>{% endif %}<span>{{ d.note }}</span></span>
+                <button class="rv-btn rv-detail-close" type="button" style="margin-left:auto">收起</button>
+              </div>
+              <div class="rv-row-text">{{ d.text }}</div>
+              {% if d.keywords %}<div class="rv-fact-meta" style="margin-top:4px">关键词：{{ d.keywords|join('、') }}</div>{% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% if weight_facts %}
+        <div class="rv-pie-col" id="weight-editor" data-qkey="{{ seed.qkey }}" data-fp="{{ judge_fp }}"
+             data-save-url="/api/case/weights">
+          <svg id="w-pie" viewBox="0 0 200 200" role="img" aria-label="权重分布饼图"></svg>
+          <div class="rv-pie-legend" id="w-legend"></div>
+          <div class="rv-wsum">已分配 <b id="w-sum"></b> · 未分配 <b id="w-left"></b></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="rv-btn rv-btn--primary" id="w-save" type="button">保存为新期望</button>
+            <span class="rv-meta">拖滑杠圆钮调整（减少→未分配，有未分配才能增加）；双击百分比值可直接输入，粒度 1%</span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
       {% if spec.reference_answer %}
       <details class="rv-fold">
         <summary><span class="rv-fold-title">参考答案</span><span class="rv-meta">{{ spec.reference_answer|length }} 字</span>

@@ -71,7 +71,7 @@
         <div class="rv-row-top">
           <span class="rv-kind" {% if r.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ sec.label }} {{ r.id }}</span>
           <span class="rv-meta"><span>第 {{ r.turn or 1 }} 轮</span>{% if r.group %}<span>组 {{ r.group }}</span>{% endif %}</span>
-          {% if r.kind in ('required', 'expected') %}<span class="rv-weight" {% if not r.weight %}data-zero{% endif %}>权重 {{ r.weight|f1 }}</span>{% endif %}
+          {% if r.kind in ('required', 'expected') %}<span class="rv-weight" {% if not r.weight %}data-zero{% endif %}>权重 {{ r.weight|f1 }}{% if r.weight_is_pct %}%{% endif %}</span>{% endif %}
           <span class="rv-state" data-s="{{ 'human' if r.human else ('need' if not r.machine or r.machine.value is none else 'off') }}" {% if r.machine and r.machine.value is not none and not r.human %}hidden{% endif %}>{{ '人工' if r.human else '待判' }}</span>
         </div>
         <div class="rv-row-text">{{ r.text }}</div>

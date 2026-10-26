@@ -197,6 +197,13 @@ def test_review_page(served_plain):
     assert "data-concl='{\"" in r.text and "data-scale='[\"" in r.text
     assert "data-map='{}'" in r.text                        # 非计分行 map 为空对象
     assert 'data-concl="{' not in r.text
+    # 权重调整后的复核行按百分比显示（百分制标记 → 权重 60.0%）
+    st = Store(db)
+    q = st.questions()[0]
+    st.revise_weights(q["qkey"], q["current_judge_fp"], {"F1": 60})
+    st.close()
+    r2 = client.get(f"/review/{quote(answer_id)}")
+    assert "权重 60%</span>" in r2.text
 
 
 def test_review_page_markdown_and_static(served_plain):
@@ -574,3 +581,24 @@ def test_synthetic_scale_performance(tmp_path):
     elapsed = time.time() - t0
     assert r.status_code == 200 and "组件贡献" in r.text
     assert elapsed < 1.0, f"对比页（base/target）响应 {elapsed:.2f}s 超过 1s"
+
+
+def test_case_weights_editor(served):
+    """用例详情权重分配：滑块块渲染、保存接口写新期望、超限 400、saved 提示条。"""
+    client, db, _, _ = served
+    s = Store(db)
+    qkey = s.questions()[0]["qkey"]
+    case_id = s.questions()[0]["case_id"]
+    s.close()
+    page = client.get(f"/case/{case_id}")
+    assert 'id="weight-editor"' in page.text and 'id="w-pie"' in page.text   # 饼图编辑器
+    assert 'rv-detail-btn' in page.text and 'data-detail=' in page.text      # 简要条目 + 详情下钻
+    assert 'data-qkey="%s"' % qkey in page.text
+    ok = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 60}})
+    assert ok.status_code == 200 and ok.json()["changed"]
+    page3 = client.get(f"/case/{case_id}")
+    assert 'data-wchip="F1">60%</span>' in page3.text        # 百分制回显：留未分配保存后原值显示，不被归一成 100%
+    page2 = client.get(f"/case/{case_id}?saved=abcd1234")
+    assert "权重已保存为新期望 abcd1234" in page2.text and "rejudge --question" in page2.text
+    bad = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 101}})
+    assert bad.status_code == 400 and "0–100" in bad.json()["error"]   # 该用例只有 1 个计分条目，逐值上限先触发

@@ -697,3 +697,35 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 @media (prefers-reduced-motion: no-preference) {
   html:has(.rv-case) { scroll-behavior: smooth; }
 }
+
+/* ---------------------------------------------------------------- WeightPie（用例详情：简要条目 + 饼图 + 详情下钻） */
+.rv-expect-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--space-4); align-items: start; }
+@media (max-width: 1000px) { .rv-expect-grid { grid-template-columns: 1fr; } }
+.rv-facts-brief .rv-item { display: flex; align-items: center; gap: var(--space-2); padding: 4px 6px; border-radius: var(--radius-md); }
+.rv-facts-brief .rv-item:hover, .rv-facts-brief .rv-item.is-active { background: var(--bg-page); }
+.rv-facts-brief .rv-item .rv-fact-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-facts-brief .rv-item .rv-btn { height: 24px; padding: 0 var(--space-2); font-size: 12px; }
+.rv-wpct-chip { min-width: 44px; text-align: center; }
+.rv-item-detail { margin-top: var(--space-2); }
+.rv-detail-card { border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--bg-selected); padding: var(--space-3); }
+.rv-pie-col { display: grid; gap: var(--space-2); justify-items: center; position: sticky; top: 68px; }
+.rv-pie-col svg { width: 240px; height: 240px; touch-action: none; }
+.rv-pie-legend { display: grid; gap: 10px; width: 100%; }
+.rv-wbar-row { display: grid; grid-template-columns: 12px 52px minmax(0, 1fr) 44px; gap: var(--space-2); align-items: center; font-size: 12.5px; }
+.rv-lg-dot { width: 10px; height: 10px; border-radius: 3px; }
+.rv-lg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-weight: 500; }
+.rv-bar-pct { text-align: right; font-weight: 600; }
+.rv-wbar { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); touch-action: none; }
+.rv-wbar-fill { position: absolute; left: 0; top: -1px; bottom: -1px; border-radius: var(--radius-pill); opacity: .85; }
+.rv-wbar-knob { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--bg-surface); cursor: ew-resize; padding: 0; box-shadow: var(--shadow-card); }
+.rv-wbar-knob:hover { border-color: var(--accent-hover); box-shadow: 0 0 0 4px var(--accent-soft); }
+.rv-wbar-knob:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-wsum { font-size: 12.5px; color: var(--ink-2); }
+.rv-wsum b { font-family: var(--font-mono); }
+
+/* 百分比双击编辑：平时是纯展示态，仅激活编辑时出现输入框 */
+.rv-bar-pct:hover { color: var(--accent-ink); }
+.rv-bar-edit { width: 100%; height: 24px; padding: 0 2px; text-align: right; font-family: var(--font-mono);
+  font-size: 12px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--ink); }
+.rv-bar-edit:focus { outline: 2px solid var(--focus); outline-offset: 1px; }

@@ -19,11 +19,11 @@ from collections import defaultdict
 
 from .items import (SCALES, build_context, episode_error, extract_items, input_fp_of,
                     judge_fp_of, qkey_of, variant_leak_suspects, TOTAL_ITEM, conversation_sha,
-                    weight_of)
+                    version_label, weight_of)
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -248,6 +248,27 @@ def _migrate_granularity(conn) -> None:
 _MIGRATIONS[5] = [_migrate_granularity]
 
 
+def _migrate_weight_percent(conn) -> None:
+    """v6：给权重在线调整早期落库的期望补 weight_percent 标记。标记只影响用例页
+    回显（带标记按原值显示、剩余为未分配；缺标记会被归一化，未分配丢失），不进
+    judge_fp/item_sha。evalset_version='权重调整' 的行只可能来自 revise_weights，
+    权值必为百分比语义。"""
+    rows = conn.execute(
+        "SELECT qkey, judge_fp, spec_json FROM specs WHERE evalset_version='权重调整'"
+        " AND spec_json NOT LIKE '%\"weight_percent\"%'").fetchall()
+    for row in rows:
+        try:
+            spec = json.loads(row["spec_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        spec["weight_percent"] = True
+        conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
+                     (json.dumps(spec, ensure_ascii=False), row["qkey"], row["judge_fp"]))
+
+
+_MIGRATIONS[6] = [_migrate_weight_percent]
+
+
 class StoreError(Exception):
     """评测库操作错误。"""
 
@@ -272,11 +293,14 @@ def answer_id_of(run_id: str, episode_id: str) -> str:
 
 
 def evalset_version_of(manifest: dict | None) -> str:
-    """环境快照 evalset → 版本串（优先 version，其次 file，最后整体串化）。"""
+    """环境快照 evalset → 版本串（优先 version，其次 file，最后整体串化）。
+    file 是全路径时规整为短名（items.version_label），避免比较轴与页面上出现路径。"""
     ev = ((manifest or {}).get("snapshot") or {}).get("evalset")
     if isinstance(ev, dict):
-        return str(ev.get("version") or ev.get("file") or "?")
-    return str(ev or "?")
+        if ev.get("version"):
+            return str(ev["version"])
+        return version_label(ev.get("file") or "?")
+    return version_label(str(ev or "?"))
 
 
 def profile_id_of(manifest: dict | None) -> str:
@@ -377,6 +401,50 @@ class Store:
                               (qkey, judge_fp, json.dumps(spec_json, ensure_ascii=False), evalset_version, ts))
             self.conn.execute("INSERT OR IGNORE INTO spec_versions VALUES(?,?,?,?)",
                               (qkey, judge_fp, evalset_version, ts))
+
+    def revise_weights(self, qkey: str, base_fp: str, weights: dict[str, float]) -> dict:
+        """在页面上调整计分条目权重（doc/10 权重语义的在线编辑入口）：以 base_fp 的
+        期望为底本，把给出的条目权重（百分制，总和 ≤ 100）写成新 judge_fp 的期望并设为
+        当前期望。item_sha 不含权重 → 已有人工改判继续有效；judge_fp 含权重 → 分数要
+        rejudge 后才按新权重算（算子走判定缓存，不重复调模型）。"""
+        spec = self.spec_of(qkey, base_fp) if base_fp else None
+        if spec is None:
+            cur = self.current_spec(qkey)
+            if cur is None:
+                raise StoreError(f"期望不存在：{qkey}")
+            base_fp, spec = cur
+        weightable = {f.get("id") for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")}
+        unknown = [k for k in weights if k not in weightable]
+        if unknown:
+            raise StoreError(f"不可调权重的条目：{unknown}（只有必要/期望事实按权重计分）")
+        for k, v in weights.items():
+            if not isinstance(v, (int, float)) or not 0 <= float(v) <= 100:
+                raise StoreError(f"权重应为 0–100 的百分比：{k} = {v!r}")
+        total = sum(float(v) for v in weights.values())
+        if total > 100 + 1e-9:
+            raise StoreError(f"权重总和 {total:.0f}% 超过 100%")
+        new_spec = json.loads(json.dumps(spec, ensure_ascii=False))
+        for f in new_spec.get("facts") or []:
+            if f.get("id") in weights:
+                f["weight"] = round(float(weights[f["id"]]), 1)
+        # 标记权值即百分比（0–100，剩余为未分配）：用例页按原值回显，不重新归一。
+        # judge_fp_of 只哈希固定字段，不含该标记 → 不影响指纹与比较。
+        new_spec["weight_percent"] = True
+        new_fp = judge_fp_of(new_spec)
+        if new_fp == base_fp:
+            if not spec.get("weight_percent"):
+                # 权重没变但底本是旧结构（标记落地前保存的）：就地补标记，
+                # 修复这类期望被用例页重新归一、未分配丢失的回显。
+                with self.lock, self.conn:
+                    self.conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
+                                      (json.dumps(new_spec, ensure_ascii=False), qkey, base_fp))
+            return {"changed": False, "judge_fp": base_fp, "qkey": qkey}
+        self.register_spec(qkey, new_fp, new_spec, "权重调整")
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE questions SET current_judge_fp=?, active=1 WHERE qkey=?",
+                              (new_fp, qkey))
+        return {"changed": True, "judge_fp": new_fp, "qkey": qkey,
+                "rejudge": f"python -m scoring rejudge --question {qkey}"}
 
     def import_evalset(self, rows: list[dict], version: str) -> dict:
         """specs import：登记全部期望并成为当前期望；未出现的题保留旧期望、标记非活跃。"""
@@ -1124,6 +1192,7 @@ class Store:
         reviews = self.reviews_for(answer_id)
         vrows = {r["item_id"]: r for r in self.verdicts(answer_id, fp, chain_sha)}
         sp = policy.score
+        wpct = bool(spec.get("weight_percent"))   # 百分制权重（revise_weights）→ 复核行按百分比显示
         sections = []
         for kind, label, hint in (("precond", "前提", "门槛：不成立 → 会话无效，不计分"),
                                   ("path", "路径", "否决项：违反 → 总分 0"),
@@ -1146,7 +1215,8 @@ class Store:
                 rows_.append({
                     "id": it.id, "kind": kind, "turn": it.turn, "text": it.text or "",
                     "keywords": it.attrs.get("keywords") or [],
-                    "weight": weight_of(it, sp.default_weight), "group": it.attrs.get("group"),
+                    "weight": weight_of(it, sp.default_weight), "weight_is_pct": wpct,
+                    "group": it.attrs.get("group"),
                     "answer": ctx.answer_for(it),
                     "machine": None if vrow is None else {
                         "value": vrow["value"], "score": vrow["score"], "source": vrow["source"],

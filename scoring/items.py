@@ -156,6 +156,18 @@ def conversation_sha(ctx: EpisodeContext) -> str:
     return hashlib.sha256("\n\u241e\n".join(ctx.outputs).encode("utf-8")).hexdigest()[:16]
 
 
+def version_label(v: str | None) -> str:
+    """评测集版本的显示/分组名：早期 run 的快照只有 file 全路径
+    （如 D:\\...\\dist\\evalset-v20261022-1.jsonl），规整为 basename 去掉
+    .jsonl 与 evalset- 前缀 → v20261022-1 / adhoc-202610220540-58。"""
+    s = str(v or "?")
+    if "\\" in s or "/" in s:
+        s = s.replace("\\", "/").rsplit("/", 1)[-1]
+    if s.endswith(".jsonl"):
+        s = s[: -len(".jsonl")]
+    return s.removeprefix("evalset-") or "?"
+
+
 def qkey_of(case: dict) -> str:
     """题目身份 = uid + "|" + 输入指纹。"""
     return f"{case.get('uid', '?')}|{input_fp_of(case)}"
