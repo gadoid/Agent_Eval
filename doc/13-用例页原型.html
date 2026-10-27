@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>用例页原型 · doc/13 v3</title>
+<title>用例页原型 · doc/13 v4</title>
 <style>
 /* Agent_Eval 复核 · 设计 token（取自 doc/10 设计系统原型） */
 
@@ -1115,6 +1115,86 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-cv-filter[data-menu="cfg"] .rv-cv-menu { min-width: 280px; max-height: 360px; overflow: auto; }
 @media (max-width: 1100px) { .rv-cp-stats { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); } }
 
+/* ================= v4：用例页只放结构 + 默认配置；结果页（配置栏 + 对话）；配置管理 */
+.rv-cp--wide { max-width: 1440px; }
+.rv-cp-def { display: flex; flex-wrap: wrap; align-items: stretch; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.rv-cp-def > * { padding: 10px 16px; border-left: 1px solid var(--line); display: grid; align-content: center; gap: 2px; min-width: 0; }
+.rv-cp-def > *:first-child { border-left: 0; }
+.rv-cp-def-cfg { flex: 1 1 240px; }
+.rv-cp-def-cfg b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cp-def-set { font-size: 12px; }
+.rv-cp-def-item { flex: 0 1 150px; }
+.rv-cp-def-k { font-size: 12px; color: var(--ink-3); }
+.rv-cp-def-v { font-family: var(--font-mono); font-size: 20px; line-height: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-cp-def-v small { font-family: var(--font-sans); font-size: 11.5px; font-weight: 500; color: var(--ink-3); margin-left: 4px; }
+.rv-cp-def-item .rv-cp-stat-bar { margin-top: 4px; }
+.rv-cp-def-note { font-size: 11.5px; }
+.rv-cp-def-item .rv-cp-warn { margin-top: 0; font-size: 12.5px; }
+.rv-app .rv-cp-def-go { flex: 0 0 auto; margin: 10px 12px; height: auto; padding: 8px 14px; border-left: 1px solid var(--line-strong); display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.rv-cp-def-go small { font-weight: 400; color: var(--ink-3); font-size: 11.5px; }
+.rv-cp-seg button em[data-vs] { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; margin-left: 6px; }
+.rv-cp-seg button em[data-tone="pass"] { color: var(--pass-ink); }
+.rv-cp-seg button em[data-tone="fail"] { color: var(--fail-ink); }
+
+.rv-rs { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: var(--space-4); align-items: start; margin-top: var(--space-2); }
+.rv-rs-rail { position: sticky; top: 16px; display: grid; gap: 8px; max-height: calc(100vh - 32px); overflow: auto; padding-right: 2px; }
+.rv-rs-rail-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rv-rs-rail-h b { font-size: 13px; }
+.rv-rs-rail-h .rv-select { height: 28px; font-size: 12px; }
+.rv-rs-q { height: 30px; font-size: 12.5px; width: 100%; }
+.rv-rs-common { font-size: 11.5px; color: var(--ink-3); }
+.rv-rs-cfgrow { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 6px; align-items: start; }
+.rv-rs-cfgrow input { margin: 12px 0 0; }
+.rv-rs-cfg { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-surface); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rv-rs-cfg:hover { border-color: var(--line-strong); }
+.rv-rs-cfg[aria-current="true"] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
+.rv-rs-cfg--all { grid-template-columns: 1fr; margin-left: 24px; width: calc(100% - 24px); }
+.rv-rs-cfg-t { display: grid; min-width: 0; }
+.rv-rs-cfg-t b { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-rs-cfg-t span { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-rs-cfg-s { display: grid; justify-items: end; }
+.rv-rs-cfg-s b { font-family: var(--font-mono); font-size: 15px; font-weight: 600; color: var(--pass-ink); }
+.rv-rs-cfg-s b[data-fail] { color: var(--fail-ink); }
+.rv-rs-cfg-s small { font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.rv-rs-cfg-s small[data-low] { text-decoration: underline dotted; cursor: help; }
+.rv-rs-cfg-v { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.rv-rs-cfg-v span { font-family: var(--font-mono); font-size: 11px; padding: 0 5px; border-radius: 3px; background: var(--bg-sunken); color: var(--ink-2); }
+.rv-rs-cfg-v span[data-tone="pass"] { background: var(--pass-soft); color: var(--pass-ink); }
+.rv-rs-cfg-v span[data-tone="fail"] { background: var(--fail-soft); color: var(--fail-ink); }
+.rv-rs-cfg-v span[data-dim] { opacity: .6; }
+.rv-rs-rail-foot { font-size: 11.5px; color: var(--ink-3); padding: 4px 0 0 24px; }
+.rv-rs-main { min-width: 0; }
+.rv-rs-main .rv-cv-bar { padding-top: 0; }
+.rv-rs-main .rv-cv-split { grid-template-columns: 340px minmax(0, 1fr); }
+.rv-cv-bar #pair-go { height: 30px; font-size: 12.5px; }
+
+.rv-cm-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 12px; }
+.rv-cm-tools .rv-input { width: 260px; height: 30px; font-size: 12.5px; }
+.rv-cm-table tr[data-default] > * { background: var(--accent-soft); }
+.rv-cm-default { font-size: 12px; font-weight: 600; color: var(--accent-ink); white-space: nowrap; }
+.rv-app .rv-cm-set { height: 26px; padding: 0 8px; font-size: 12px; white-space: nowrap; }
+.rv-cm-name { display: inline-flex; align-items: center; gap: 6px; }
+.rv-cm-name .rv-icon-btn { width: 22px; height: 22px; font-size: 11px; opacity: .6; }
+.rv-cm-name:hover .rv-icon-btn { opacity: 1; }
+.rv-cm-sub { display: block; font-size: 11.5px; font-weight: 400; color: var(--ink-3); }
+.rv-cm-edit { height: 26px; width: 220px; font-size: 12.5px; }
+.rv-cm-score { display: grid; gap: 3px; min-width: 90px; }
+.rv-cm-score b { font-family: var(--font-mono); color: var(--pass-ink); }
+.rv-cm-score b[data-fail] { color: var(--fail-ink); }
+.rv-cm-score .rv-cp-stat-bar { margin-top: 0; }
+.rv-cm-ghead td { background: var(--bg-page); font-size: 12.5px; }
+.rv-cm-ghead span { color: var(--ink-3); margin-left: 6px; }
+@media (max-width: 1100px) {
+  .rv-rs { grid-template-columns: minmax(0, 1fr); }
+  .rv-rs-rail { position: static; max-height: none; }
+  .rv-rs-main .rv-cv-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+.rv-cm-table td, .rv-cm-table th { white-space: nowrap; }
+.rv-rs-cfg-t b { white-space: normal; overflow: visible; }
+.rv-cp-def-item:has(.rv-cp-warn) { flex: 1 1 180px; }
+.rv-app .rv-cp-def-go { flex-wrap: wrap; max-width: calc(100% - 24px); white-space: normal; text-align: left; }
+
 body{margin:0;background:var(--bg-page)}
 </style>
 </head>
@@ -1142,7 +1222,7 @@ body{margin:0;background:var(--bg-page)}
   </div>
 </aside>
 <div class="rv-main">
-<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 v3.1 · 基于 feat/eval-gaps（d3c9310）· 8 个被测配置示例：指标条按「当前配置 + 分布」、配置表一行一个配置（只写差异）· 对话在下一层 · 数据为示例 · 方案见 doc/13 v3</div>
+<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 v4 · 基于 feat/eval-gaps（d3c9310）· 用例页只放结构与默认配置；各配置结果与对话在下一层「结果」；默认配置在「配置管理」设置 · 数据为示例 · 方案见 doc/13 v4</div>
 
 <!-- ======================================================= 用例（第一层） -->
 <main class="rv-cp" data-view="case">
@@ -1159,7 +1239,7 @@ body{margin:0;background:var(--bg-page)}
     </div>
   </header>
 
-  <section class="rv-cp-stats" id="stats" aria-label="结果概要"></section>
+  <section class="rv-cp-def" id="defbar" aria-label="默认配置的结果"></section>
 
   <div class="rv-cp-body">
     <section aria-label="题面与期望">
@@ -1167,8 +1247,8 @@ body{margin:0;background:var(--bg-page)}
         <h2>题面与期望<span class="rv-cp-hint">计分条目 2 · 权重已分配 <b id="w-alloc">100%</b></span></h2>
         <div class="rv-cp-seg" role="group" aria-label="查看变体的提问">
           <button type="button" data-v="all" aria-pressed="true">全部</button>
-          <button type="button" data-v="0" aria-pressed="false">#0 种子</button>
-          <button type="button" data-v="1" aria-pressed="false">#1 口语</button>
+          <button type="button" data-v="0" aria-pressed="false">#0 种子<em data-vs="0"></em></button>
+          <button type="button" data-v="1" aria-pressed="false">#1 口语<em data-vs="1"></em></button>
           <button type="button" data-v="2" aria-pressed="false">#2 诱导<em>不计分</em></button>
         </div>
       </div>
@@ -1249,34 +1329,57 @@ body{margin:0;background:var(--bg-page)}
     </aside>
   </div>
 
-  <section class="rv-cp-perf" aria-label="各配置表现">
-    <div class="rv-cp-sec-h">
-      <h2>各配置表现<span class="rv-cp-hint">一行一个配置 · 点色块查看这一组对话 · 点配置名设为当前配置</span></h2>
-      <div style="display:flex;align-items:center;gap:16px">
-        <div class="rv-cp-legend"><span><span class="rv-cp-dots"><i data-tone="pass"></i></span>通过</span><span><span class="rv-cp-dots"><i data-tone="fail"></i></span>失败</span><span><span class="rv-cp-dots"><i data-tone="undecided"></i></span>待定</span><span>竖线 = 及格 60</span></div>
-        <button class="rv-btn" type="button" data-open-conv>全部 12 段对话 →</button>
-      </div>
-    </div>
-    <div class="rv-cp-ptools" id="perf-tools"></div>
-    <div class="rv-cp-ctab-wrap"><div class="rv-cp-ctab" id="perf"></div></div>
-  </section>
 </main>
 
-<!-- ======================================================= 对话（第二层） -->
-<main class="rv-cp" data-view="conv" hidden>
-  <nav class="rv-cp-crumb" aria-label="位置"><a href="#">用例管理</a><span aria-hidden="true">/</span><a href="#" data-back>ec-0201</a><span aria-hidden="true">/</span><span>对话</span></nav>
+<!-- ======================================================= 结果（第二层：配置 + 对话） -->
+<main class="rv-cp rv-cp--wide" data-view="results" hidden>
+  <nav class="rv-cp-crumb" aria-label="位置"><a href="#" data-go="cases">用例管理</a><span aria-hidden="true">/</span><a href="#" data-back>ec-0201</a><span aria-hidden="true">/</span><span>结果</span></nav>
   <header class="rv-cv-head">
-    <h1><button class="rv-cv-back" type="button" data-back aria-label="返回用例">←</button>对话 <span style="font-size:13px;font-weight:400;color:var(--ink-3)" id="cv-scope"></span></h1>
+    <h1><button class="rv-cv-back" type="button" data-back aria-label="返回用例">←</button>结果 <span style="font-size:13px;font-weight:400;color:var(--ink-3)" id="rs-sub"></span></h1>
     <div style="display:flex;gap:8px">
-      <button class="rv-btn" type="button" id="pair-go" disabled>并排对照 0/2</button>
+      <button class="rv-btn" type="button" id="cmp-go" disabled>对比选中的 2 个配置 →</button>
       <button class="rv-btn rv-btn--primary" type="button" data-toast="跳到复核队列（只看 ec-0201 的待定对话）">复核待定 2 段 →</button>
     </div>
   </header>
-  <div class="rv-cv-bar" id="cv-bar"></div>
-  <div class="rv-cv-split" id="cv-split">
-    <div class="rv-cv-list" id="cv-list" role="listbox" aria-label="对话列表"></div>
-    <div class="rv-cv-read" id="cv-read"></div>
+  <div class="rv-rs">
+    <aside class="rv-rs-rail" aria-label="被测配置">
+      <div class="rv-rs-rail-h">
+        <b>被测配置</b>
+        <select class="rv-select" id="rail-sort" aria-label="配置排序"><option value="score">按用例分</option><option value="name">按名称</option></select>
+      </div>
+      <input type="search" class="rv-input rv-rs-q" id="rail-q" placeholder="搜索配置，如 qwen high" aria-label="搜索配置">
+      <div class="rv-rs-common" id="rail-common"></div>
+      <div id="rail"></div>
+      <div class="rv-rs-rail-foot">勾选两个配置可对比 · 配置的名称与默认在 <a href="#" data-go="configs">配置管理</a> 设置</div>
+    </aside>
+    <section class="rv-rs-main" aria-label="对话">
+      <div class="rv-cv-bar" id="cv-bar"></div>
+      <div class="rv-cv-split" id="cv-split">
+        <div class="rv-cv-list" id="cv-list" role="listbox" aria-label="对话列表"></div>
+        <div class="rv-cv-read" id="cv-read"></div>
+      </div>
+    </section>
   </div>
+</main>
+
+<!-- ======================================================= 配置管理（独立页面） -->
+<main class="rv-cp rv-cp--wide" data-view="configs" hidden>
+  <nav class="rv-cp-crumb" aria-label="位置"><span>配置管理</span></nav>
+  <header class="rv-cp-head">
+    <div>
+      <h1>配置管理<small>被测配置 = profile（含努力程度）× 模型 × 技能方式 × 知识基底 × 期望版本</small></h1>
+      <div class="rv-cp-sub"><span id="cfg-count"></span><span>默认配置决定用例管理和用例页显示哪一组分数</span><span><a href="#" data-toast="打开执行记录页">执行记录 →</a></span></div>
+    </div>
+    <div class="rv-cp-tools">
+      <button class="rv-btn" type="button" id="cfgm-cmp" disabled>对比选中的 2 个配置 →</button>
+    </div>
+  </header>
+  <div class="rv-cm-tools">
+    <input type="search" class="rv-input" id="cfgm-q" placeholder="搜索配置、模型、执行记录" aria-label="搜索配置">
+    <label class="rv-cp-ctl">分组 <select class="rv-select" id="cfgm-group"><option value="none">不分组</option><option value="model">按模型</option><option value="effort">按努力</option><option value="base">按知识基底</option></select></label>
+    <span class="rv-cp-common" id="cfgm-common"></span>
+  </div>
+  <div class="rv-table-wrap"><table class="rv-table rv-cm-table" id="cfgm"></table></div>
 </main>
 </div>
 <div class="rv-cv-toast" id="p14-toast" role="status" aria-live="polite"></div>
@@ -1375,8 +1478,11 @@ body{margin:0;background:var(--bg-page)}
   function show(v) {
     view = v;
     $$('[data-view]').forEach(function (m) { m.hidden = m.dataset.view !== v; });
+    $$('.rv-nav a').forEach(function (a) { var t = a.textContent.trim(); var on = (v === 'configs') ? t === '配置管理' : t === '用例管理'; if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     try { history.replaceState(null, '', '#' + v); } catch (e) {}
-    if (v === 'conv') renderConv();
+    if (v === 'results') renderConv();
+    if (v === 'configs') renderConfigs();
+    if (v === 'case') renderDef();
     var main = root.querySelector('.rv-main'); if (main && main.scrollIntoView) window.scrollTo(0, 0);
   }
   $$('[data-back]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); show('case'); }); });
@@ -1472,8 +1578,11 @@ body{margin:0;background:var(--bg-page)}
     paintWeights(); toast('已保存为新期望版本 5d1c08e2；运行 rejudge 后分数更新');
   });
 
-  // ---------------------------------------------------------------- 第一层：指标条 + 配置表（与对话同源）
-  var cur = 'k1', perfGroup = 'none', perfSort = 'score', perfAll = false, cmp = [], SHOW = 6;
+  // ---------------------------------------------------------------- 配置：名称（可在配置管理里命名）与默认配置
+  var NAMES = {}, DEFAULT = 'k1';
+  function lab(k) { return NAMES[k] || CFG[k].label; }
+  var GLOBAL = { k1: [74.2, 156], k2: [66.0, 156], k3: [48.5, 156], k4: [76.9, 152], k5: [63.1, 152], k6: [45.0, 152], k7: [72.4, 104], k8: [79.3, 104] };
+
   function cell(v, cfg) {
     var cs = CONVS.filter(function (c) { return c.v === v && c.cfg === cfg; });
     var sc = cs.filter(function (c) { return c.s != null; });
@@ -1487,98 +1596,112 @@ body{margin:0;background:var(--bg-page)}
              prov: parts.some(function (p) { return p.und.length; }), n: ok.reduce(function (a, p) { return a + p.sc.length; }, 0) };
   }
   var SCORE = {}; CFGS.forEach(function (k) { SCORE[k] = caseScore(k); });
-  var RANKED = CFGS.slice().sort(function (a, b) { return (SCORE[b].s || 0) - (SCORE[a].s || 0); });
-  function rankOf(k) { return RANKED.filter(function (x) { return SCORE[x].s > SCORE[k].s; }).length + 1; }
   function bar(s) { return '<div class="rv-cp-stat-bar"><i' + (s < PASS ? ' data-fail' : '') + ' style="width:' + s + '%"></i><b style="left:' + PASS + '%"></b></div>'; }
-  function strip() {
-    var W0 = 300, x = function (s) { return 8 + s / 100 * (W0 - 16); }, used = {}, dots = '';
-    RANKED.slice().reverse().forEach(function (k) {
-      var s = SCORE[k].s, bx = Math.round(x(s) / 9), lvl = used[bx] = (used[bx] || 0) + 1;
-      var y = 30 - (lvl - 1) * 9, me = k === cur;
-      dots += '<circle cx="' + x(s).toFixed(1) + '" cy="' + y + '" r="' + (me ? 6 : 4.5) + '" fill="' + (s >= PASS ? 'var(--pass-solid)' : 'var(--fail-solid)') + '"' +
-        (me ? ' stroke="var(--ink)" stroke-width="2"' : ' stroke="var(--bg-surface)" stroke-width="1.5"') + ' data-pick="' + k + '" style="cursor:pointer"><title>' + CFG[k].label + ' · ' + f1(s) + '</title></circle>';
-    });
-    return '<svg viewBox="0 0 ' + W0 + ' 46" role="img" aria-label="各配置用例分分布">' +
-      '<line x1="8" y1="30" x2="' + (W0 - 8) + '" y2="30" stroke="var(--line-strong)" stroke-width="1"/>' +
-      '<line x1="' + x(PASS) + '" y1="14" x2="' + x(PASS) + '" y2="40" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="2 2"/>' +
-      '<text x="8" y="44" font-size="8" fill="var(--ink-3)">0</text><text x="' + (x(PASS) - 4) + '" y="44" font-size="8" fill="var(--ink-3)">60</text><text x="' + (W0 - 18) + '" y="44" font-size="8" fill="var(--ink-3)">100</text>' + dots + '</svg>';
-  }
-  function renderStats() {
-    var s = SCORE[cur], hi = RANKED[0], lo = RANKED[RANKED.length - 1];
-    var mine = CONVS.filter(function (c) { return c.cfg === cur; });
-    var counted = mine.filter(function (c) { return !VARS[c.v].excluded; });
-    var und = CONVS.filter(function (c) { return c.st === 'undecided'; }).length;
-    var html = '<div class="rv-cp-stat"><div class="rv-cp-stat-k">当前配置</div>' +
-      '<select class="rv-select rv-cp-cur" id="cur-cfg" aria-label="当前配置">' + RANKED.map(function (k) { return '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + CFG[k].label + '（' + f1(SCORE[k].s) + '）</option>'; }).join('') + '</select>' +
-      '<div class="rv-cp-stat-v">' + f1(s.s) + '<small>' + (s.prov ? '临时 · ' : '') + '第 ' + rankOf(cur) + ' / ' + CFGS.length + '</small></div>' + bar(s.s) + '</div>';
-    html += '<div class="rv-cp-stat rv-cp-strip"><div class="rv-cp-stat-k">配置分布 <span>' + CFGS.length + ' 个 · 点圆点切换当前配置</span></div>' + strip() +
-      '<div class="rv-cp-strip-note"><span title="' + CFG[lo].label + '">最低 <b>' + f1(SCORE[lo].s) + '</b> ' + CFG[lo].label + '</span><span title="' + CFG[hi].label + '">最高 <b>' + f1(SCORE[hi].s) + '</b> ' + CFG[hi].label + '</span></div></div>';
-    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">当前配置通过</div><div class="rv-cp-stat-v">' + counted.filter(function (c) { return c.st === 'pass'; }).length + '<small>/ ' + counted.length + ' 段</small></div><div class="rv-cp-stat-note">另有诱导 ' + (mine.length - counted.length) + ' 段不计分</div></div>';
-    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">待定（全部配置）</div><div class="rv-cp-stat-v">' + und + '<small>段</small></div><div class="rv-cp-stat-note"><a href="#" data-jump="und">查看</a> · <a href="#" data-toast-j>去复核</a></div></div>';
-    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">用例体检</div><div class="rv-cp-warn">forced 前提成立率偏低</div><div class="rv-cp-stat-note">forced 会话 32 段中 3 段前提不成立</div></div>';
-    $('#stats').innerHTML = html;
-    $('#cur-cfg').addEventListener('change', function () { setCur(this.value); });
-    $$('[data-pick]', $('#stats')).forEach(function (d) { d.addEventListener('click', function () { setCur(d.dataset.pick); }); });
-    $('[data-jump="und"]').addEventListener('click', function (e) { e.preventDefault(); openConv({ st: ['undecided'] }); });
-    $('[data-toast-j]').addEventListener('click', function (e) { e.preventDefault(); toast('跳到复核队列（只看 ec-0201 的待定对话）'); });
-  }
-  function setCur(k) { cur = k; renderStats(); renderPerf(); }
 
-  function tile(v, k) {
-    var c = cell(v.i, k), tone = c.avg == null ? '' : (c.avg >= PASS ? 'pass' : 'fail');
-    var dots = c.cs.map(function (x) { return '<i data-tone="' + ST[x.st][0] + '" title="第 ' + x.t + ' 次 · ' + (x.s != null ? x.s + ' 分' : '待定 ' + x.range.join('–')) + '"></i>'; }).join('');
-    return '<button type="button" class="rv-cp-tile rv-cp-tile--sm" data-tone="' + tone + '"' + (v.excluded ? ' data-dim' : '') + ' data-cell="' + v.i + '|' + k + '" title="' + CFG[k].label + ' × ' + v.label + '：' + c.cs.map(function (x) { return x.s != null ? x.s : '待定'; }).join(' / ') + ' · 点击查看对话">' +
-      '<span class="rv-cp-tile-top"><span class="rv-cp-tile-n">' + f1(c.avg) + '</span><span class="rv-cp-dots">' + dots + '</span></span></button>';
+  // ---------------------------------------------------------------- 第一层：默认配置的结果（一行）+ 变体分值
+  function renderDef() {
+    var k = DEFAULT, s = SCORE[k], mine = CONVS.filter(function (c) { return c.cfg === k; });
+    var counted = mine.filter(function (c) { return !VARS[c.v].excluded; });
+    var und = mine.filter(function (c) { return c.st === 'undecided'; }).length, undAll = CONVS.filter(function (c) { return c.st === 'undecided'; }).length;
+    $('#defbar').innerHTML =
+      '<div class="rv-cp-def-cfg"><span class="rv-cp-def-k">默认配置</span><b title="' + CFG[k].runId + '">' + lab(k) + '</b><a href="#" data-go="configs" class="rv-cp-def-set">在配置管理中更改</a></div>' +
+      '<div class="rv-cp-def-item"><span class="rv-cp-def-k">用例分</span><span class="rv-cp-def-v">' + f1(s.s) + '<small>' + (s.prov ? '临时 · ' : '') + 'n=' + s.n + '</small></span>' + bar(s.s) + '</div>' +
+      '<div class="rv-cp-def-item"><span class="rv-cp-def-k">通过</span><span class="rv-cp-def-v">' + counted.filter(function (c) { return c.st === 'pass'; }).length + '<small>/ ' + counted.length + ' 段</small></span></div>' +
+      '<div class="rv-cp-def-item"><span class="rv-cp-def-k">待定</span><span class="rv-cp-def-v">' + und + '<small>段</small></span><a href="#" class="rv-cp-def-note" data-und>全部配置共 ' + undAll + ' 段 →</a></div>' +
+      '<div class="rv-cp-def-item"><span class="rv-cp-def-k">用例体检</span><span class="rv-cp-warn">forced 前提成立率偏低</span></div>' +
+      '<button class="rv-btn rv-cp-def-go" type="button" data-open-results>各配置结果与对话<small>' + CFGS.length + ' 个配置 · ' + CONVS.length + ' 段</small> →</button>';
+    VARS.forEach(function (v) {
+      var em = $('[data-vs="' + v.i + '"]'); if (!em) return;
+      var c = cell(v.i, k); em.textContent = c.avg == null ? '' : f1(c.avg);
+      em.setAttribute('data-tone', c.avg == null ? '' : c.avg >= PASS ? 'pass' : 'fail');
+      em.title = '默认配置下的均分';
+    });
+    bindGo($('#defbar'));
+    $('[data-open-results]').addEventListener('click', function () { openResults({ cfg: [DEFAULT] }); });
+    $('[data-und]').addEventListener('click', function (e) { e.preventDefault(); openResults({ st: ['undecided'] }); });
   }
-  function crow(k) {
-    var s = SCORE[k];
-    return '<div class="rv-cp-crow"' + (k === cur ? ' data-cur' : '') + '>' +
-      '<input type="checkbox" data-cmp="' + k + '"' + (cmp.indexOf(k) >= 0 ? ' checked' : '') + (cmp.length >= 2 && cmp.indexOf(k) < 0 ? ' disabled' : '') + ' aria-label="选入对比">' +
-      '<button type="button" class="rv-cp-cfg" data-setcur="' + k + '" title="设为当前配置"><b>' + (k === cur ? '★ ' : '') + CFG[k].label + '</b><span title="' + CFG[k].runId + '">' + CFG[k].run + '</span></button>' +
-      '<div class="rv-cp-cscore"><span>' + f1(s.s) + (s.prov ? '<small>临时</small>' : '') + '</span>' + bar(s.s) + '</div>' +
-      VARS.map(function (v) { return tile(v, k); }).join('') + '</div>';
+  function bindGo(scope) {
+    $$('[data-go]', scope).forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); show(a.dataset.go === 'cases' ? 'case' : a.dataset.go); }); });
   }
-  function renderPerf() {
-    var vars = 'style="--vars:' + VARS.length + '"';
-    var tools = '<div class="rv-cp-common">共同属性：' + COMMON.map(function (a) { return a[1] + ' <b>' + CFG[CFGS[0]][a[0]] + '</b>'; }).join(' · ') + ' · 配置名只写差异（' + VARY.map(function (a) { return a[1]; }).join(' · ') + '）</div>' +
-      '<label class="rv-cp-ctl">分组 <select class="rv-select" id="perf-group"><option value="none">不分组</option>' + VARY.map(function (a) { return '<option value="' + a[0] + '"' + (perfGroup === a[0] ? ' selected' : '') + '>按' + a[1] + '</option>'; }).join('') + '</select></label>' +
-      '<label class="rv-cp-ctl">排序 <select class="rv-select" id="perf-sort"><option value="score">用例分</option><option value="name"' + (perfSort === 'name' ? ' selected' : '') + '>名称</option></select></label>' +
-      '<button class="rv-btn" type="button" id="cmp-go"' + (cmp.length === 2 ? '' : ' disabled') + '>对比选中的 2 个配置 →</button>';
-    $('#perf-tools').innerHTML = tools;
-    var head = '<div class="rv-cp-crow rv-cp-crow--h" ' + vars + '><span></span><span>配置</span><span>用例分</span>' + VARS.map(function (v) {
-      return '<span title="' + esc(v.turn ? Q[v.i][v.turn] : Q.seed[1]) + '">' + v.label + (v.excluded ? ' <em>不计分</em>' : '') + '</span>';
-    }).join('') + '</div>';
-    var order = CFGS.slice().sort(function (a, b) { return perfSort === 'name' ? CFG[a].label.localeCompare(CFG[b].label) : (SCORE[b].s || 0) - (SCORE[a].s || 0); });
+
+  // ---------------------------------------------------------------- 配置管理（独立页面）
+  var cmGroup = 'none', cmQ = '', cmCmp = [];
+  function renderConfigs() {
+    $('#cfg-count').textContent = CFGS.length + ' 个被测配置';
+    $('#cfgm-common').innerHTML = '所有配置相同、不单列：' + COMMON.map(function (a) { return a[1] + ' <b>' + CFG[CFGS[0]][a[0]] + '</b>'; }).join(' · ');
+    var head = '<thead><tr><th></th><th>默认</th><th>名称</th>' + VARY.map(function (a) { return '<th' + (a[0] === 'effort' ? ' title="取自 profile 的 reasoning_effort"' : '') + '>' + a[1] + '</th>'; }).join('') + '<th class="rv-num">对话</th><th class="rv-num">待定</th><th>综合分</th><th>关联执行</th></tr></thead>';
+    var ks = CFGS.filter(function (k) { var t = (lab(k) + ' ' + CFG[k].label + ' ' + CFG[k].run).toLowerCase(); return cmQ.split(/\s+/).filter(Boolean).every(function (w) { return t.indexOf(w) >= 0; }); })
+      .sort(function (a, b) { return GLOBAL[b][0] - GLOBAL[a][0]; });
+    function row(k) {
+      var g = GLOBAL[k], und = k === 'k1' ? 3 : k === 'k6' ? 2 : 0;
+      return '<tr' + (k === DEFAULT ? ' data-default' : '') + '><td><input type="checkbox" data-cm="' + k + '"' + (cmCmp.indexOf(k) >= 0 ? ' checked' : '') + (cmCmp.length >= 2 && cmCmp.indexOf(k) < 0 ? ' disabled' : '') + ' aria-label="选入对比"></td>' +
+        '<td>' + (k === DEFAULT ? '<span class="rv-cm-default">★ 默认</span>' : '<button class="rv-btn rv-btn--ghost rv-cm-set" type="button" data-setdef="' + k + '">设为默认</button>') + '</td>' +
+        '<th scope="row"><span class="rv-cm-name"><b data-name="' + k + '">' + lab(k) + '</b><button class="rv-icon-btn" type="button" data-rename="' + k + '" title="命名">✎</button></span>' + (NAMES[k] ? '<span class="rv-cm-sub">' + CFG[k].label + '</span>' : '') + '</th>' +
+        VARY.map(function (a) { return '<td>' + CFG[k][a[0]] + '</td>'; }).join('') +
+        '<td class="rv-num">' + g[1] + '</td><td class="rv-num">' + (und ? '<span class="rv-state" data-s="need">' + und + '</span>' : '—') + '</td>' +
+        '<td><span class="rv-cm-score"><b' + (g[0] < PASS ? ' data-fail' : '') + '>' + f1(g[0]) + '</b>' + bar(g[0]) + '</span></td>' +
+        '<td><a href="#" data-toast="打开执行记录 ' + CFG[k].runId + '" title="' + CFG[k].runId + '">' + CFG[k].run + '</a></td></tr>';
+    }
     var body = '';
-    if (perfGroup === 'none') {
-      var rest = order.filter(function (k) { return k !== cur; });
-      var shown = [cur].concat(perfAll ? rest : rest.slice(0, SHOW - 1));
-      body = shown.map(crow).join('');
-      if (rest.length > SHOW - 1) body += '<div class="rv-cp-more"><button class="rv-btn rv-btn--ghost" type="button" id="perf-more">' + (perfAll ? '收起，只看前 ' + SHOW + ' 个' : '显示其余 ' + (rest.length - (SHOW - 1)) + ' 个配置 ▾') + '</button></div>';
-    } else {
-      var groups = {};
-      order.forEach(function (k) { (groups[CFG[k][perfGroup]] = groups[CFG[k][perfGroup]] || []).push(k); });
-      Object.keys(groups).sort(function (a, b) { var m = function (g) { return groups[g].reduce(function (s, k) { return s + SCORE[k].s; }, 0) / groups[g].length; }; return m(b) - m(a); }).forEach(function (g) {
-        var ks = groups[g], avg = ks.reduce(function (s, k) { return s + SCORE[k].s; }, 0) / ks.length;
-        body += '<div class="rv-cp-ghead"><b>' + VARY.filter(function (a) { return a[0] === perfGroup; })[0][1] + '：' + g + '</b><span>' + ks.length + ' 个配置 · 平均用例分 ' + f1(avg) + '</span></div>' + ks.map(crow).join('');
+    if (cmGroup === 'none') body = ks.map(row).join('');
+    else {
+      var groups = {}; ks.forEach(function (k) { (groups[CFG[k][cmGroup]] = groups[CFG[k][cmGroup]] || []).push(k); });
+      Object.keys(groups).forEach(function (g) {
+        var avg = groups[g].reduce(function (s, k) { return s + GLOBAL[k][0]; }, 0) / groups[g].length;
+        body += '<tr class="rv-cm-ghead"><td colspan="' + (7 + VARY.length) + '"><b>' + g + '</b> <span>' + groups[g].length + ' 个配置 · 平均综合分 ' + f1(avg) + '</span></td></tr>' + groups[g].map(row).join('');
       });
     }
-    $('#perf').innerHTML = head + body.replace(/class="rv-cp-crow"/g, 'class="rv-cp-crow" ' + vars);
-    $$('[data-cell]').forEach(function (b) { b.addEventListener('click', function () { var p = b.dataset.cell.split('|'); openConv({ v: [+p[0]], cfg: [p[1]] }); }); });
-    $$('[data-setcur]').forEach(function (b) { b.addEventListener('click', function () { setCur(b.dataset.setcur); }); });
-    $$('[data-cmp]').forEach(function (cb) { cb.addEventListener('change', function () { var k = cb.dataset.cmp, i = cmp.indexOf(k); if (cb.checked && i < 0 && cmp.length < 2) cmp.push(k); if (!cb.checked && i >= 0) cmp.splice(i, 1); renderPerf(); }); });
-    $('#perf-group').addEventListener('change', function () { perfGroup = this.value; renderPerf(); });
-    $('#perf-sort').addEventListener('change', function () { perfSort = this.value; renderPerf(); });
-    var more = $('#perf-more'); if (more) more.addEventListener('click', function () { perfAll = !perfAll; renderPerf(); });
-    $('#cmp-go').addEventListener('click', function () { toast('打开结果对比：' + CFG[cmp[0]].label + ' → ' + CFG[cmp[1]].label + '（限定 ec-0201）'); });
-    $$('[data-open-conv]').forEach(function (b) { b.textContent = '全部 ' + CONVS.length + ' 段对话 →'; });
+    $('#cfgm').innerHTML = head + '<tbody>' + (body || '<tr><td colspan="' + (7 + VARY.length) + '"><div class="rv-empty"><b>没有匹配的配置</b></div></td></tr>') + '</tbody>';
+    $$('[data-setdef]').forEach(function (b) { b.addEventListener('click', function () { DEFAULT = b.dataset.setdef; renderConfigs(); renderDef(); toast('默认配置改为「' + lab(DEFAULT) + '」；用例管理和用例页随之切换'); }); });
+    $$('[data-rename]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.dataset.rename, el = $('[data-name="' + k + '"]'), inp = document.createElement('input');
+        inp.className = 'rv-input rv-cm-edit'; inp.value = NAMES[k] || ''; inp.placeholder = CFG[k].label + '（留空 = 用属性名）';
+        el.replaceWith(inp); inp.focus();
+        var done = false;
+        function commit() { if (done) return; done = true; var v = inp.value.trim(); if (v) NAMES[k] = v; else delete NAMES[k]; renderConfigs(); renderDef(); }
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { done = true; renderConfigs(); } });
+        inp.addEventListener('blur', commit);
+      });
+    });
+    $$('[data-cm]').forEach(function (cb) { cb.addEventListener('change', function () { var k = cb.dataset.cm, i = cmCmp.indexOf(k); if (cb.checked && i < 0 && cmCmp.length < 2) cmCmp.push(k); if (!cb.checked && i >= 0) cmCmp.splice(i, 1); renderConfigs(); }); });
+    $$('#cfgm [data-toast]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); toast(a.dataset.toast); }); });
+    $('#cfgm-cmp').disabled = cmCmp.length !== 2;
   }
-  $$('[data-open-conv]').forEach(function (b) { b.addEventListener('click', function () { openConv({}); }); });
+  $('#cfgm-q').addEventListener('input', function () { cmQ = this.value.trim().toLowerCase(); renderConfigs(); });
+  $('#cfgm-group').addEventListener('change', function () { cmGroup = this.value; renderConfigs(); });
+  $('#cfgm-cmp').addEventListener('click', function () { toast('打开结果对比：' + lab(cmCmp[0]) + ' → ' + lab(cmCmp[1]) + '（全部用例）'); });
+
+  // ---------------------------------------------------------------- 第二层「结果」：左侧配置栏
+  var railSort = 'score', railQ = '', rsCmp = [];
+  function renderRail() {
+    $('#rail-common').innerHTML = '共同：' + COMMON.map(function (a) { return CFG[CFGS[0]][a[0]]; }).join(' · ');
+    var ks = CFGS.filter(function (k) { var t = (lab(k) + ' ' + CFG[k].label).toLowerCase(); return railQ.split(/\s+/).filter(Boolean).every(function (w) { return t.indexOf(w) >= 0; }); })
+      .sort(function (a, b) { return railSort === 'name' ? lab(a).localeCompare(lab(b)) : (SCORE[b].s || 0) - (SCORE[a].s || 0); });
+    ks.sort(function (a, b) { return (b === DEFAULT) - (a === DEFAULT); });
+    var all = F.cfg.length === CFGS.length;
+    var html = '<button type="button" class="rv-rs-cfg rv-rs-cfg--all"' + (all ? ' aria-current="true"' : '') + ' data-pickcfg="__all"><span class="rv-rs-cfg-t"><b>全部配置</b><span>' + CONVS.length + ' 段对话</span></span></button>';
+    html += ks.map(function (k) {
+      var s = SCORE[k], on = !all && F.cfg.length === 1 && F.cfg[0] === k, low = s.n < 3;
+      var vs = VARS.map(function (v) { var c = cell(v.i, k); return '<span data-tone="' + (c.avg == null ? '' : c.avg >= PASS ? 'pass' : 'fail') + '"' + (v.excluded ? ' data-dim' : '') + ' title="' + v.label + '：' + c.cs.map(function (x) { return x.s != null ? x.s : '待定'; }).join(' / ') + '">#' + v.i + ' ' + (c.avg == null ? '—' : Math.round(c.avg)) + '</span>'; }).join('');
+      return '<div class="rv-rs-cfgrow"><input type="checkbox" data-rscmp="' + k + '"' + (rsCmp.indexOf(k) >= 0 ? ' checked' : '') + (rsCmp.length >= 2 && rsCmp.indexOf(k) < 0 ? ' disabled' : '') + ' aria-label="选入对比">' +
+        '<button type="button" class="rv-rs-cfg"' + (on ? ' aria-current="true"' : '') + ' data-pickcfg="' + k + '">' +
+        '<span class="rv-rs-cfg-t"><b>' + (k === DEFAULT ? '★ ' : '') + lab(k) + '</b><span title="' + CFG[k].runId + '">' + CFG[k].run + '</span></span>' +
+        '<span class="rv-rs-cfg-s"><b' + (s.s < PASS ? ' data-fail' : '') + '>' + f1(s.s) + '</b><small' + (low ? ' data-low title="样本少于 3 段，分数仅供参考"' : '') + '>n=' + s.n + (s.prov ? ' · 临时' : '') + '</small></span>' +
+        '<span class="rv-rs-cfg-v">' + vs + '</span></button></div>';
+    }).join('');
+    $('#rail').innerHTML = html;
+    $$('[data-pickcfg]').forEach(function (b) { b.addEventListener('click', function () { F.cfg = b.dataset.pickcfg === '__all' ? CFGS.slice() : [b.dataset.pickcfg]; sel = null; pair = []; pairOn = false; renderConv(); }); });
+    $$('[data-rscmp]').forEach(function (cb) { cb.addEventListener('change', function () { var k = cb.dataset.rscmp, i = rsCmp.indexOf(k); if (cb.checked && i < 0 && rsCmp.length < 2) rsCmp.push(k); if (!cb.checked && i >= 0) rsCmp.splice(i, 1); renderRail(); $('#cmp-go').disabled = rsCmp.length !== 2; }); });
+  }
+  $('#rail-sort').addEventListener('change', function () { railSort = this.value; renderRail(); });
+  $('#rail-q').addEventListener('input', function () { railQ = this.value.trim().toLowerCase(); renderRail(); });
+  $('#cmp-go').addEventListener('click', function () { toast('打开结果对比：' + lab(rsCmp[0]) + ' → ' + lab(rsCmp[1]) + '（限定 ec-0201）'); });
 
   // ---------------------------------------------------------------- 第二层：对话
   var DEF = function () { return { v: [0, 1], cfg: CFGS.slice(), st: ['undecided', 'fail', 'pass', 'invalid'], human: false, sort: 'pending' }; };
   var F = DEF(), sel = null, pair = [], pairOn = false;
-  function openConv(over) { F = DEF(); for (var k in over) F[k] = over[k]; sel = null; pair = []; pairOn = false; show('conv'); }
+  function openResults(over) { F = DEF(); for (var k in over) F[k] = over[k]; sel = null; pair = []; pairOn = false; show('results'); }
   function pass(c, skip) {
     return (skip === 'v' || F.v.indexOf(c.v) >= 0) && (skip === 'cfg' || F.cfg.indexOf(c.cfg) >= 0) &&
            (skip === 'st' || F.st.indexOf(c.st) >= 0) && (skip === 'human' || !F.human || c.human);
@@ -1598,22 +1721,18 @@ body{margin:0;background:var(--bg-page)}
     var vOpts = VARS.map(function (v) { return { val: v.i, label: v.label + (v.excluded ? ' <small style="color:var(--ink-3)">不计分</small>' : ''), match: function (c) { return c.v === v.i; } }; });
     var cOpts = CFGS.map(function (k) { return { val: k, label: CFG[k].label, match: function (c) { return c.cfg === k; } }; });
     var sOpts = [['undecided', '待定'], ['fail', '失败'], ['pass', '通过'], ['invalid', '无效']].map(function (s) { return { val: s[0], label: s[1], match: function (c) { return c.st === s[0]; } }; });
-    function cfgMenu(opts) {
-      var models = []; CFGS.forEach(function (k) { if (models.indexOf(CFG[k].model) < 0) models.push(CFG[k].model); });
-      return '<input type="search" class="rv-input rv-cv-msearch" placeholder="搜索配置，如 qwen high" data-cfgq aria-label="搜索配置">' +
-        '<div class="rv-cv-menu-acts"><a href="#" data-cfgset="all">全选</a><a href="#" data-cfgset="none">清空</a><a href="#" data-cfgset="cur">只看当前配置</a></div>' +
-        models.map(function (m) { return '<div class="rv-cv-mg" data-mg>模型 · ' + m + '</div>' + checks('cfg', opts.filter(function (o) { return CFG[o.val].model === m; })); }).join('');
-    }
     var sum = function (arr, all, name) { return arr.length === all.length ? '全部' : arr.length ? arr.map(name).join('、') : '无'; };
     var sorts = [['pending', '待定在前'], ['score', '分数低在前'], ['time', '执行顺序']];
     var html =
       menu('v', '变体', checks('v', vOpts), F.v.join() === d.v.join() ? '默认（不含诱导）' : sum(F.v, VARS, function (i) { return '#' + i; }), F.v.join() !== d.v.join()) +
-      menu('cfg', '被测配置', cfgMenu(cOpts), F.cfg.length === CFGS.length ? '全部 ' + CFGS.length + ' 个' : F.cfg.length <= 2 ? F.cfg.map(function (k) { return CFG[k].label; }).join('、') || '无' : F.cfg.length + ' 个', F.cfg.length !== CFGS.length) +
       menu('st', '结论', checks('st', sOpts), sum(F.st, sOpts, function (s) { return ST[s][1]; }), F.st.length !== 4) +
       menu('human', '人工', checks('human', [{ val: 'h', label: '只看有人工改判', match: function (c) { return c.human; } }]), F.human ? '只看改判' : '不限', F.human) +
       menu('sort', '排序', sorts.map(function (s) { return '<label><input type="radio" name="p14sort" data-sort value="' + s[0] + '"' + (F.sort === s[0] ? ' checked' : '') + '><span>' + s[1] + '</span><span></span></label>'; }).join(''), sorts.filter(function (s) { return s[0] === F.sort; })[0][1], false);
     var shown = CONVS.filter(function (c) { return pass(c); }).length;
-    html += '<span class="rv-cv-count">' + shown + ' / ' + CONVS.length + ' 段' + (JSON.stringify(F) !== JSON.stringify(d) ? '<a href="#" data-reset>清除筛选</a>' : '') + '</span>';
+    var inCfg = CONVS.filter(function (c) { return F.cfg.indexOf(c.cfg) >= 0; }).length;
+    var dd = DEF(); dd.cfg = F.cfg.slice();
+    html += '<span class="rv-cv-count">' + shown + ' / ' + inCfg + ' 段' + (JSON.stringify(F) !== JSON.stringify(dd) ? '<a href="#" data-reset>清除筛选</a>' : '') + '</span>' +
+      '<button class="rv-btn" type="button" id="pair-go"' + (pair.length === 2 || pairOn ? '' : ' disabled') + '>' + (pairOn ? '退出对照' : '并排对照 ' + pair.length + '/2') + '</button>';
     var openKey = (root.querySelector('.rv-cv-filter[open]') || {}).dataset;
     $('#cv-bar').innerHTML = html;
     if (openKey && openKey.menu) { var m = $('[data-menu="' + openKey.menu + '"]'); if (m) m.open = true; }
@@ -1625,19 +1744,9 @@ body{margin:0;background:var(--bg-page)}
         renderConv();
       });
     });
-    var q = $('[data-cfgq]');
-    if (q) q.addEventListener('input', function () {
-      var t = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-      $$('[data-menu="cfg"] label').forEach(function (l) { var tx = l.textContent.toLowerCase(); l.hidden = !t.every(function (w) { return tx.indexOf(w) >= 0; }); });
-      $$('[data-menu="cfg"] [data-mg]').forEach(function (g) {
-        var any = false, n = g.nextElementSibling;
-        while (n && !n.hasAttribute('data-mg')) { if (n.tagName === 'LABEL' && !n.hidden) any = true; n = n.nextElementSibling; }
-        g.hidden = !any;
-      });
-    });
-    $$('[data-cfgset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); var m = a.dataset.cfgset; F.cfg = m === 'all' ? CFGS.slice() : m === 'cur' ? [cur] : []; renderConv(); }); });
     $$('[data-sort]').forEach(function (r) { r.addEventListener('change', function () { F.sort = r.value; renderConv(); }); });
-    $$('[data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); }); });
+    $$('[data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); var keep = F.cfg; F = DEF(); F.cfg = keep; renderConv(); }); });
+    $('#pair-go').addEventListener('click', function () { pairOn = !pairOn && pair.length === 2; renderConv(); });
     $$('.rv-cv-filter').forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) $$('.rv-cv-filter').forEach(function (o) { if (o !== d) o.open = false; }); }); });
   }
   function itemsLine(it, onlyTurn2) {
@@ -1650,7 +1759,7 @@ body{margin:0;background:var(--bg-page)}
     return '<span class="rv-cv-score" data-tone="' + ST[c.st][0] + '"><span>' + c.s + '<small>' + ST[c.st][1] + '</small></span></span>';
   }
   function renderConv() {
-    renderBar();
+    renderRail(); renderBar();
     var shown = CONVS.filter(function (c) { return pass(c); });
     var rank = { undecided: 0, fail: 1, pass: 2, invalid: 3 };
     var mid = function (c) { return c.s == null ? (c.range[0] + c.range[1]) / 2 : c.s; };
@@ -1666,7 +1775,7 @@ body{margin:0;background:var(--bg-page)}
         return '<div class="rv-cv-row" role="option" data-row="' + c.id + '"' + (sel === c.id ? ' aria-selected="true"' : '') + '>' +
           '<input type="checkbox" data-pair="' + c.id + '"' + (pair.indexOf(c.id) >= 0 ? ' checked' : '') + (pair.length >= 2 && pair.indexOf(c.id) < 0 ? ' disabled' : '') + ' aria-label="选入并排对照">' +
           scoreBadge(c) +
-          '<div><div class="rv-cv-row-t">' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
+          '<div><div class="rv-cv-row-t">' + (F.cfg.length === 1 ? '' : lab(c.cfg) + ' · ') + '第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
           '<div class="rv-cv-row-m" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</div>' + itemsLine(ANS[c.a].it, true) + '</div></div>';
       }).join('');
       else if (F.v.indexOf(v.i) < 0) {
@@ -1678,12 +1787,7 @@ body{margin:0;background:var(--bg-page)}
     $('#cv-list').innerHTML = html;
     if (!sel || !shown.some(function (c) { return c.id === sel; })) sel = shown.length ? shown[0].id : null;
     $$('[data-row]').forEach(function (r) { if (r.dataset.row === sel) r.setAttribute('aria-selected', 'true'); });
-    var scope = [];
-    if (F.v.join() !== DEF().v.join()) scope.push(F.v.map(function (i) { return VARS[i].label; }).join('、'));
-    if (F.cfg.length !== CFGS.length) scope.push(F.cfg.map(function (k) { return CFG[k].label; }).join('、'));
-    $('#cv-scope').textContent = scope.length ? scope.join(' × ') : 'ec-0201 · 全部计分变体';
-    $('#pair-go').disabled = pair.length !== 2 && !pairOn;
-    $('#pair-go').textContent = pairOn ? '退出对照' : '并排对照 ' + pair.length + '/2';
+    $('#rs-sub').textContent = 'ec-0201 · ' + (F.cfg.length === CFGS.length ? '全部 ' + CFGS.length + ' 个配置' : F.cfg.map(lab).join('、')) + ' · 期望版本 a3f9c210';
     bindRows(); renderRead();
   }
   function bindRows() {
@@ -1692,7 +1796,7 @@ body{margin:0;background:var(--bg-page)}
         if (e.target.closest('input,a')) return;
         sel = r.dataset.row; pairOn = false;
         $$('[data-row]').forEach(function (x) { if (x === r) x.setAttribute('aria-selected', 'true'); else x.removeAttribute('aria-selected'); });
-        $('#pair-go').textContent = '并排对照 ' + pair.length + '/2'; $('#pair-go').disabled = pair.length !== 2;
+        var pg = $('#pair-go'); pg.textContent = '并排对照 ' + pair.length + '/2'; pg.disabled = pair.length !== 2;
         renderRead();
       });
     });
@@ -1719,36 +1823,36 @@ body{margin:0;background:var(--bg-page)}
     if (pairOn && pair.length === 2) {
       box.innerHTML = '<div class="rv-cv-read-h" style="margin-bottom:12px"><h2>并排对照</h2><span class="rv-cv-read-m">逐轮左右对照 · 在左侧取消勾选可换一段</span></div><div class="rv-cv-pair">' + pair.map(function (id) {
         var c = byId[id];
-        return '<div><div class="rv-cv-pair-h"><b>' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次</b></div>' + convBody(c, true) + '</div>';
+        return '<div><div class="rv-cv-pair-h"><b>' + vName(c) + ' · ' + lab(c.cfg) + ' · 第 ' + c.t + ' 次</b></div>' + convBody(c, true) + '</div>';
       }).join('') + '</div>';
       return;
     }
     var c = byId[sel];
     if (!c) { box.innerHTML = '<div class="rv-empty"><b>未选中对话</b><span>在左侧选择一段。</span></div>'; return; }
-    box.innerHTML = '<div class="rv-cv-read-h"><div><h2>' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次</h2>' +
+    box.innerHTML = '<div class="rv-cv-read-h"><div><h2>' + vName(c) + ' · ' + lab(c.cfg) + ' · 第 ' + c.t + ' 次</h2>' +
       '<div class="rv-cv-read-m">ec-0201#' + c.v + ' · forced · ' + CFG[c.cfg].evalset + ' · <span title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span> · 技能 bundled-copy · 注入 电放时机 · 反转</div></div>' +
       '<button class="rv-btn rv-btn--primary" type="button" data-review>进入复核 →</button></div>' + convBody(c) +
       '<div class="rv-cv-read-m">只读预览 · 改判请进入复核页 · ↑↓ 切换 · 空格 选入对照 · Enter 复核</div>';
-    $('[data-review]', box).addEventListener('click', function () { toast('进入复核页：' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次'); });
+    $('[data-review]', box).addEventListener('click', function () { toast('进入复核页：' + vName(c) + ' · ' + lab(c.cfg) + ' · 第 ' + c.t + ' 次'); });
   }
-  $('#pair-go').addEventListener('click', function () { pairOn = !pairOn && pair.length === 2; renderConv(); });
   document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('.rv-cv-filter')) $$('.rv-cv-filter[open]').forEach(function (d) { d.open = false; }); });
   document.addEventListener('keydown', function (e) {
-    if (view !== 'conv') return;
+    if (view !== 'results') return;
     if (/^(INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY)$/.test((document.activeElement || {}).tagName || '')) return;
     var rows = $$('[data-row]').map(function (r) { return r.dataset.row; }), i = rows.indexOf(sel);
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault(); sel = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]; pairOn = false;
       $$('[data-row]').forEach(function (x) { if (x.dataset.row === sel) { x.setAttribute('aria-selected', 'true'); x.scrollIntoView({ block: 'nearest' }); } else x.removeAttribute('aria-selected'); });
       renderRead();
-    } else if (e.key === 'Enter' && sel) toast('进入复核页：' + vName(byId[sel]) + ' · ' + CFG[byId[sel].cfg].label + ' · 第 ' + byId[sel].t + ' 次');
+    } else if (e.key === 'Enter' && sel) toast('进入复核页：' + vName(byId[sel]) + ' · ' + lab(byId[sel].cfg) + ' · 第 ' + byId[sel].t + ' 次');
     else if (e.key === ' ' && sel) { e.preventDefault(); var k = pair.indexOf(sel); if (k >= 0) pair.splice(k, 1); else if (pair.length < 2) pair.push(sel); renderConv(); }
   });
 
   // ---------------------------------------------------------------- 初始化
-  paintQuestions(); paintWeights(); renderStats(); renderPerf();
+  paintQuestions(); paintWeights(); renderDef(); bindGo(root);
+  $$('.rv-nav a').forEach(function (a) { var t = a.textContent.trim(); if (t === '用例管理' || t === '配置管理') a.addEventListener('click', function (e) { e.preventDefault(); show(t === '配置管理' ? 'configs' : 'case'); }); });
   var start = root.dataset.start || (location.hash || '').replace('#', '');
-  if (start === 'conv') openConv({}); else show('case');
+  if (start === 'results') openResults({ cfg: [DEFAULT] }); else if (start === 'configs') show('configs'); else show('case');
 })();
 </script>
 </body>
