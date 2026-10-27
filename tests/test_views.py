@@ -75,3 +75,144 @@ def test_model_label_and_verdicts_of():
     assert views.model_label(r) == "glm-5.3"
     assert views.model_label({**r, "models_json": None}) == "?"
     assert views.verdicts_of([arow("q1", status=None)]) == []
+
+
+# ---------------------------------------------------------------- 百分制聚合（doc/10 §6.3–6.4 样例复现）
+
+def _srow(qkey, case, dim, score, mode="forced", trial=1, vi=0, rewrite=None,
+          skills_base="s1", profile="p1"):
+    status = "pass" if score is not None and score >= 60 else ("invalid" if score == -1 else "fail")
+    return {"qkey": qkey, "uid": qkey, "case_id": case, "dim": dim, "mode": mode, "trial": trial,
+            "c_status": None if score is None else ("invalid" if score == -1 else ("pass" if score >= 60 else "fail")),
+            "c_score": None if score in (None, -1) else score, "variant_index": vi, "rewrite": rewrite,
+            "profile_id": profile, "models_json": '["m"]', "skills_mode": "default-roots",
+            "skills_base": skills_base, "evalset_version": "v1", "run_id": "r1"}
+
+
+def test_dimension_and_composite_scores_doc_sample():
+    """doc/10 §6.3 样例：错误知识纠正 62.5，四维度等权 → 综合分 73.9。"""
+    policy = policy_from_dict({})
+    rows = (
+        # ec-0201：trial 89、54、invalid → 题目分 71.5
+        [_srow("q1|a", "ec-0201", "错误知识纠正", 89), _srow("q1|a", "ec-0201", "错误知识纠正", 54, trial=2),
+         _srow("q1|a", "ec-0201", "错误知识纠正", -1, trial=3)]
+        # ec-0202：种子 78（两次平均 80/76）；诱导 V1 不计入维度分（D-7；§6.3 样例 75 与此矛盾，以决策表为准）
+        + [_srow("q2|a", "ec-0202", "错误知识纠正", 80), _srow("q2|a", "ec-0202", "错误知识纠正", 76, trial=2),
+           _srow("q3|a", "ec-0202", "错误知识纠正", 70, vi=1, rewrite="诱导"),
+           _srow("q3|a", "ec-0202", "错误知识纠正", 74, vi=1, rewrite="诱导", trial=2)]
+        # ec-0203 → 41；其余三维度 78.2 / 70.0 / 85.0（每个用例一个题）
+        + [_srow("q4|a", "ec-0203", "错误知识纠正", 41)]
+        + [_srow(f"k{i}|a", f"kr-{i}", "知识召回", 78.2, mode="natural") for i in range(1)]
+        + [_srow(f"m{i}|a", f"mt-{i}", "多轮上下文召回", 70.0, mode="natural") for i in range(1)]
+        + [_srow(f"s{i}|a", f"sc-{i}", "同义请求一致性", 85.0, mode="natural") for i in range(1)]
+    )
+    dims = views.dimension_scores(rows, policy)
+    assert dims["错误知识纠正"]["score"] == 63.5
+    comp = views.composite(dims, policy, known_dims=set(dims))
+    assert comp["score"] == 74.2 and comp["complete"] is True
+    # 题目分与用例分的中间量
+    qs = views.question_scores(rows, policy)
+    assert qs["q1|a"]["score"] == 71.5 and qs["q1|a"]["n"] == 2      # invalid 排除
+    cs = views.case_scores(rows, policy)
+    assert cs["ec-0202"]["score"] == 78.0 and cs["ec-0202"]["n"] == 1  # 诱导变体不计维度分（D-7）
+
+
+def test_compare_scores_single_component():
+    """doc/10 §6.4：单组件综合分差 = 各维度差按维度权重平均（样例 78.2→81.3 等 → +2.8）。"""
+    policy = policy_from_dict({})
+    dims = ["知识召回", "多轮上下文召回", "同义请求一致性", "错误知识纠正"]
+    base_v = [78.2, 70.0, 85.0, 62.5]
+    tgt_v = [81.3, 68.8, 85.4, 71.5]
+    rows = []
+    for i, d in enumerate(dims):                              # 同一批题在两个 skills_base 下各跑一次
+        rows.append(_srow(f"q{i}|a", f"c{i}", d, base_v[i], mode="natural", skills_base="v1"))
+        rows.append(_srow(f"q{i}|a", f"c{i}", d, tgt_v[i], mode="natural", skills_base="v2"))
+    rep = views.compare_scores(rows, axis="skills_base", base="v1", target="v2", policy=policy)
+    assert rep["n_shared"] == 4
+    comp = rep["contributions"][0]
+    assert comp["delta"] == 2.8
+    by_name = {c["name"]: c for c in rep["contributions"]}
+    assert by_name["错误知识纠正"]["delta"] == 9.0
+    assert by_name["多轮上下文召回"]["delta"] == -1.2
+
+
+def test_shapley_doc_sample():
+    """doc/10 §6.4 样例：2×2 全因子（66/70/71/78）→ φ = +5.5 / +6.5，合计 +12.0。"""
+    cells = {frozenset(): 66.0, frozenset({"model"}): 70.0,
+             frozenset({"skills_base"}): 71.0, frozenset({"model", "skills_base"}): 78.0}
+    res = views.shapley(cells, ["model", "skills_base"])
+    assert res["phi"] == {"model": 5.5, "skills_base": 6.5}
+    assert res["total"] == 12.0
+    missing = views.shapley({frozenset(): 66.0}, ["model", "skills_base"])
+    assert missing["missing"] and any("model" in m for m in missing["missing"])
+
+
+# ---------------------------------------------------------------- 评审整改回归（2026-10）
+
+def test_question_scores_provisional_on_unconverged():
+    """P1：结论已定但区间未收敛（pass / score=None）与 error 的会话被排除出均分，
+    题目分与维度分要标临时；invalid 是合规排除，不算。"""
+    policy = policy_from_dict({})
+    r90 = _srow("q1|a", "c1", "知识召回", 90, mode="natural")
+    rows = [r90, {**r90, "trial": 2, "c_score": None, "c_status": "pass"}]
+    qs = views.question_scores(rows, policy)
+    assert qs["q1|a"]["score"] == 90 and qs["q1|a"]["n"] == 1
+    assert qs["q1|a"]["provisional"] is True
+    rows_err = [r90, {**r90, "trial": 2, "c_score": None, "c_status": "error"}]
+    assert views.question_scores(rows_err, policy)["q1|a"]["provisional"] is True
+    rows_inv = [r90, _srow("q1|a", "c1", "知识召回", -1, mode="natural", trial=3)]
+    assert views.question_scores(rows_inv, policy)["q1|a"]["provisional"] is False
+    dims = views.dimension_scores(rows, policy)
+    assert dims["知识召回"]["provisional"] is True
+
+
+def test_dim_delta_respects_resample_multiplicity():
+    """P1：配对自助法重采样含重复用例时要按重数计——[c1, c2, c2] 的对照均值是
+    (80+50+50)/3 = 60（不是集合意义上的 65）。per_case 值为 [Σ分, 条数]。"""
+    per_case = {"v1": {"c1": {"知识召回": [20.0, 1]}, "c2": {"知识召回": [20.0, 1]}},
+                "v2": {"c1": {"知识召回": [80.0, 1]}, "c2": {"知识召回": [50.0, 1]}}}
+    assert views._dim_delta(["c1", "c2", "c2"], "知识召回", per_case, "v1", "v2") == 40.0
+    assert views._dim_delta(["c1", "c2"], "知识召回", per_case, "v1", "v2") == 45.0
+
+
+def test_compare_scores_selects_headline_mode_per_question():
+    """P1：mode 放开时同一 qkey 的 natural 与 forced 不混算——两侧都有主口径
+    （ec → forced）只取主口径；一侧没有则该题按两侧 mode 不一致排除。"""
+    policy = policy_from_dict({})
+    rows = [
+        _srow("q1|a", "c1", "错误知识纠正", 90, mode="forced", skills_base="v1"),
+        _srow("q1|a", "c1", "错误知识纠正", 50, mode="forced", skills_base="v2"),
+        _srow("q1|a", "c1", "错误知识纠正", 70, mode="natural", skills_base="v1"),  # 非主口径混入
+    ]
+    rep = views.compare_scores(rows, axis="skills_base", base="v1", target="v2", policy=policy)
+    assert rep["n_shared"] == 1
+    assert rep["metrics"]["v1"]["dims"]["错误知识纠正"]["score"] == 90     # 不与 natural 70 平均
+    assert rep["metrics"]["v2"]["dims"]["错误知识纠正"]["score"] == 50
+    mismatched = [
+        _srow("q2|a", "c2", "错误知识纠正", 80, mode="natural", skills_base="v1"),
+        _srow("q2|a", "c2", "错误知识纠正", 90, mode="forced", skills_base="v2"),
+    ]
+    rep2 = views.compare_scores(mismatched, axis="skills_base", base="v1", target="v2", policy=policy)
+    assert rep2["n_shared"] == 0
+    assert any("两侧干预模式不一致" in e["reason"] for e in rep2["excluded_qkeys"])
+
+
+def test_shapley_cells_aligned_on_shared_questions():
+    """P1：各格只在共有题目上算分（单侧题不出现在任何格），mode 不作组件时逐题
+    按主口径选 mode——各格综合分出自同一题集，Shapley 才可比。"""
+    policy = policy_from_dict({})
+    rows = (
+        [_srow("q1|a", "c1", "知识召回", 80, mode="natural", skills_base="v1"),
+         _srow("q1|a", "c1", "知识召回", 40, mode="natural", skills_base="v2")]
+        + [_srow("q2|a", "c2", "多轮上下文召回", 60, mode="natural", skills_base="v1")]   # 单侧题
+        # ec 主口径 forced：v1 侧混入 natural 70，不与 forced 90 平均
+        + [_srow("q3|a", "c3", "错误知识纠正", 90, mode="forced", skills_base="v1"),
+           _srow("q3|a", "c3", "错误知识纠正", 70, mode="natural", skills_base="v1"),
+           _srow("q3|a", "c3", "错误知识纠正", 50, mode="forced", skills_base="v2")]
+    )
+    cells, shared = views.shapley_cells(rows, ["skills_base"], policy)
+    assert shared == {"q1|a", "q3|a"}
+    assert cells[frozenset()] == round((80 + 90) / 2, 1)      # v1：q1 80 + q3 主口径 90
+    assert cells[frozenset({"skills_base"})] == round((40 + 50) / 2, 1)
+    res = views.shapley(cells, ["skills_base"])
+    assert res["total"] == round(45.0 - 85.0, 1)

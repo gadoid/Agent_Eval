@@ -15,8 +15,11 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from collections import defaultdict
+
 from .items import (SCALES, build_context, episode_error, extract_items, input_fp_of,
-                    judge_fp_of, qkey_of, variant_leak_suspects, TOTAL_ITEM, conversation_sha)
+                    judge_fp_of, qkey_of, variant_leak_suspects, TOTAL_ITEM, conversation_sha,
+                    weight_of)
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
@@ -239,6 +242,13 @@ def now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def _spot_picked(answer_id: str, ratio: float) -> bool:
+    """抽检抽样（按 answer_id 独立哈希）：某段被人工判过退出候选后，其余段的
+    选中与否不变（顺序消费共享随机流的抽样会整体漂移）。"""
+    import random
+    return random.Random(f"spot:{answer_id}").random() < ratio
+
+
 def answer_id_of(run_id: str, episode_id: str) -> str:
     return f"{run_id}/{episode_id}"
 
@@ -249,6 +259,12 @@ def evalset_version_of(manifest: dict | None) -> str:
     if isinstance(ev, dict):
         return str(ev.get("version") or ev.get("file") or "?")
     return str(ev or "?")
+
+
+def profile_id_of(manifest: dict | None) -> str:
+    """run.json 的 profile 现为 {path, sha256, content}，id 在 content 内；兼容旧的顶层 id。"""
+    p = (manifest or {}).get("profile") or {}
+    return str(p.get("id") or (p.get("content") or {}).get("id") or "?")
 
 
 class Store:
@@ -404,7 +420,7 @@ class Store:
 
     def register_run(self, run_id: str, run_dir: str | Path, manifest: dict | None) -> None:
         snap = (manifest or {}).get("snapshot") or {}
-        profile_id = ((manifest or {}).get("profile") or {}).get("id") or "?"
+        profile_id = profile_id_of(manifest)
         snapshot_json = json.dumps(manifest or {}, ensure_ascii=False)
         # started_at 只认 run.json 的真实值；缺失时首次导入以导入时间回填落列（与 v3
         # 迁移同语义），重导沿用已落列的值、真实值一旦出现即覆盖——不会被反复刷新。
@@ -443,7 +459,7 @@ class Store:
             " run_status, record_json, injection_found_gt1, variant_leak_json)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
-             ((manifest or {}).get("profile") or {}).get("id") or "?",
+             profile_id_of(manifest),
              json.dumps(models, ensure_ascii=False) if models is not None else None,
              record.get("mode", "?"), record.get("trial", 0),
              snap.get("skills_mode"), snap.get("skills_base"), evalset_version_of(manifest),
@@ -510,20 +526,27 @@ class Store:
 
     def pending_rejudge(self, chain_sha: str, qkey: str | None = None, run_id: str | None = None) -> list[dict]:
         """缺"当前期望 + 当前链配置"判定的答案。无条目的会话（运行错误）不需要判定，
-        直接写结论，不算待重判。"""
+        直接写结论，不算待重判。一条 SQL 找出缺判定的答案，只对它们解析 record。"""
+        sql = """SELECT a.answer_id, a.qkey, a.run_id, a.episode_id, q.current_judge_fp AS fp,
+                 a.record_json, s.spec_json
+                 FROM answers a JOIN questions q ON a.qkey = q.qkey
+                 JOIN specs s ON s.qkey = a.qkey AND s.judge_fp = q.current_judge_fp
+                 WHERE q.current_judge_fp IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM verdicts v WHERE v.answer_id = a.answer_id
+                        AND v.judge_fp = q.current_judge_fp AND v.chain_sha = ?)"""
+        args: list = [chain_sha]
+        if qkey:
+            sql += " AND a.qkey = ?"
+            args.append(qkey)
+        if run_id:
+            sql += " AND a.run_id = ?"
+            args.append(run_id)
         out: list[dict] = []
-        for a in self.answers(qkey=qkey, run_id=run_id):
-            cur = self.current_spec(a["qkey"])
-            if cur is None:
-                continue                       # 题目没有当前期望（未 specs import）：不判
-            fp, spec = cur
-            if self.has_verdicts(a["answer_id"], fp, chain_sha):
-                continue
-            record = json.loads(a["record_json"])
-            ctx = build_context(record, spec)
-            if episode_error(record, ctx) is None:
-                out.append({"answer_id": a["answer_id"], "qkey": a["qkey"], "judge_fp": fp,
-                            "run_id": a["run_id"], "episode_id": a["episode_id"]})
+        for r in self.conn.execute(sql, tuple(args)):
+            record = json.loads(r["record_json"])
+            if episode_error(record, build_context(record, json.loads(r["spec_json"]))) is None:
+                out.append({"answer_id": r["answer_id"], "qkey": r["qkey"], "judge_fp": r["fp"],
+                            "run_id": r["run_id"], "episode_id": r["episode_id"]})
         return out
 
     # ---------------------------------------------------------------- 判定缓存（§6.2）
@@ -601,6 +624,8 @@ class Store:
                 raise StoreError(f"取值不合法：{item_id} = {value!r}")
             if score is not None and not _valid_score(score):
                 raise StoreError(f"分数应为 0–100：{item_id} = {score!r}")
+            if score is not None and vrow["kind"] in ("precond", "path", "forbidden"):
+                raise StoreError(f"前提/路径/禁止条目不记条目分（无权重），不能带分数：{item_id}")
             out.append((item_id, value, None if score is None else float(score), e.get("reason") or "",
                         vrow["item_sha"], vrow["answer_sha"]))
         if total is not None:
@@ -616,7 +641,8 @@ class Store:
     def submit_reviews(self, answer_id: str, entries: list[dict], total: dict | None, reviewer: str,
                        judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str) -> dict:
         """一段对话的批量人工打分（复核服务改造方案 §6.4）：全部校验 → 同一事务追加 →
-        重算一次该答案的结论。任一条不合法则整体不写入。返回结论行。"""
+        重算一次该答案的结论。任一条不合法则整体不写入；重算失败时追加的记录一并
+        回滚，不留人工记录 + 旧结论的中间态。返回结论行。"""
         rows = self._validate_entries(answer_id, entries, total, judge_fp, chain_sha)
         ts = now()
         with self.lock, self.conn:
@@ -625,7 +651,8 @@ class Store:
                     "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at, score)"
                     " VALUES(?,?,?,?,?,?,?,?,?)",
                     (answer_id, item_id, item_sha, ans_sha, value, reason, reviewer, ts, score))
-        self.recompute_conclusion(answer_id, judge_fp, chain_sha, policy, policy_sha)
+            v = self._conclude(answer_id, judge_fp, chain_sha, policy)
+            self._write_conclusion(self.conn, answer_id, judge_fp, chain_sha, policy_sha, v)
         return self.conclusion(answer_id, judge_fp, chain_sha, policy_sha) or {}
 
     def preview_conclusion(self, answer_id: str, entries: list[dict], total: dict | None,
@@ -863,16 +890,23 @@ class Store:
         override = self.total_override(reviews, judge_fp, conversation_sha(ctx))
         return session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses, override=override)
 
+    @staticmethod
+    def _write_conclusion(conn, answer_id: str, judge_fp: str, chain_sha: str,
+                          policy_sha: str, v: EpisodeVerdict) -> None:
+        """物化一条结论行（不开事务，供 submit_reviews 在同一事务内复用）。"""
+        conn.execute("INSERT OR REPLACE INTO conclusions(answer_id, judge_fp, chain_sha, policy_sha, status, reason,"
+                     " detail_json, score, score_min, score_max, auto_score, score_source)"
+                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (answer_id, judge_fp, chain_sha, policy_sha, v.status,
+                      v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False),
+                      v.score, v.score_min, v.score_max, v.auto_score, v.score_source))
+
     def recompute_conclusion(self, answer_id: str, judge_fp: str, chain_sha: str,
                              policy: Policy, policy_sha: str) -> str:
         """重算并物化一个 (答案, 期望, 链配置, 口径) 的会话结论与会话分（不调用任何算子）。"""
         v = self._conclude(answer_id, judge_fp, chain_sha, policy)
-        self._exec("INSERT OR REPLACE INTO conclusions(answer_id, judge_fp, chain_sha, policy_sha, status, reason,"
-                   " detail_json, score, score_min, score_max, auto_score, score_source)"
-                   " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                   (answer_id, judge_fp, chain_sha, policy_sha, v.status,
-                    v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False),
-                    v.score, v.score_min, v.score_max, v.auto_score, v.score_source))
+        with self.lock, self.conn:
+            self._write_conclusion(self.conn, answer_id, judge_fp, chain_sha, policy_sha, v)
         return v.status
 
     def rescore(self, policy: Policy, policy_sha: str, current_chain_sha: str | None = None) -> int:
@@ -965,3 +999,169 @@ class Store:
             self.conn.backup(dst)
         dst.close()
         return target
+
+    # ---------------------------------------------------------------- 复核队列与复核页（doc/10 §5.2/5.3）
+
+    REVIEW_TABS = ("undecided", "unjudged", "spot", "mismatch", "failed")
+
+    def review_conversations(self, chain_sha: str, policy: Policy, policy_sha: str,
+                             tab: str = "undecided", run_id: str | None = None, dim: str | None = None,
+                             spot_ratio: float = 0.1, page: int = 0, size: int = 20,
+                             first_input: bool = True) -> tuple[list[dict], dict]:
+        """复核队列（以对话为单位，五个标签）：SQL 聚合 + 分页。
+        undecided=结论待定（区间跨及格线/前提未判，含判定异常）；unjudged=结论已定仍有未判；
+        spot=模型判过且无人工（按比例抽样）；mismatch=人工≠机器；failed=会话失败。
+        first_input=False 供复核页取上/下一段：免解析全部 record（大库性能）。"""
+        rows = self.answer_view_rows(chain_sha, policy_sha)
+        if run_id:
+            rows = [r for r in rows if r["run_id"] == run_id]
+        if dim:
+            rows = [r for r in rows if (r["dim"] or "") == dim]
+        pend_items, _ = self.undecided_items(chain_sha, run_id=run_id, page=0, size=10 ** 9)
+        pend_by_answer: dict[str, list[dict]] = defaultdict(list)
+        for c in pend_items:
+            pend_by_answer[c["answer_id"]].append(c)
+        mismatch_ids = {m["answer_id"] for m in self.human_machine_compare(chain_sha)[0]}
+        judge_ids = {r["answer_id"] for r in self.conn.execute(
+            "SELECT DISTINCT answer_id FROM verdicts WHERE chain_sha=? AND source='judge'", (chain_sha,))}
+        human_ids = {r["answer_id"] for r in self.conn.execute("SELECT DISTINCT answer_id FROM reviews")}
+        pass_mark = policy.score.pass_mark
+        convs: list[dict] = []
+        for r in rows:
+            aid = r["answer_id"]
+            pend = pend_by_answer.get(aid, [])
+            kinds: dict[str, int] = defaultdict(int)
+            for c in pend:
+                kinds[c["kind"]] += 1
+            c = {
+                "answer_id": aid, "uid": r["uid"], "case_id": r["case_id"], "qkey": r["qkey"],
+                "run_id": r["run_id"], "mode": r["mode"], "trial": r["trial"], "dim": r["dim"] or "?",
+                "profile": r["profile_id"] or "?", "models": json.loads(r["models_json"] or "[]"),
+                "status": r["c_status"], "reason": r["c_reason"] or "",
+                "score": r["c_score"], "score_min": r["c_score_min"], "score_max": r["c_score_max"],
+                "run_status": r["run_status"], "pending": len(pend), "pending_kinds": dict(kinds),
+            }
+            lo, hi = c["score_min"], c["score_max"] if c["score_max"] is not None else c["score"]
+            if lo is None and hi is None:
+                lo = hi = c["score"]
+            c["_range"] = (lo, hi)
+            c["_undecided"] = r["c_status"] in ("undecided", "error")
+            c["_unjudged"] = r["c_status"] in ("pass", "fail") and len(pend) > 0
+            c["_spot"] = r["c_status"] in ("pass", "fail") and aid in judge_ids and aid not in human_ids
+            c["_mismatch"] = aid in mismatch_ids
+            c["_failed"] = r["run_status"] not in ("ok", None)
+            convs.append(c)
+        tabs = {t: sum(1 for c in convs if c[f"_{t}"]) for t in self.REVIEW_TABS}
+        selected = [c for c in convs if c[f"_{tab}"]]
+        if tab == "spot" and spot_ratio < 1:
+            selected = [c for c in selected if _spot_picked(c["answer_id"], spot_ratio)]
+        if tab == "undecided":
+            def near(c):
+                lo, hi = c["_range"]
+                d = pass_mark
+                if lo is not None and hi is not None:
+                    d = 0 if lo <= pass_mark <= hi else min(abs(lo - pass_mark), abs(hi - pass_mark))
+                return (d, c["pending"], c["answer_id"])
+            selected.sort(key=near)
+        else:
+            selected.sort(key=lambda c: c["answer_id"])
+        total = len(selected)
+        page = max(0, min(page, (max(total, 1) - 1) // size))
+        out = []
+        for c in selected[page * size:(page + 1) * size]:
+            c = dict(c)
+            c.pop("_undecided", None), c.pop("_unjudged", None), c.pop("_spot", None)
+            c.pop("_mismatch", None), c.pop("_failed", None)
+            if first_input:
+                record = json.loads((self.answer(c["answer_id"]) or {}).get("record_json") or "{}")
+                # runner 写 source='prefill'（episode-runner.ts）；'preset' 为旧拼写，兼容
+                turns = [t for t in record.get("turns") or []
+                         if t.get("source") not in ("prefill", "preset")]
+                c["first_input"] = (turns[0].get("input") if turns else "") or ""
+            out.append(c)
+        return out, {"tabs": tabs, "total": total, "page": page}
+
+    def conversation_view(self, answer_id: str, chain_sha: str, policy: Policy, policy_sha: str,
+                          judge_fp: str | None = None) -> dict:
+        """复核页一次取齐（§5.3）：record、当前期望、条目（按判定顺序分节）、机器栏、
+        人工栏、有效结论、人工会话分、作废记录、轮次观测。"""
+        a = self.answer(answer_id)
+        if a is None:
+            raise StoreError(f"答案不存在：{answer_id}")
+        cur = self.current_spec(a["qkey"])
+        fp = judge_fp or (cur[0] if cur else None)
+        if fp is None:
+            fp = a["judge_fp_at_run"]
+        spec = self.spec_of(a["qkey"], fp) or {}
+        record = json.loads(a["record_json"])
+        ctx = build_context(record, spec)
+        items = extract_items(ctx)
+        reviews = self.reviews_for(answer_id)
+        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, fp, chain_sha)}
+        sp = policy.score
+        sections = []
+        for kind, label, hint in (("precond", "前提", "门槛：不成立 → 会话无效，不计分"),
+                                  ("path", "路径", "否决项：违反 → 总分 0"),
+                                  ("forbidden", "禁止事实", "否决项：采信 → 总分 0"),
+                                  ("required", "必要事实", "按权重计分；判「错」→ 总分 0"),
+                                  ("expected", "期望事实", "按权重计分"),
+                                  ("refusal", "拒答", "即会话分")):
+            rows_ = []
+            for it in items:
+                if it.kind != kind:
+                    continue
+                vrow = vrows.get(it.id)
+                eff = self.effective(vrow, reviews) if vrow else None
+                saved = None
+                if vrow is not None:
+                    cands = [r for r in reviews if r["item_id"] == it.id
+                             and r["answer_sha"] == vrow["answer_sha"] and r["item_sha"] == vrow["item_sha"]]
+                    if cands:
+                        saved = cands[-1]
+                rows_.append({
+                    "id": it.id, "kind": kind, "turn": it.turn, "text": it.text or "",
+                    "keywords": it.attrs.get("keywords") or [],
+                    "weight": weight_of(it, sp.default_weight), "group": it.attrs.get("group"),
+                    "answer": ctx.answer_for(it),
+                    "machine": None if vrow is None else {
+                        "value": vrow["value"], "score": vrow["score"], "source": vrow["source"],
+                        "operator": vrow["operator"], "reason": vrow["reason"] or "",
+                        "status": vrow["status"], "trace": vrow["trace_json"] or ""},
+                    "eff": {"value": eff.value, "score": eff.score, "source": eff.source} if eff else None,
+                    "human": {"value": saved["value"], "score": saved["score"], "reason": saved["reason"],
+                              "reviewer": saved["reviewer"], "at": saved["at"]} if saved else None,
+                })
+            if rows_:
+                sections.append({"kind": kind, "label": label, "hint": hint, "rows": rows_})
+        turns = []
+        for t in record.get("turns") or []:
+            obs = t.get("observations") or {}
+            turns.append({
+                "index": t.get("index"), "input": t.get("input", ""), "output": t.get("output", ""),
+                "status": t.get("status"), "source": t.get("source", "live"),
+                "skills": [s["name"] for s in obs.get("skills", []) if s.get("ok")],
+                "ask_user": (obs.get("ask_user") or {}).get("count", 0),
+                "tool_errors": obs.get("tool_errors") or [],
+            })
+        concl = self.conclusion(answer_id, fp, chain_sha, policy_sha) or {}
+        voided = self.voided_reviews(answer_id)
+        conv_sha = conversation_sha(ctx)
+        override = self.total_override(reviews, fp, conv_sha)
+        manifest = json.loads((self.run(a["run_id"]) or {}).get("snapshot_json") or "{}")
+        profile_content = ((manifest.get("profile") or {}).get("content") or {})
+        q = self.question(a["qkey"]) or {}
+        return {
+            "answer_id": answer_id, "qkey": a["qkey"], "uid": q.get("uid") or record.get("uid", "?"),
+            "case_id": q.get("case_id"), "dim": q.get("dim"),
+            "topic": q.get("topic"), "rewrite": q.get("rewrite"), "variant_index": q.get("variant_index"),
+            "run_id": a["run_id"], "mode": a["mode"], "trial": a["trial"], "run_status": a["run_status"],
+            "profile": a["profile_id"], "models": json.loads(a["models_json"] or "[]"),
+            "skills_mode": a["skills_mode"], "evalset_version": a["evalset_version"],
+            "reasoning_effort": profile_content.get("reasoning_effort"),
+            "judge_fp": fp, "is_current": cur is not None and fp == cur[0],
+            "sections": sections, "turns": turns,
+            "injections_applied": record.get("injections_applied") or [],
+            "injection_observed": json.loads(a.get("injection_observed_json") or "null"),
+            "conclusion": concl, "voided": voided, "override": override,
+            "spec": spec, "pending_rejudge": len(self.pending_rejudge(chain_sha, qkey=a["qkey"])),
+        }

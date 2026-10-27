@@ -1,3 +1,8 @@
 {% extends "base.html" %}
 {% block title %}出错了 · Agent_Eval 复核{% endblock %}
-{% block body %}<div class="err-box">{{ message }}</div><p><a href="/">回总览</a></p>{% endblock %}
+{% block body %}
+<main class="rv-page">
+  <div class="rv-notice" data-tone="error"><b>出错了</b><span>{{ message }}</span></div>
+  <p><a class="rv-btn" href="/">回用例页</a></p>
+</main>
+{% endblock %}

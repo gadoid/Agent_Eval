@@ -59,6 +59,19 @@ def test_ingest_idempotent(store, tmp_path):
     assert a["qkey"] == records[0]["case"]["uid"] + "|" + input_fp_of(records[0]["case"])
 
 
+def test_ingest_reads_profile_id_from_content(store, tmp_path):
+    """run.json 的 profile 为 {path, sha256, content}：profile_id 取 content.id（不是顶层 id）。"""
+    from scoring.cli import ingest_run
+    records = [mk_record()]
+    run_dir = make_run(tmp_path, "pid", records)
+    manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    manifest["profile"] = {"path": "p.yaml", "sha256": "x", "content": {"id": "profile-a"}}
+    (run_dir / "run.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    ingest_run(store, run_dir)
+    assert store.runs()[0]["profile_id"] == "profile-a"
+    assert {a["profile_id"] for a in store.answers()} == {"profile-a"}
+
+
 def test_ingest_sets_current_when_absent(store, tmp_path):
     """R5：空库 ingest 即设当前期望并置活跃 → 首次 score 直接可判定。"""
     ingest(store, tmp_path, "demo", [mk_record()])
@@ -600,3 +613,16 @@ def test_cache_round_trips_score(store):
     from scoring.operators import Verdict
     store.cache_put("k", Verdict("对", "judge", "llm-fact@1", reason="r", score=90))
     assert store.cache_get("k").score == 90
+
+
+def test_spot_sampling_stable_per_answer():
+    """P2：抽检抽样按 answer_id 独立哈希——某段退出候选不影响其余段的选中与否
+    （顺序消费共享随机流会整体漂移）。"""
+    from scoring.store import _spot_picked
+    ids = [f"r/a{i}-natural-t1" for i in range(200)]
+    picked = {a for a in ids if _spot_picked(a, 0.3)}
+    assert 0.1 < len(picked) / len(ids) < 0.6          # 比例大致合理（固定哈希，确定性）
+    for a in ids[:50]:
+        assert _spot_picked(a, 0.3) == (a in picked)   # 逐段独立、可复现
+    assert all(_spot_picked(a, 1.0) for a in ids[:10])
+    assert not any(_spot_picked(a, 0.0) for a in ids[:10])
