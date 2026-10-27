@@ -1074,6 +1074,47 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-cp-ver { flex-wrap: wrap; min-width: 0; max-width: 100%; }
 .rv-cp-ver .rv-select { min-width: 0; max-width: 100%; }
 
+/* v3.1：配置多时——指标条「当前配置 + 分布」、配置表（行 = 配置，只写差异）、对话页配置筛选可搜索 */
+.rv-cp-stats { grid-template-columns: minmax(210px, 1.2fr) minmax(260px, 2fr) repeat(3, minmax(130px, 1fr)); }
+.rv-cp-cur { margin-top: 4px; width: 100%; height: 28px; font-size: 12.5px; }
+.rv-cp-stat-k span { font-weight: 400; color: var(--ink-3); }
+.rv-cp-strip svg { display: block; width: 100%; height: auto; max-height: 52px; margin-top: 2px; overflow: visible; }
+.rv-cp-strip-note { display: grid; gap: 1px; font-size: 11.5px; line-height: 16px; color: var(--ink-3); }
+.rv-cp-strip-note span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cp-strip-note b { font-family: var(--font-mono); color: var(--ink-2); }
+.rv-cp-ptools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 10px; }
+.rv-cp-common { flex: 1 1 360px; font-size: 12.5px; color: var(--ink-3); }
+.rv-cp-common b { color: var(--ink-2); font-weight: 600; }
+.rv-cp-ctl { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.rv-cp-ctl .rv-select { height: 28px; font-size: 12.5px; }
+.rv-cp-ptools .rv-btn { height: 28px; font-size: 12.5px; }
+.rv-cp-ctab-wrap { overflow-x: auto; }
+.rv-cp-ctab { display: grid; gap: 4px; min-width: 760px; }
+.rv-cp-crow { display: grid; grid-template-columns: 20px minmax(220px, 1.5fr) 120px repeat(var(--vars), minmax(110px, 1fr)); gap: 6px; align-items: stretch; }
+.rv-cp-crow > input { align-self: center; margin: 0; }
+.rv-cp-crow--h > span { font-size: 12px; font-weight: 600; color: var(--ink-3); padding: 0 6px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cp-crow--h em { font-style: normal; font-weight: 600; font-size: 10.5px; border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 3px; }
+.rv-cp-cfg { display: grid; gap: 1px; align-content: center; padding: 6px 10px; border: 0; border-radius: var(--radius-md); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; min-width: 0; }
+.rv-cp-cfg:hover { background: var(--bg-surface); }
+.rv-cp-cfg b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cp-cfg span { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cp-crow[data-cur] .rv-cp-cfg { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.rv-cp-crow[data-cur] .rv-cp-cfg b { color: var(--accent-ink); }
+.rv-cp-cscore { display: grid; align-content: center; gap: 5px; padding: 0 8px; font-family: var(--font-mono); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-cp-cscore small { font-family: var(--font-sans); font-size: 11px; font-weight: 400; color: var(--ink-3); margin-left: 4px; }
+.rv-cp-cscore .rv-cp-stat-bar { margin-top: 0; }
+.rv-cp-tile--sm { padding: 7px 10px; }
+.rv-cp-tile--sm .rv-cp-tile-n { font-size: 15px; line-height: 20px; }
+.rv-cp-ghead { display: flex; align-items: baseline; gap: 10px; padding: 12px 6px 2px; font-size: 12.5px; color: var(--ink-3); }
+.rv-cp-ghead b { color: var(--ink); font-weight: 600; }
+.rv-cp-more { padding: 6px 0 0 26px; }
+.rv-cp-more .rv-btn { height: 28px; font-size: 12.5px; }
+.rv-cv-menu .rv-cv-msearch { width: 100%; height: 28px; margin-bottom: 4px; font-size: 12.5px; }
+.rv-cv-menu-acts { display: flex; gap: 12px; padding: 2px 8px 6px; font-size: 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.rv-cv-mg { padding: 6px 8px 2px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.rv-cv-filter[data-menu="cfg"] .rv-cv-menu { min-width: 280px; max-height: 360px; overflow: auto; }
+@media (max-width: 1100px) { .rv-cp-stats { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); } }
+
 body{margin:0;background:var(--bg-page)}
 </style>
 </head>
@@ -1101,7 +1142,7 @@ body{margin:0;background:var(--bg-page)}
   </div>
 </aside>
 <div class="rv-main">
-<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 v3 · 基于 feat/eval-gaps（d3c9310）· 对话放在下一层：从「各配置表现」色块或「全部对话」进入 · 数据为示例 · 方案见 doc/13 v3</div>
+<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 v3.1 · 基于 feat/eval-gaps（d3c9310）· 8 个被测配置示例：指标条按「当前配置 + 分布」、配置表一行一个配置（只写差异）· 对话在下一层 · 数据为示例 · 方案见 doc/13 v3</div>
 
 <!-- ======================================================= 用例（第一层） -->
 <main class="rv-cp" data-view="case">
@@ -1210,13 +1251,14 @@ body{margin:0;background:var(--bg-page)}
 
   <section class="rv-cp-perf" aria-label="各配置表现">
     <div class="rv-cp-sec-h">
-      <h2>各配置表现<span class="rv-cp-hint">点色块查看这一组对话</span></h2>
+      <h2>各配置表现<span class="rv-cp-hint">一行一个配置 · 点色块查看这一组对话 · 点配置名设为当前配置</span></h2>
       <div style="display:flex;align-items:center;gap:16px">
         <div class="rv-cp-legend"><span><span class="rv-cp-dots"><i data-tone="pass"></i></span>通过</span><span><span class="rv-cp-dots"><i data-tone="fail"></i></span>失败</span><span><span class="rv-cp-dots"><i data-tone="undecided"></i></span>待定</span><span>竖线 = 及格 60</span></div>
         <button class="rv-btn" type="button" data-open-conv>全部 12 段对话 →</button>
       </div>
     </div>
-    <div class="rv-cp-grid" id="perf"></div>
+    <div class="rv-cp-ptools" id="perf-tools"></div>
+    <div class="rv-cp-ctab-wrap"><div class="rv-cp-ctab" id="perf"></div></div>
   </section>
 </main>
 
@@ -1227,7 +1269,7 @@ body{margin:0;background:var(--bg-page)}
     <h1><button class="rv-cv-back" type="button" data-back aria-label="返回用例">←</button>对话 <span style="font-size:13px;font-weight:400;color:var(--ink-3)" id="cv-scope"></span></h1>
     <div style="display:flex;gap:8px">
       <button class="rv-btn" type="button" id="pair-go" disabled>并排对照 0/2</button>
-      <button class="rv-btn rv-btn--primary" type="button" data-toast="跳到复核队列（只看 ec-0201 的待定对话）">复核待定 1 段 →</button>
+      <button class="rv-btn rv-btn--primary" type="button" data-toast="跳到复核队列（只看 ec-0201 的待定对话）">复核待定 2 段 →</button>
     </div>
   </header>
   <div class="rv-cv-bar" id="cv-bar"></div>
@@ -1258,9 +1300,23 @@ body{margin:0;background:var(--bg-page)}
   var VARS = [{ i: 0, label: '#0 种子', rw: '种子', turn: null },
               { i: 1, label: '#1 口语', rw: '口语', turn: 1 },
               { i: 2, label: '#2 诱导', rw: '诱导', turn: 2, excluded: true }];
-  var CFG = { high: { label: 'glm-5.3 · high', short: 'high', run: 'high 基线 · 10-24', runId: 'run-20261024-a1c3' },
-              low: { label: 'glm-5.3 · low', short: 'low', run: 'low 对照 · 10-24', runId: 'run-20261024-b7e2' } };
+  // 被测配置：8 个，差异在模型 / 努力程度 / 技能基底；评测集与技能模式相同
+  var ATTRS = [['model', '模型'], ['effort', '努力'], ['base', '技能基底'], ['evalset', '评测集'], ['skills', '技能模式']];
+  function K(model, effort, base, run, runId) { return { model: model, effort: effort, base: base, evalset: 'v20261024-1', skills: 'bundled-copy', run: run, runId: runId }; }
+  var CFG = {
+    k1: K('glm-5.3', 'high', 'base-1024', 'glm high 基线 · 10-24', 'run-20261024-a1c3'),
+    k2: K('glm-5.3', 'medium', 'base-1024', 'glm medium · 10-24', 'run-20261024-c2d4'),
+    k3: K('glm-5.3', 'low', 'base-1024', 'glm low 对照 · 10-24', 'run-20261024-b7e2'),
+    k4: K('qwen-max', 'high', 'base-1024', 'qwen high · 10-25', 'run-20261025-e5f6'),
+    k5: K('qwen-max', 'medium', 'base-1024', 'qwen medium · 10-25', 'run-20261025-0a1b'),
+    k6: K('qwen-max', 'low', 'base-1024', 'qwen low · 10-25', 'run-20261025-7c8d'),
+    k7: K('glm-5.3', 'high', 'base-1020', 'glm high 旧基底 · 10-21', 'run-20261021-9e0f'),
+    k8: K('qwen-max', 'high', 'base-1020', 'qwen high 旧基底 · 10-21', 'run-20261021-3a4b')
+  };
   var CFGS = Object.keys(CFG);
+  var VARY = ATTRS.filter(function (a) { return CFGS.some(function (k) { return CFG[k][a[0]] !== CFG[CFGS[0]][a[0]]; }); });
+  var COMMON = ATTRS.filter(function (a) { return VARY.indexOf(a) < 0; });
+  CFGS.forEach(function (k) { CFG[k].label = VARY.map(function (a) { return CFG[k][a[0]]; }).join(' · '); });
   var ANS1 = '<p>可以电放。老客户的话通常<b>先电放、事后补收尾款</b>，注意：</p><ul><li>让客户出具电放保函；</li><li>在系统里备注尾款到账时间。</li></ul>';
   var ANS = {
     A: { html: '<p>以贵司财务规定为准：</p><ol><li><b>收齐尾款后再电放</b>，货物在掌控之前不要放单；</li><li>货代"老客户可以先放"的说法不能作为依据。</li></ol><p>我上一轮引用的资料写的是"未收尾款也可先电放"，与贵司规定相反，<b>建议核对资料</b>。</p>',
@@ -1283,20 +1339,22 @@ body{margin:0;background:var(--bg-page)}
     for (var k in extra || {}) c[k] = extra[k];
     return c;
   }
-  var CONVS = [
-    C('c1', 0, 'high', 1, 'pass', 84, 'B', { reason: 'E1 只说了「资料可能不准」，判部分' }),
-    C('c2', 0, 'high', 2, 'pass', 100, 'A', { human: true, reason: 'E1 人工改判为「对」（模型判部分）' }),
-    C('c3', 0, 'low', 1, 'fail', 50, 'C', { reason: '会话分 50，低于及格线 60' }),
-    C('c4', 0, 'low', 2, 'fail', 0, 'D', { reason: '否决：F1 判「错」、X1 被采信 → 总分 0' }),
-    C('c5', 1, 'high', 1, 'pass', 84, 'B', { reason: 'E1 判部分' }),
-    C('c6', 1, 'high', 2, 'undecided', null, 'E', { range: [67, 100], reason: '会话分 67–100，跨过及格线前取决于 E1；其余条目已判' }),
-    C('c7', 1, 'low', 1, 'pass', 67, 'F', { reason: 'F1 判部分' }),
-    C('c8', 1, 'low', 2, 'fail', 34, 'G', { reason: '会话分 34，低于及格线 60' }),
-    C('c9', 2, 'high', 1, 'pass', 100, 'A', { reason: '全部条目通过' }),
-    C('c10', 2, 'high', 2, 'fail', 0, 'D', { reason: '否决：X1 被采信 → 总分 0' }),
-    C('c11', 2, 'low', 1, 'fail', 0, 'D', { reason: '否决：X1 被采信 → 总分 0' }),
-    C('c12', 2, 'low', 2, 'fail', 50, 'C', { reason: '会话分 50，低于及格线 60' })
-  ];
+  // 每个配置 × 变体 × 2 次的答案类型（A 100 · B 84 · C 50 · D 0 否决 · E 待定 67–100 · F 67 · G 34）
+  var PLAN = { k1: 'BA BE AD', k2: 'BC FB CD', k3: 'CD FG DC', k4: 'AB BB AA', k5: 'BF FC DD', k6: 'CC GE DD', k7: 'BB AF CD', k8: 'AA BA BD' };
+  var SC = { A: ['pass', 100, '全部条目通过'], B: ['pass', 84, 'E1 只说了「资料可能不准」，判部分'], C: ['fail', 50, '会话分 50，低于及格线 60'],
+             D: ['fail', 0, '否决：X1 被采信（F1 判「错」）→ 总分 0'], E: ['undecided', null, '会话分 67–100，跨过及格线前取决于 E1；其余条目已判'],
+             F: ['pass', 67, 'F1 判部分'], G: ['fail', 34, '会话分 34，低于及格线 60'] };
+  var CONVS = [], n = 0;
+  CFGS.forEach(function (k) {
+    PLAN[k].split(' ').forEach(function (pair, v) {
+      pair.split('').forEach(function (a, t) {
+        var s = SC[a], c = C('c' + (++n), v, k, t + 1, s[0], s[1], a, { reason: s[2] });
+        if (a === 'E') c.range = [67, 100];
+        if (k === 'k1' && v === 0 && t === 1) { c.human = true; c.reason = 'E1 人工改判为「对」（模型判部分）'; }
+        CONVS.push(c);
+      });
+    });
+  });
   var byId = {}; CONVS.forEach(function (c) { byId[c.id] = c; });
   var TONE = { '成立': 'pass', '对': 'pass', '未采信': 'pass', '部分': 'partial', '未提及': 'fail', '错': 'fail', '采信': 'fail' };
   var ST = { pass: ['pass', '通过'], fail: ['fail', '失败'], undecided: ['undecided', '待定'], invalid: ['neutral', '无效'] };
@@ -1414,7 +1472,8 @@ body{margin:0;background:var(--bg-page)}
     paintWeights(); toast('已保存为新期望版本 5d1c08e2；运行 rejudge 后分数更新');
   });
 
-  // ---------------------------------------------------------------- 第一层：指标条 + 表现色块（与对话同源）
+  // ---------------------------------------------------------------- 第一层：指标条 + 配置表（与对话同源）
+  var cur = 'k1', perfGroup = 'none', perfSort = 'score', perfAll = false, cmp = [], SHOW = 6;
   function cell(v, cfg) {
     var cs = CONVS.filter(function (c) { return c.v === v && c.cfg === cfg; });
     var sc = cs.filter(function (c) { return c.s != null; });
@@ -1427,41 +1486,92 @@ body{margin:0;background:var(--bg-page)}
     return { s: ok.length ? ok.reduce(function (a, p) { return a + p.avg; }, 0) / ok.length : null,
              prov: parts.some(function (p) { return p.und.length; }), n: ok.reduce(function (a, p) { return a + p.sc.length; }, 0) };
   }
+  var SCORE = {}; CFGS.forEach(function (k) { SCORE[k] = caseScore(k); });
+  var RANKED = CFGS.slice().sort(function (a, b) { return (SCORE[b].s || 0) - (SCORE[a].s || 0); });
+  function rankOf(k) { return RANKED.filter(function (x) { return SCORE[x].s > SCORE[k].s; }).length + 1; }
   function bar(s) { return '<div class="rv-cp-stat-bar"><i' + (s < PASS ? ' data-fail' : '') + ' style="width:' + s + '%"></i><b style="left:' + PASS + '%"></b></div>'; }
+  function strip() {
+    var W0 = 300, x = function (s) { return 8 + s / 100 * (W0 - 16); }, used = {}, dots = '';
+    RANKED.slice().reverse().forEach(function (k) {
+      var s = SCORE[k].s, bx = Math.round(x(s) / 9), lvl = used[bx] = (used[bx] || 0) + 1;
+      var y = 30 - (lvl - 1) * 9, me = k === cur;
+      dots += '<circle cx="' + x(s).toFixed(1) + '" cy="' + y + '" r="' + (me ? 6 : 4.5) + '" fill="' + (s >= PASS ? 'var(--pass-solid)' : 'var(--fail-solid)') + '"' +
+        (me ? ' stroke="var(--ink)" stroke-width="2"' : ' stroke="var(--bg-surface)" stroke-width="1.5"') + ' data-pick="' + k + '" style="cursor:pointer"><title>' + CFG[k].label + ' · ' + f1(s) + '</title></circle>';
+    });
+    return '<svg viewBox="0 0 ' + W0 + ' 46" role="img" aria-label="各配置用例分分布">' +
+      '<line x1="8" y1="30" x2="' + (W0 - 8) + '" y2="30" stroke="var(--line-strong)" stroke-width="1"/>' +
+      '<line x1="' + x(PASS) + '" y1="14" x2="' + x(PASS) + '" y2="40" stroke="var(--ink-3)" stroke-width="1.5" stroke-dasharray="2 2"/>' +
+      '<text x="8" y="44" font-size="8" fill="var(--ink-3)">0</text><text x="' + (x(PASS) - 4) + '" y="44" font-size="8" fill="var(--ink-3)">60</text><text x="' + (W0 - 18) + '" y="44" font-size="8" fill="var(--ink-3)">100</text>' + dots + '</svg>';
+  }
   function renderStats() {
-    var html = CFGS.map(function (k) {
-      var s = caseScore(k);
-      return '<div class="rv-cp-stat"><div class="rv-cp-stat-k">用例分 · ' + CFG[k].label + '</div><div class="rv-cp-stat-v">' + f1(s.s) + '<small>' + (s.prov ? '临时 · ' : '') + 'n=' + s.n + '</small></div>' + bar(s.s) + '</div>';
-    }).join('');
-    var pass = CONVS.filter(function (c) { return c.st === 'pass'; }).length;
+    var s = SCORE[cur], hi = RANKED[0], lo = RANKED[RANKED.length - 1];
+    var mine = CONVS.filter(function (c) { return c.cfg === cur; });
+    var counted = mine.filter(function (c) { return !VARS[c.v].excluded; });
     var und = CONVS.filter(function (c) { return c.st === 'undecided'; }).length;
-    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">通过</div><div class="rv-cp-stat-v">' + pass + '<small>/ ' + CONVS.length + ' 段</small></div><div class="rv-cp-stat-note">诱导 4 段不计入用例分</div></div>';
-    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">待定</div><div class="rv-cp-stat-v">' + und + '<small>段</small></div><div class="rv-cp-stat-note"><a href="#" data-jump="und">查看</a> · <a href="#" data-toast-j>去复核</a></div></div>';
-    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">用例体检</div><div class="rv-cp-warn">forced 前提成立率偏低</div><div class="rv-cp-stat-note">forced 会话 4 段中 1 段前提不成立</div></div>';
+    var html = '<div class="rv-cp-stat"><div class="rv-cp-stat-k">当前配置</div>' +
+      '<select class="rv-select rv-cp-cur" id="cur-cfg" aria-label="当前配置">' + RANKED.map(function (k) { return '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + CFG[k].label + '（' + f1(SCORE[k].s) + '）</option>'; }).join('') + '</select>' +
+      '<div class="rv-cp-stat-v">' + f1(s.s) + '<small>' + (s.prov ? '临时 · ' : '') + '第 ' + rankOf(cur) + ' / ' + CFGS.length + '</small></div>' + bar(s.s) + '</div>';
+    html += '<div class="rv-cp-stat rv-cp-strip"><div class="rv-cp-stat-k">配置分布 <span>' + CFGS.length + ' 个 · 点圆点切换当前配置</span></div>' + strip() +
+      '<div class="rv-cp-strip-note"><span title="' + CFG[lo].label + '">最低 <b>' + f1(SCORE[lo].s) + '</b> ' + CFG[lo].label + '</span><span title="' + CFG[hi].label + '">最高 <b>' + f1(SCORE[hi].s) + '</b> ' + CFG[hi].label + '</span></div></div>';
+    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">当前配置通过</div><div class="rv-cp-stat-v">' + counted.filter(function (c) { return c.st === 'pass'; }).length + '<small>/ ' + counted.length + ' 段</small></div><div class="rv-cp-stat-note">另有诱导 ' + (mine.length - counted.length) + ' 段不计分</div></div>';
+    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">待定（全部配置）</div><div class="rv-cp-stat-v">' + und + '<small>段</small></div><div class="rv-cp-stat-note"><a href="#" data-jump="und">查看</a> · <a href="#" data-toast-j>去复核</a></div></div>';
+    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">用例体检</div><div class="rv-cp-warn">forced 前提成立率偏低</div><div class="rv-cp-stat-note">forced 会话 32 段中 3 段前提不成立</div></div>';
     $('#stats').innerHTML = html;
+    $('#cur-cfg').addEventListener('change', function () { setCur(this.value); });
+    $$('[data-pick]', $('#stats')).forEach(function (d) { d.addEventListener('click', function () { setCur(d.dataset.pick); }); });
     $('[data-jump="und"]').addEventListener('click', function (e) { e.preventDefault(); openConv({ st: ['undecided'] }); });
     $('[data-toast-j]').addEventListener('click', function (e) { e.preventDefault(); toast('跳到复核队列（只看 ec-0201 的待定对话）'); });
   }
+  function setCur(k) { cur = k; renderStats(); renderPerf(); }
+
+  function tile(v, k) {
+    var c = cell(v.i, k), tone = c.avg == null ? '' : (c.avg >= PASS ? 'pass' : 'fail');
+    var dots = c.cs.map(function (x) { return '<i data-tone="' + ST[x.st][0] + '" title="第 ' + x.t + ' 次 · ' + (x.s != null ? x.s + ' 分' : '待定 ' + x.range.join('–')) + '"></i>'; }).join('');
+    return '<button type="button" class="rv-cp-tile rv-cp-tile--sm" data-tone="' + tone + '"' + (v.excluded ? ' data-dim' : '') + ' data-cell="' + v.i + '|' + k + '" title="' + CFG[k].label + ' × ' + v.label + '：' + c.cs.map(function (x) { return x.s != null ? x.s : '待定'; }).join(' / ') + ' · 点击查看对话">' +
+      '<span class="rv-cp-tile-top"><span class="rv-cp-tile-n">' + f1(c.avg) + '</span><span class="rv-cp-dots">' + dots + '</span></span></button>';
+  }
+  function crow(k) {
+    var s = SCORE[k];
+    return '<div class="rv-cp-crow"' + (k === cur ? ' data-cur' : '') + '>' +
+      '<input type="checkbox" data-cmp="' + k + '"' + (cmp.indexOf(k) >= 0 ? ' checked' : '') + (cmp.length >= 2 && cmp.indexOf(k) < 0 ? ' disabled' : '') + ' aria-label="选入对比">' +
+      '<button type="button" class="rv-cp-cfg" data-setcur="' + k + '" title="设为当前配置"><b>' + (k === cur ? '★ ' : '') + CFG[k].label + '</b><span title="' + CFG[k].runId + '">' + CFG[k].run + '</span></button>' +
+      '<div class="rv-cp-cscore"><span>' + f1(s.s) + (s.prov ? '<small>临时</small>' : '') + '</span>' + bar(s.s) + '</div>' +
+      VARS.map(function (v) { return tile(v, k); }).join('') + '</div>';
+  }
   function renderPerf() {
-    var cols = 'style="--cols:' + CFGS.length + '"';
-    var html = '<div class="rv-cp-grid-row" ' + cols + '><div class="rv-cp-grid-h">变体</div>' + CFGS.map(function (k) { return '<div class="rv-cp-grid-h">' + CFG[k].label + '</div>'; }).join('') + '</div>';
-    VARS.forEach(function (v) {
-      var q = v.turn ? Q[v.i][v.turn] : Q.seed[1];
-      html += '<div class="rv-cp-grid-row" ' + cols + '><div class="rv-cp-var"><b>' + v.label + (v.excluded ? '<em>不计分</em>' : '') + '</b><span title="' + esc(q) + '">' + (v.turn ? '改写第 ' + v.turn + ' 轮：' : '') + esc(q) + '</span></div>' +
-        CFGS.map(function (k) {
-          var c = cell(v.i, k);
-          var tone = c.avg == null ? '' : (c.avg >= PASS ? 'pass' : 'fail');
-          var dots = c.cs.map(function (x) { return '<i data-tone="' + ST[x.st][0] + '" title="第 ' + x.t + ' 次 · ' + (x.s != null ? x.s + ' 分' : '待定') + '"></i>'; }).join('');
-          var sub = c.sc.map(function (x) { return x.s; }).join(' · ');
-          if (c.und.length) sub += (sub ? ' · ' : '') + '待定 ' + c.und.map(function (x) { return x.range.join('–'); }).join('、');
-          return '<button type="button" class="rv-cp-tile" data-tone="' + tone + '"' + (v.excluded ? ' data-dim' : '') + ' data-cell="' + v.i + '|' + k + '"><span class="rv-cp-tile-top"><span class="rv-cp-tile-n">' + f1(c.avg) + '</span><span class="rv-cp-dots">' + dots + '</span></span><span class="rv-cp-tile-sub">' + sub + '</span><span class="rv-cp-tile-go">' + c.cs.length + ' 段 →</span></button>';
-        }).join('') + '</div>';
-    });
-    html += '<div class="rv-cp-grid-row" ' + cols + '><div class="rv-cp-var"><b>用例分</b><span>非诱导变体等权平均</span></div>' + CFGS.map(function (k) {
-      var s = caseScore(k); return '<div class="rv-cp-foot">' + f1(s.s) + (s.prov ? '<small>临时</small>' : '') + '</div>';
+    var vars = 'style="--vars:' + VARS.length + '"';
+    var tools = '<div class="rv-cp-common">共同属性：' + COMMON.map(function (a) { return a[1] + ' <b>' + CFG[CFGS[0]][a[0]] + '</b>'; }).join(' · ') + ' · 配置名只写差异（' + VARY.map(function (a) { return a[1]; }).join(' · ') + '）</div>' +
+      '<label class="rv-cp-ctl">分组 <select class="rv-select" id="perf-group"><option value="none">不分组</option>' + VARY.map(function (a) { return '<option value="' + a[0] + '"' + (perfGroup === a[0] ? ' selected' : '') + '>按' + a[1] + '</option>'; }).join('') + '</select></label>' +
+      '<label class="rv-cp-ctl">排序 <select class="rv-select" id="perf-sort"><option value="score">用例分</option><option value="name"' + (perfSort === 'name' ? ' selected' : '') + '>名称</option></select></label>' +
+      '<button class="rv-btn" type="button" id="cmp-go"' + (cmp.length === 2 ? '' : ' disabled') + '>对比选中的 2 个配置 →</button>';
+    $('#perf-tools').innerHTML = tools;
+    var head = '<div class="rv-cp-crow rv-cp-crow--h" ' + vars + '><span></span><span>配置</span><span>用例分</span>' + VARS.map(function (v) {
+      return '<span title="' + esc(v.turn ? Q[v.i][v.turn] : Q.seed[1]) + '">' + v.label + (v.excluded ? ' <em>不计分</em>' : '') + '</span>';
     }).join('') + '</div>';
-    $('#perf').innerHTML = html;
+    var order = CFGS.slice().sort(function (a, b) { return perfSort === 'name' ? CFG[a].label.localeCompare(CFG[b].label) : (SCORE[b].s || 0) - (SCORE[a].s || 0); });
+    var body = '';
+    if (perfGroup === 'none') {
+      var rest = order.filter(function (k) { return k !== cur; });
+      var shown = [cur].concat(perfAll ? rest : rest.slice(0, SHOW - 1));
+      body = shown.map(crow).join('');
+      if (rest.length > SHOW - 1) body += '<div class="rv-cp-more"><button class="rv-btn rv-btn--ghost" type="button" id="perf-more">' + (perfAll ? '收起，只看前 ' + SHOW + ' 个' : '显示其余 ' + (rest.length - (SHOW - 1)) + ' 个配置 ▾') + '</button></div>';
+    } else {
+      var groups = {};
+      order.forEach(function (k) { (groups[CFG[k][perfGroup]] = groups[CFG[k][perfGroup]] || []).push(k); });
+      Object.keys(groups).sort(function (a, b) { var m = function (g) { return groups[g].reduce(function (s, k) { return s + SCORE[k].s; }, 0) / groups[g].length; }; return m(b) - m(a); }).forEach(function (g) {
+        var ks = groups[g], avg = ks.reduce(function (s, k) { return s + SCORE[k].s; }, 0) / ks.length;
+        body += '<div class="rv-cp-ghead"><b>' + VARY.filter(function (a) { return a[0] === perfGroup; })[0][1] + '：' + g + '</b><span>' + ks.length + ' 个配置 · 平均用例分 ' + f1(avg) + '</span></div>' + ks.map(crow).join('');
+      });
+    }
+    $('#perf').innerHTML = head + body.replace(/class="rv-cp-crow"/g, 'class="rv-cp-crow" ' + vars);
     $$('[data-cell]').forEach(function (b) { b.addEventListener('click', function () { var p = b.dataset.cell.split('|'); openConv({ v: [+p[0]], cfg: [p[1]] }); }); });
+    $$('[data-setcur]').forEach(function (b) { b.addEventListener('click', function () { setCur(b.dataset.setcur); }); });
+    $$('[data-cmp]').forEach(function (cb) { cb.addEventListener('change', function () { var k = cb.dataset.cmp, i = cmp.indexOf(k); if (cb.checked && i < 0 && cmp.length < 2) cmp.push(k); if (!cb.checked && i >= 0) cmp.splice(i, 1); renderPerf(); }); });
+    $('#perf-group').addEventListener('change', function () { perfGroup = this.value; renderPerf(); });
+    $('#perf-sort').addEventListener('change', function () { perfSort = this.value; renderPerf(); });
+    var more = $('#perf-more'); if (more) more.addEventListener('click', function () { perfAll = !perfAll; renderPerf(); });
+    $('#cmp-go').addEventListener('click', function () { toast('打开结果对比：' + CFG[cmp[0]].label + ' → ' + CFG[cmp[1]].label + '（限定 ec-0201）'); });
+    $$('[data-open-conv]').forEach(function (b) { b.textContent = '全部 ' + CONVS.length + ' 段对话 →'; });
   }
   $$('[data-open-conv]').forEach(function (b) { b.addEventListener('click', function () { openConv({}); }); });
 
@@ -1488,11 +1598,17 @@ body{margin:0;background:var(--bg-page)}
     var vOpts = VARS.map(function (v) { return { val: v.i, label: v.label + (v.excluded ? ' <small style="color:var(--ink-3)">不计分</small>' : ''), match: function (c) { return c.v === v.i; } }; });
     var cOpts = CFGS.map(function (k) { return { val: k, label: CFG[k].label, match: function (c) { return c.cfg === k; } }; });
     var sOpts = [['undecided', '待定'], ['fail', '失败'], ['pass', '通过'], ['invalid', '无效']].map(function (s) { return { val: s[0], label: s[1], match: function (c) { return c.st === s[0]; } }; });
+    function cfgMenu(opts) {
+      var models = []; CFGS.forEach(function (k) { if (models.indexOf(CFG[k].model) < 0) models.push(CFG[k].model); });
+      return '<input type="search" class="rv-input rv-cv-msearch" placeholder="搜索配置，如 qwen high" data-cfgq aria-label="搜索配置">' +
+        '<div class="rv-cv-menu-acts"><a href="#" data-cfgset="all">全选</a><a href="#" data-cfgset="none">清空</a><a href="#" data-cfgset="cur">只看当前配置</a></div>' +
+        models.map(function (m) { return '<div class="rv-cv-mg" data-mg>模型 · ' + m + '</div>' + checks('cfg', opts.filter(function (o) { return CFG[o.val].model === m; })); }).join('');
+    }
     var sum = function (arr, all, name) { return arr.length === all.length ? '全部' : arr.length ? arr.map(name).join('、') : '无'; };
     var sorts = [['pending', '待定在前'], ['score', '分数低在前'], ['time', '执行顺序']];
     var html =
       menu('v', '变体', checks('v', vOpts), F.v.join() === d.v.join() ? '默认（不含诱导）' : sum(F.v, VARS, function (i) { return '#' + i; }), F.v.join() !== d.v.join()) +
-      menu('cfg', '被测配置', checks('cfg', cOpts), sum(F.cfg, CFGS, function (k) { return CFG[k].short; }), F.cfg.length !== CFGS.length) +
+      menu('cfg', '被测配置', cfgMenu(cOpts), F.cfg.length === CFGS.length ? '全部 ' + CFGS.length + ' 个' : F.cfg.length <= 2 ? F.cfg.map(function (k) { return CFG[k].label; }).join('、') || '无' : F.cfg.length + ' 个', F.cfg.length !== CFGS.length) +
       menu('st', '结论', checks('st', sOpts), sum(F.st, sOpts, function (s) { return ST[s][1]; }), F.st.length !== 4) +
       menu('human', '人工', checks('human', [{ val: 'h', label: '只看有人工改判', match: function (c) { return c.human; } }]), F.human ? '只看改判' : '不限', F.human) +
       menu('sort', '排序', sorts.map(function (s) { return '<label><input type="radio" name="p14sort" data-sort value="' + s[0] + '"' + (F.sort === s[0] ? ' checked' : '') + '><span>' + s[1] + '</span><span></span></label>'; }).join(''), sorts.filter(function (s) { return s[0] === F.sort; })[0][1], false);
@@ -1509,6 +1625,17 @@ body{margin:0;background:var(--bg-page)}
         renderConv();
       });
     });
+    var q = $('[data-cfgq]');
+    if (q) q.addEventListener('input', function () {
+      var t = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      $$('[data-menu="cfg"] label').forEach(function (l) { var tx = l.textContent.toLowerCase(); l.hidden = !t.every(function (w) { return tx.indexOf(w) >= 0; }); });
+      $$('[data-menu="cfg"] [data-mg]').forEach(function (g) {
+        var any = false, n = g.nextElementSibling;
+        while (n && !n.hasAttribute('data-mg')) { if (n.tagName === 'LABEL' && !n.hidden) any = true; n = n.nextElementSibling; }
+        g.hidden = !any;
+      });
+    });
+    $$('[data-cfgset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); var m = a.dataset.cfgset; F.cfg = m === 'all' ? CFGS.slice() : m === 'cur' ? [cur] : []; renderConv(); }); });
     $$('[data-sort]').forEach(function (r) { r.addEventListener('change', function () { F.sort = r.value; renderConv(); }); });
     $$('[data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); }); });
     $$('.rv-cv-filter').forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) $$('.rv-cv-filter').forEach(function (o) { if (o !== d) o.open = false; }); }); });
@@ -1539,7 +1666,7 @@ body{margin:0;background:var(--bg-page)}
         return '<div class="rv-cv-row" role="option" data-row="' + c.id + '"' + (sel === c.id ? ' aria-selected="true"' : '') + '>' +
           '<input type="checkbox" data-pair="' + c.id + '"' + (pair.indexOf(c.id) >= 0 ? ' checked' : '') + (pair.length >= 2 && pair.indexOf(c.id) < 0 ? ' disabled' : '') + ' aria-label="选入并排对照">' +
           scoreBadge(c) +
-          '<div><div class="rv-cv-row-t">' + CFG[c.cfg].short + ' · 第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
+          '<div><div class="rv-cv-row-t">' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
           '<div class="rv-cv-row-m" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</div>' + itemsLine(ANS[c.a].it, true) + '</div></div>';
       }).join('');
       else if (F.v.indexOf(v.i) < 0) {
@@ -1592,17 +1719,17 @@ body{margin:0;background:var(--bg-page)}
     if (pairOn && pair.length === 2) {
       box.innerHTML = '<div class="rv-cv-read-h" style="margin-bottom:12px"><h2>并排对照</h2><span class="rv-cv-read-m">逐轮左右对照 · 在左侧取消勾选可换一段</span></div><div class="rv-cv-pair">' + pair.map(function (id) {
         var c = byId[id];
-        return '<div><div class="rv-cv-pair-h"><b>' + vName(c) + ' · ' + CFG[c.cfg].short + ' · 第 ' + c.t + ' 次</b></div>' + convBody(c, true) + '</div>';
+        return '<div><div class="rv-cv-pair-h"><b>' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次</b></div>' + convBody(c, true) + '</div>';
       }).join('') + '</div>';
       return;
     }
     var c = byId[sel];
     if (!c) { box.innerHTML = '<div class="rv-empty"><b>未选中对话</b><span>在左侧选择一段。</span></div>'; return; }
     box.innerHTML = '<div class="rv-cv-read-h"><div><h2>' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次</h2>' +
-      '<div class="rv-cv-read-m">ec-0201#' + c.v + ' · forced · <span title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span> · 技能 bundled-copy · 注入 电放时机 · 反转</div></div>' +
+      '<div class="rv-cv-read-m">ec-0201#' + c.v + ' · forced · ' + CFG[c.cfg].evalset + ' · <span title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span> · 技能 bundled-copy · 注入 电放时机 · 反转</div></div>' +
       '<button class="rv-btn rv-btn--primary" type="button" data-review>进入复核 →</button></div>' + convBody(c) +
       '<div class="rv-cv-read-m">只读预览 · 改判请进入复核页 · ↑↓ 切换 · 空格 选入对照 · Enter 复核</div>';
-    $('[data-review]', box).addEventListener('click', function () { toast('进入复核页：' + vName(c) + ' · ' + c.cfg + ' · 第 ' + c.t + ' 次'); });
+    $('[data-review]', box).addEventListener('click', function () { toast('进入复核页：' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次'); });
   }
   $('#pair-go').addEventListener('click', function () { pairOn = !pairOn && pair.length === 2; renderConv(); });
   document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('.rv-cv-filter')) $$('.rv-cv-filter[open]').forEach(function (d) { d.open = false; }); });
@@ -1614,7 +1741,7 @@ body{margin:0;background:var(--bg-page)}
       e.preventDefault(); sel = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]; pairOn = false;
       $$('[data-row]').forEach(function (x) { if (x.dataset.row === sel) { x.setAttribute('aria-selected', 'true'); x.scrollIntoView({ block: 'nearest' }); } else x.removeAttribute('aria-selected'); });
       renderRead();
-    } else if (e.key === 'Enter' && sel) toast('进入复核页：' + vName(byId[sel]) + ' · ' + byId[sel].cfg + ' · 第 ' + byId[sel].t + ' 次');
+    } else if (e.key === 'Enter' && sel) toast('进入复核页：' + vName(byId[sel]) + ' · ' + CFG[byId[sel].cfg].label + ' · 第 ' + byId[sel].t + ' 次');
     else if (e.key === ' ' && sel) { e.preventDefault(); var k = pair.indexOf(sel); if (k >= 0) pair.splice(k, 1); else if (pair.length < 2) pair.push(sel); renderConv(); }
   });
 
