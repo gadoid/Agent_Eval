@@ -156,6 +156,8 @@ export interface Observations {
   ask_user?: AskUserSignal
   /** 本轮 request/header 观测到的模型标识；日志无此字段为 null */
   model?: string | null
+  /** 本轮加载的 skill 内容里是否出现注入改写（键为注入 id）；本轮未加载 skill 时为 undefined */
+  injections_observed?: Record<string, boolean>
 }
 
 // ---------------------------------------------------------------- 结果
@@ -196,6 +198,8 @@ export interface EpisodeRecord {
   skills_sha256?: string | null
   /** 注入物化留痕：每条注入的 point/option/rev 与 key 命中次数 */
   injections_applied?: { point: string; option: string; rev: number; found: number }[]
+  /** 注入观测：已加载的 skill 内容里是否含注入改写（各轮取或）；无注入的行不出现 */
+  injection_observed?: Record<string, boolean>
   /** 锚点会话标记（绊线用） */
   anchor?: boolean
   forced_skills: string[]
@@ -227,6 +231,8 @@ export interface SkippedRow {
 export interface RunManifest {
   schema: number
   run_id: string
+  /** 执行记录标题（--title 命名改造）：纯展示层元数据，run_id 始终是机器身份 */
+  title?: string | null
   started_at: string
   finished_at: string | null
   evalset: { path: string; sha256: string; versions: string[]; rows: number }

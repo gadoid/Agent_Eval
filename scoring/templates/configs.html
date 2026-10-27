@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}配置管理 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page" data-page="configs">
+  <div class="rv-page-head"><h1>配置管理</h1>
+    <span class="rv-meta"><span>{{ table|length }} 个被测配置</span>
+      <span>执行一览在 <a href="/runs">执行记录</a></span>
+      <span>评测库 {{ db_path }}</span></span></div>
+
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>被测配置</b>
+    <span>配置 = profile × 模型 × 技能方式 × 知识基底 × 期望版本；会话分按配置分别计算。
+      用例管理页的统计为跨配置汇总，按配置的分数在这里看。</span>
+    <a href="/compare?axis=profile">配置间对比 →</a>
+  </div>
+
+  <div class="rv-table-wrap">
+  <table class="rv-table">
+    <thead><tr><th>配置（profile）</th><th>模型</th><th>技能方式</th><th>知识基底</th><th>期望版本</th>
+      <th class="rv-num">对话</th><th>结论待定</th><th>综合分</th><th>关联执行</th></tr></thead>
+    <tbody>
+    {% for t in table %}
+    <tr>
+      <th scope="row"><span class="rv-pill rv-pill--mono">{{ t.profile }}</span></th>
+      <td>{{ t.model }}</td>
+      <td>{{ t.skills_mode or '—' }}</td>
+      <td>{{ t.skills_base or '—' }}</td>
+      <td>{{ t.evalset_version }}</td>
+      <td class="rv-num">{{ t.n }}</td>
+      <td>{% if t.undecided %}<span class="rv-state" data-s="need">{{ t.undecided }} 段</span>{% else %}<span class="rv-meta">—</span>{% endif %}</td>
+      <td>{% if t.score is not none %}<b>{{ t.score|f1 }}</b>{% if t.provisional %} <span class="rv-meta">（临时）</span>{% endif %}
+        {% if not t.complete %}<span class="rv-meta" title="已知 {{ known_dims|length }} 维中缺 {{ known_dims|length - t.dims_n }} 维">· 缺维</span>{% endif %}
+        {% else %}<span class="rv-meta">—</span>{% endif %}</td>
+      <td class="rv-config-runs">{% for rid in t.run_ids %}<a href="/review?run_id={{ rid|urlencode }}" title="{{ rid }}">{{ run_labels.get(rid, rid) }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</main>
+{% endblock %}

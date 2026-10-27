@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}判定质量 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page">
@@ -15,7 +15,7 @@
     <tr><th scope="row">{{ m.src(a.source) }} <span class="rv-mono">{{ a.operator }}</span></th>
       <td>{{ a.kind|kind_label }}</td><td class="rv-num">{{ a.n }}</td><td class="rv-num">{{ a.mean_diff|f1 }}</td>
       <td>{{ m.rate_cell(a.within, a.n, a.within_ci) }}</td>
-      <td class="rv-num"><a href="/review?tab=mismatch">{{ a.disagreements }}</a></td>
+      <td class="rv-num"><a href="/review?tab=mismatch&op={{ a.operator|urlencode }}">{{ a.disagreements }}</a></td>
       <td>{% if a.n >= 30 and a.within_ci[0] >= 0.9 %}<span class="rv-flag">{{ a.suggest }}</span>{% else %}{{ a.suggest }}{% endif %}</td></tr>
     {% else %}
     <tr><td colspan="7" class="rv-empty">还没有人工复核：复核页的「同意机器」也计入，是模型抽检的手段。</td></tr>
@@ -42,7 +42,7 @@
 
   <section class="rv-card"><h2>数据来源</h2>
     <dl class="rv-caseinfo">
-      <div class="rv-wide"><dt>评测库</dt><dd class="rv-mono">{{ db_path }} · schema v4</dd></div>
+      <div class="rv-wide"><dt>评测库</dt><dd class="rv-mono">{{ db_path }} · schema v5</dd></div>
       <div class="rv-wide"><dt>判定配置</dt><dd>{% for ch in chains %}{{ ch.name or '未命名' }} {{ ch.chain_sha[:8] }}（{{ ch.operators|join(', ') }}{% if ch.judge_models %}；判定模型 {{ ch.judge_models|join('、') }}{% endif %}）{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
       <div class="rv-wide"><dt>口径</dt><dd class="rv-mono">policy {{ policy_sha }} · 及格 {{ pass_mark }} · 否决 {{ policy.score.veto.values()|join('/') }} · {{ policy.score.dimension_unit }}等权</dd></div>
     </dl>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}结果对比 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page">
@@ -13,7 +13,8 @@
     <div class="rv-field"><label>基线</label><input class="rv-input" name="base" value="{{ base }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
     <span class="rv-arrow" style="align-self:center;margin-top:20px">→</span>
     <div class="rv-field"><label>对照</label><input class="rv-input" name="target" value="{{ target }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
-    <datalist id="avs">{% for v in axis_values %}<option value="{{ v }}"></option>{% endfor %}</datalist>
+    <datalist id="avs">{% for v in axis_values %}<option value="{{ v }}" label="{{ value_labels.get(v, '') }}"></option>{% endfor %}</datalist>
+    <div class="rv-field"><label>固定条件（属性=取值，逗号分隔）</label><input class="rv-input" name="fix" value="{{ fix }}" placeholder="如 model=glm-5.3" style="width:200px"></div>
     <div class="rv-field"><label>放开属性（不限）</label><select class="rv-select" name="any" multiple size="3" style="height:auto">
       {% for a in attrs if a != axis %}<option value="{{ a }}" {% if a in (any or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
     <div class="rv-field"><label>多组件分摊（选 2–3 个）</label><select class="rv-select" name="factors" multiple size="3" style="height:auto">
@@ -43,7 +44,7 @@
     {% for side, label in [(rep.base, '基线'), (rep.target, '对照')] %}
     {% set comp = rep.metrics[side].composite %}
     <section class="rv-card rv-comp"><div class="rv-comp-head"><span class="rv-comp-n">{{ comp.score|f1 }}</span>
-      <span class="rv-meta"><span>{{ label }} · {{ side }}</span>{% if comp.provisional %}<span>临时</span>{% endif %}</span></div>
+      <span class="rv-meta"><span>{{ label }} · {{ value_labels.get(side, side) }}</span>{% if comp.provisional %}<span>临时</span>{% endif %}</span></div>
       {% for d, p in comp.parts.items() %}
       <div class="rv-comp-row"><span>{{ d }}</span><span class="rv-comp-w">×{{ p.weight|f1 }}</span>
         <div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:{{ p.score }}%"></span><span class="rv-scorebar-mark" style="left:{{ pass_mark }}%;top:-3px;bottom:-3px"></span></div>
@@ -53,7 +54,7 @@
   </div>
 
   <section class="rv-card rv-contrib" style="margin-bottom:16px">
-    <h2>组件贡献：{{ rep.base }} → {{ rep.target }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
+    <h2>组件贡献：{{ value_labels.get(rep.base, rep.base) }} → {{ value_labels.get(rep.target, rep.target) }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
     {% set width = (rep.contributions | map(attribute='delta') | select | map('abs') | max) or 1 %}
     {% for ctb in rep.contributions %}
     <div class="rv-contrib-row" title="{{ ctb.name }}：{{ ctb.delta|f1 }} 分（{{ ctb.base|f1 }} → {{ ctb.target|f1 }}）">

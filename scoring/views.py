@@ -108,6 +108,9 @@ def attr_value(row: dict, name: str) -> str:
         return model_label(row)
     if name == "run":
         return str(row.get("run_id"))
+    if name == "evalset_version":
+        from .items import version_label
+        return version_label(row.get(name))
     return str(row.get(name))
 
 
@@ -464,6 +467,39 @@ def case_scores(rows: list[dict], policy, headline: bool = True) -> dict[str, di
             "all_unscored": all_unscored,
             "dim": next(iter(members.values()))["dim"],
         }
+    return out
+
+
+def case_health(rows: list[dict], cases: dict[str, dict] | None = None) -> dict[str, list[str]]:
+    """用例体检标记（§5.4）：变体泄露嫌疑、全部采样无效、注入 found>1、
+    前提不成立、forced 前提成立率偏低。一次扫描，用例页与用例详情共用。"""
+    leak, inj, invalid = set(), set(), set()
+    forced: dict[str, list[str]] = defaultdict(list)
+    for r in rows:
+        cid = r["case_id"]
+        if json.loads(r.get("variant_leak_json") or "[]"):
+            leak.add(cid)
+        if r.get("injection_found_gt1"):
+            inj.add(cid)
+        if r["c_status"] == "invalid":
+            invalid.add(cid)
+        if r["mode"] == "forced" and r["c_status"]:
+            forced[cid].append(r["c_status"])
+    out: dict[str, list[str]] = {}
+    for cid in {r["case_id"] for r in rows}:
+        flags = []
+        if cid in leak:
+            flags.append("变体泄露嫌疑")
+        if (cases or {}).get(cid, {}).get("all_unscored"):
+            flags.append("全部采样无效")
+        if cid in inj:
+            flags.append("注入 found>1")
+        if cid in invalid:
+            flags.append("前提不成立")
+        sts = forced.get(cid) or []
+        if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5:
+            flags.append("forced 前提成立率偏低")
+        out[cid] = flags
     return out
 
 

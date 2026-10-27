@@ -1,7 +1,9 @@
 """复核服务集成测试（doc/10 §10）：新六页面路由、旧路由 301、批量提交与预览接口、
 markdown 渲染、页面数字与导出同源、合成大库下全页面响应时间。"""
 import json
+import re
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -45,6 +47,15 @@ def served_plain(tmp_path):
     return TestClient(app), db
 
 
+def test_rescore_notice(tmp_path):
+    """当前口径下无结论（只导入了期望）时，页面提示执行 rescore。"""
+    db = str(tmp_path / "fresh.db")
+    assert cli.main(["specs", "import", dist_jsonl(tmp_path), "--db", db]) == 0
+    client = TestClient(create_app(db))
+    assert "还没有会话结论" in client.get("/").text
+    assert "python -m scoring rescore" in client.get("/").text
+
+
 def test_cases_page(served, tmp_path):
     """用例页：综合分构成（ec 主口径 forced）、用例表（case_id 一行）。"""
     client, db, _, ops = served
@@ -55,6 +66,21 @@ def test_cases_page(served, tmp_path):
     assert r.status_code == 200
     assert "用例" in r.text and "ec-1" in r.text          # 按用例（case_id）分行
     assert "综合分" in r.text and "n=1" in r.text          # forced 一段（fail → 0 分）
+    assert "还没有会话结论" not in r.text
+
+
+def test_skills_base_stale_badge(served, tmp_path):
+    """快照标 skills_base_stale 的 run，其对话卡片带「技能基底过期」提示。"""
+    client, db, _, ops = served
+    stale = make_run(tmp_path, "stale", [mk_record()], run_id="stale",
+                     snapshot={"skills_mode": "bundled-copy", "skills_base_stale": True,
+                               "evalset": {"sha256": "a"}})
+    assert cli.main(["score", str(stale), "--operators", ops, "--db", db]) == 0
+    s = Store(db)
+    case_id = s.questions()[0]["case_id"]
+    s.close()
+    r = client.get(f"/case/{quote(case_id)}")
+    assert r.status_code == 200 and "技能基底过期" in r.text
 
 
 def test_case_detail(served):
@@ -69,6 +95,90 @@ def test_case_detail(served):
     assert "未收尾款不应电放" in r.text                    # 期望条目
     assert quote(answer_id) in r.text                    # 对话列表一行一段（链接编码）
     assert "参考答案" in r.text or "期望" in r.text
+
+
+def test_case_detail_health_variant_and_pair(served, tmp_path):
+    """用例详情：体检行与粒度、变体下钻只留该变体、勾选两段并排逐轮对照。"""
+    client, db, _, _ = served
+    s = Store(db)
+    q = s.questions()[0]
+    case_id = q["case_id"]
+    aids = [a["answer_id"] for a in s.answers()]
+    s.close()
+    page = client.get(f"/case/{quote(case_id)}").text
+    assert "用例体检" in page and "环节" in page
+
+    variant = mk_record()
+    variant["uid"] = "ec-1#1"
+    variant["case"] = {**variant["case"], "uid": "ec-1#1", "variant_index": 1,
+                       "variant": {"id": "V1", "rewrite": "口语"}, "granularity": "细节"}
+    run_dir = make_run(tmp_path, "var", [mk_record(), variant], run_id="var")
+    assert cli.main(["score", str(run_dir), "--db", db]) == 0
+    s = Store(db)
+    by_uid = {a["record_json"]: a["answer_id"] for a in s.answers()}
+    aid1 = next(aid for rec, aid in by_uid.items() if json.loads(rec)["uid"] == "ec-1#1")
+    other = next(aid for rec, aid in by_uid.items() if json.loads(rec)["uid"] == "ec-1#0")
+    s.close()
+    # 变体选择只决定初始聚焦；全部对话仍渲染，前端按变体收敛（可随时切「全部」）
+    drill = client.get(f"/case/{quote(case_id)}", params={"variant": "ec-1#1"}).text
+    assert 'data-focus-variant="ec-1#1"' in drill and "只看 ec-1#1" in drill
+    assert 'data-vtab="ec-1#1"' in drill and 'data-vpanel="ec-1#1"' in drill
+    assert quote(aid1) in drill and quote(other) in drill
+    assert "显示 1 / 1" in drill   # 服务端按初始聚焦渲染计数，无 JS 也自洽
+    assert re.search(r'data-uid="ec-1#0"[^>]*hidden', drill)
+    all_page = client.get(f"/case/{quote(case_id)}", params={"variant": "__all"}).text
+    assert 'data-show-all="1"' in all_page and "全部变体" in all_page
+
+    pair = client.get(f"/case/{quote(case_id)}", params=[("pair", aids[0]), ("pair", aids[1])]).text
+    assert "并排对照" in pair and "答：规则是收齐尾款后才能电放。" in pair
+
+
+def test_case_detail_variant_questions(served, tmp_path):
+    """变体表直接列出该变体的提问（不必先点进对话）。"""
+    client, db, _, _ = served
+    case = dict(mk_record()["case"])
+    row = {**case, "uid": "ec-1#1", "variant_index": 1,
+           "variant": {"id": "V1", "rewrite": "口语"},
+           "turns": [{"role": "user", "content": "口语变体：单据要准备什么？"}],
+           "evalset_version": "v2"}
+    spec = tmp_path / "variant.jsonl"
+    spec.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert cli.main(["specs", "import", str(spec), "--db", db]) == 0
+    page = client.get("/case/ec-1").text
+    assert "口语变体：单据要准备什么？" in page
+    assert 'data-vtab="ec-1#1"' in page and 'data-vpanel="ec-1#1"' in page
+
+
+def test_case_detail_reference_fold(tmp_path):
+    """参考答案是可选项：native details 折叠，不占首屏；无对话时也有空状态。"""
+    db = str(tmp_path / "fold.db")
+    case = dict(mk_record()["case"])
+    row = {**case, "evalset_version": "v1", "reference_answer": "参考答案正文",
+           "turns": [{"role": "user", "content": "单据要准备什么？"}]}
+    spec = tmp_path / "fold.jsonl"
+    spec.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+    assert cli.main(["specs", "import", str(spec), "--db", db]) == 0
+    page = TestClient(create_app(db)).get("/case/ec-1").text
+    assert 'class="rv-fold"' in page and "参考答案正文" in page
+    assert "还没有对话" in page
+
+
+def test_case_detail_dynamic_controls(served):
+    """用例详情：变体选择器、对话筛选、并排计数与脚本钩子。"""
+    page = served[0].get("/case/ec-1").text
+    assert 'data-vtabs' in page and 'data-vpanel="ec-1#0"' in page
+    assert 'data-focus-variant="ec-1#0"' in page and 'data-show-all="0"' in page
+    assert "/static/case.js" in page
+    assert 'data-theme-opt="dark"' in page and 'data-theme-opt="system"' in page and "/static/theme.js" in page
+    assert 'data-cfilter="failed"' in page and 'data-cfilter-count="undecided"' in page
+    assert 'data-pair-count' in page and 'data-pair-submit' in page
+    assert 'data-uid="ec-1#0"' in page and 'data-status="' in page and 'data-conv-scope' in page
+
+
+def test_cases_granularity_filter(served):
+    client, db, _, _ = served
+    assert 'href="/case/ec-1"' in client.get("/?granularity=环节").text
+    assert 'href="/case/ec-1"' not in client.get("/?granularity=细节").text
 
 
 def test_review_page(served_plain):
@@ -88,6 +198,13 @@ def test_review_page(served_plain):
     assert "data-concl='{\"" in r.text and "data-scale='[\"" in r.text
     assert "data-map='{}'" in r.text                        # 非计分行 map 为空对象
     assert 'data-concl="{' not in r.text
+    # 权重调整后的复核行按百分比显示（百分制标记 → 权重 60.0%）
+    st = Store(db)
+    q = st.questions()[0]
+    st.revise_weights(q["qkey"], q["current_judge_fp"], {"F1": 60})
+    st.close()
+    r2 = client.get(f"/review/{quote(answer_id)}")
+    assert "权重 60%</span>" in r2.text
 
 
 def test_review_page_markdown_and_static(served_plain):
@@ -190,6 +307,25 @@ def test_mismatch_and_failed_tabs(served):
                                      "value": "对", "reason": "回答明确", "reviewer": "codfish"})
     mm = client.get("/review?tab=mismatch").text
     assert a["qkey"].split("|")[0] in mm and quote(a["answer_id"]) in mm   # 一行一段对话，链接按 answer_id 编码
+
+
+def test_queue_spot_ratio_and_operator_filter(served):
+    """模型抽检比例可选；分歧链接带算子筛选，只列该算子的分歧对话。"""
+    client, db, _, _ = served
+    s = Store(db)
+    a = s.answers()[0]
+    op = s.conn.execute("SELECT DISTINCT operator FROM verdicts WHERE operator IS NOT NULL").fetchone()[0]
+    s.close()
+    spot = client.get("/review?tab=spot&spot=20").text
+    assert "抽检比例" in spot and 'value="20" selected' in spot
+
+    client.post("/api/review", json={"answer_id": a["answer_id"], "item_id": "F1",
+                                     "value": "对", "reason": "回答明确", "reviewer": "codfish"})
+    matched = client.get(f"/review?tab=mismatch&op={quote(op)}").text
+    assert quote(a["answer_id"]) in matched
+    assert "全部算子" in matched
+    other = client.get("/review?tab=mismatch&op=no-such-operator").text
+    assert quote(a["answer_id"]) not in other
 
 
 def test_review_urls_escape_hash(tmp_path):
@@ -327,14 +463,17 @@ def test_compare_scores_page(served, tmp_path):
 def test_judging_page(served):
     client, db, _, _ = served
     s = Store(db)
-    a = s.answers()[0]
+    answers = [a["answer_id"] for a in s.answers()]
     s.close()
-    client.post("/api/review", json={"answer_id": a["answer_id"], "item_id": "F1",
-                                     "value": "对", "reason": "r", "reviewer": "codfish"})
+    for aid in answers:                                     # 同一算子两条改判 → 分母 > 1
+        client.post("/api/review", json={"answer_id": aid, "item_id": "F1",
+                                         "value": "未提及", "reason": "r", "reviewer": "codfish"})
     r = client.get("/judging")
     assert r.status_code == 200
     assert "判定质量" in r.text and "数据来源" in r.text
     assert "keyword" in r.text                              # 算子行
+    assert 'rv-rate-pct">100%' in r.text and ">2/2<" in r.text
+    assert 'rv-rate-pct">200%' not in r.text                # 计数不能当 0–1 比率
 
 
 # ---------------------------------------------------------------- 大库性能（R7/doc-10 §G6）
@@ -349,7 +488,8 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
     store = Store(db_path)
     conn = store.conn
     with conn:
-        conn.execute("INSERT INTO runs VALUES('big','/x','v1','p1','{}','2026-01-01','2026-01-01')")
+        conn.execute("INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json,"
+                     " imported_at, started_at) VALUES('big','/x','v1','p1','{}','2026-01-01','2026-01-01')")
         questions, answers, verdicts, conclusions, reviews = [], [], [], [], []
         for qi in range(n_q):
             qkey, fp = f"q{qi}|fp{qi}", f"fp{qi}"
@@ -358,7 +498,7 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
             record = {"uid": uid, "mode": "natural", "trial": 1, "status": "ok",
                       "turns": [{"index": 1, "source": "live", "input": "q", "output": "答",
                                  "status": "ok", "observations": {}}], "case": case}
-            questions.append((qkey, uid, case_id, 0, None, "知识召回", "t", "[]", fp, fp, 1, "2026-01-01"))
+            questions.append((qkey, uid, case_id, 0, None, "知识召回", "t", "环节", "[]", fp, fp, 1, "2026-01-01"))
             conn.execute("INSERT OR IGNORE INTO specs VALUES(?,?,?,'v1','2026-01-01')",
                          (qkey, fp, json.dumps(case, ensure_ascii=False)))
             rec_json = json.dumps(record, ensure_ascii=False)
@@ -385,7 +525,9 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                 if kind == 1 and ai == 1 and qi < 1000:        # 人工与机器不一致的改判
                     reviews.append((a_id, "F1", f"sha{qi}", "asha", "对", "回答明确", "codfish",
                                     "2026-01-01", None))
-        conn.executemany("INSERT OR REPLACE INTO questions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", questions)
+        conn.executemany("INSERT OR REPLACE INTO questions(qkey, uid, case_id, variant_index, rewrite, dim,"
+                         " topic, granularity, tags_json, input_fp, current_judge_fp, active, first_seen)"
+                         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", questions)
         conn.executemany("INSERT OR REPLACE INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", answers)
         conn.executemany("INSERT OR REPLACE INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
         conn.executemany("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", conclusions)
@@ -441,3 +583,160 @@ def test_synthetic_scale_performance(tmp_path):
     elapsed = time.time() - t0
     assert r.status_code == 200 and "组件贡献" in r.text
     assert elapsed < 1.0, f"对比页（base/target）响应 {elapsed:.2f}s 超过 1s"
+
+
+def test_case_weights_editor(served):
+    """用例详情权重分配：滑块块渲染、保存接口写新期望、超限 400、saved 提示条。"""
+    client, db, _, _ = served
+    s = Store(db)
+    qkey = s.questions()[0]["qkey"]
+    case_id = s.questions()[0]["case_id"]
+    s.close()
+    page = client.get(f"/case/{case_id}")
+    assert 'id="weight-editor"' in page.text and 'id="w-pie"' in page.text   # 饼图编辑器
+    assert 'rv-detail-btn' in page.text and 'data-detail=' in page.text      # 简要条目 + 详情下钻
+    assert 'data-qkey="%s"' % qkey in page.text
+    ok = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 60}})
+    assert ok.status_code == 200 and ok.json()["changed"]
+    page3 = client.get(f"/case/{case_id}")
+    assert 'data-wchip="F1">60%</span>' in page3.text        # 百分制回显：留未分配保存后原值显示，不被归一成 100%
+    page2 = client.get(f"/case/{case_id}?saved=abcd1234")
+    assert "权重已保存为新期望 abcd1234" in page2.text and "rejudge --question" in page2.text
+    bad = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 101}})
+    assert bad.status_code == 400 and "0–100" in bad.json()["error"]   # 该用例只有 1 个计分条目，逐值上限先触发
+    # 版本标签可自定义命名（历史版本切换条显示）
+    ok2 = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 30}, "label": "权重-降F1"})
+    assert ok2.status_code == 200 and ok2.json()["changed"]
+    assert "权重-降F1" in client.get(f"/case/{case_id}").text
+
+
+def test_run_and_chain_rename(served):
+    """命名改造：队列 run 选项显示「标题 · 短 id」；改名 API 两端校验；
+    链改名后导航选择器更新；runtag 徽标带完整 run_id 提示。"""
+    client, db, _, _ = served
+    s = Store(db)
+    rid = s.runs()[0]["run_id"]
+    label = s.run_labels()[rid]
+    chain_sha = s.chains()[0]["chain_sha"]
+    s.close()
+    page = client.get("/review")
+    assert f"{label} · {rid[:8]}" in page.text
+    ok = client.post("/api/run/rename", json={"run_id": rid, "title": "基线-glm53low"})
+    assert ok.status_code == 200 and ok.json()["title"] == "基线-glm53low"
+    assert f"基线-glm53low · {rid[:8]}" in client.get("/review").text
+    assert client.post("/api/run/rename", json={"run_id": "no-such", "title": "x"}).status_code == 400
+    okc = client.post("/api/chain/rename", json={"chain_sha": chain_sha, "name": "规则+llm-v2"})
+    assert okc.status_code == 200
+    assert "规则+llm-v2" in client.get("/judging").text
+    assert client.post("/api/chain/rename", json={"chain_sha": "no-such", "name": "x"}).status_code == 400
+    # runtag 徽标显示标题、悬停给完整 run_id（抽检队列的对话行）
+    queue = client.get("/review?tab=spot&spot=100&run_id=" + quote(rid))
+    assert f'title="{rid}"' in queue.text and "基线-glm53low" in queue.text
+
+
+def test_configs_and_runs_pages(served, tmp_path):
+    """配置管理页只含被测配置（每配置综合分）；执行记录独立成 /runs 页（run 表 + 命名）；
+    用例管理页不再有配置选择器；侧边栏导航两页都有入口。"""
+    client, db, _, ops = served
+    run_f = make_run(tmp_path, "demof", [mk_record(mode="forced")], run_id="demof",
+                     snapshot={"skills_mode": "default-roots", "evalset": {"sha256": "a"}})
+    assert cli.main(["score", str(run_f), "--operators", ops, "--db", db]) == 0
+    page = client.get("/configs")
+    assert page.status_code == 200
+    assert "配置管理" in page.text and "被测配置" in page.text and "综合分" in page.text
+    assert "重命名执行记录" not in page.text           # 执行记录已拆到 /runs
+    runs = client.get("/runs")
+    assert runs.status_code == 200
+    assert "执行记录" in runs.text and "重命名执行记录" in runs.text
+    assert "demof" in runs.text                        # 两次执行各一行（run_id 短码）
+    assert 'href="/runs"' in page.text                 # 两页互相有入口
+    # 首页已拆分：无配置选择器，有新建入口与配置管理链接
+    home = client.get("/").text
+    assert "用例管理" in home and "/case/new" in home and "/configs" in home
+    assert "被测配置</b>" not in home
+    # 执行记录命名在 /runs 页生效
+    ok = client.post("/api/run/rename", json={"run_id": "demof", "title": "forced 对照"})
+    assert ok.status_code == 200
+    assert "forced 对照" in client.get("/runs").text
+
+
+def test_case_new_page(served, tmp_path):
+    """新建用例页：表单骨架 + 词表/注入点/推荐 id 数据块。"""
+    client, db, _, _ = served
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    app2 = create_app(db, cases_dir=str(cases))
+    page = TestClient(app2).get("/case/new")
+    assert page.status_code == 200
+    body = page.text
+    assert "新建用例" in body and "基本信息" in body and "必要事实" in body
+    assert "知识召回" in body and "rewrites" in body       # 维度词表直渲染；改写词表进 JSON
+    assert "cn-data" in body and "kr-0001" in body        # 空 cases 目录 → 推荐 kr-0001
+    assert '<option value="order_intake"' not in body     # 自定义 cases_dir 不读真库目录
+
+
+def _kr_body(**over):
+    body = {"id": "kr-9001", "dim": "知识召回", "topic": "进单资料审核", "granularity": "环节",
+            "source": "t", "tags": ["场景/首轮追问"], "history": "live",
+            "turns": ["我司报关的融资业务，需要客户提供哪些融资单据？"], "assistant_refs": [],
+            "conditions": [{"slot": "业务类型", "value": "融资业务", "keywords": [], "turn": None}],
+            "injections": [], "preconditions": [],
+            "facts": [{"kind": "required", "text": "开船后的提单",
+                       "keywords": ["开船后的提单"], "turn": None, "group": "",
+                       "evidence": "", "weight": None}],
+            "paths": [], "evidences": [], "variants": [],
+            "reference_answer": "", "note": "", "directory": "batch-a"}
+    body.update(over)
+    return body
+
+
+def test_case_create_and_roundtrip(served, tmp_path):
+    """新建用例：preview 出 md 与警告（缺来源提示）；create 落盘 md 且能被
+    md2case 重新解析（md 是唯一数据源）；重复 id / 非法目录 / 校验失败分别拒绝。"""
+    import sys
+    client, db, _, _ = served
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    app2 = create_app(db, cases_dir=str(cases))
+    c2 = TestClient(app2)
+
+    prev = c2.post("/api/case/preview", json=_kr_body())
+    assert prev.status_code == 200
+    data = prev.json()
+    assert data["ok"] and "## 问题" in data["md"] and "## 关键条件" in data["md"]
+    assert data["md"].startswith("---")                    # frontmatter
+    assert any("来源" in w for w in data["warnings"])       # 无证据事实 → 提示
+
+    ok = c2.post("/api/case/create", json=_kr_body())
+    assert ok.status_code == 200, ok.text
+    saved = cases / "batch-a" / "kr-9001.md"
+    assert saved.exists()
+    text = saved.read_text(encoding="utf-8")
+    assert "id: kr-9001" in text and "## 必要事实" in text
+    sys.path.insert(0, str(Path("evalset").resolve()))
+    import md2case  # noqa: E402
+    parsed = md2case.md_to_case(text, str(saved))
+    assert parsed["id"] == "kr-9001" and parsed["facts"][0]["keywords"] == ["开船后的提单"]
+    assert ok.json()["hint"] and "build" in ok.json()["hint"][1]
+
+    # 重复 id / 非法目录 / 校验失败（ec 缺注入与禁止事实）
+    dup = c2.post("/api/case/create", json=_kr_body())
+    assert dup.status_code == 400 and "已存在" in dup.json()["error"]
+    bad_dir = c2.post("/api/case/create", json=_kr_body(id="kr-9002", directory="../evil"))
+    assert bad_dir.status_code == 400 and "目录" in bad_dir.json()["error"]
+    ec = c2.post("/api/case/create", json=_kr_body(id="ec-9001", dim="错误知识纠正"))
+    assert ec.status_code == 400
+    assert any("注入" in e for e in ec.json()["errors"])
+
+
+def test_case_preview_knowledge_check(served):
+    """preview 联动 knowledge 校验：引用不存在的注入点 → 错误（不落盘）。"""
+    client, db, _, _ = served
+    ec_body = _kr_body(id="ec-9002", dim="错误知识纠正",
+                       injections=[{"point": "不存在的注入点", "option": "x"}],
+                       facts=[{"kind": "forbidden", "text": "错", "keywords": [], "turn": None,
+                               "group": "", "evidence": "", "weight": None}])
+    prev = client.post("/api/case/preview", json=ec_body)
+    assert prev.status_code == 200
+    assert not prev.json()["ok"]
+    assert any("不存在的注入点" in e for e in prev.json()["errors"])

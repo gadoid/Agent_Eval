@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}复核 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page" data-page="queue">
@@ -14,25 +14,37 @@
 
   <nav class="rv-tabs" aria-label="队列" style="margin-bottom:12px">
     {% for t, label in tab_labels.items() %}
-    <a class="rv-tab" href="/review?tab={{ t }}&run_id={{ q_run }}&dim={{ q_dim }}" {% if t == tab %}aria-current="page"{% endif %}>
+    <a class="rv-tab" href="{{ queue_url(t) }}" {% if t == tab %}aria-current="page"{% endif %}>
       {{ label }} {% if meta.tabs[t] %}<span class="rv-count">{{ meta.tabs[t] }}</span>{% endif %}</a>
     {% endfor %}
   </nav>
 
   <form class="rv-filterbar" style="margin-bottom:12px" onsubmit="return false">
-    <div class="rv-field"><label>run</label><select class="rv-select" onchange="f('run_id',this.value)">
-      <option value="">全部 run</option>{% for r in run_ids %}<option value="{{ r }}" {% if r == q_run %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></div>
+    <div class="rv-field"><label>run</label><select class="rv-select" id="run-select" onchange="f('run_id',this.value)">
+      <option value="">全部 run</option>{% for r in run_ids %}<option value="{{ r }}" data-label="{{ run_labels.get(r, '') }}" {% if r == q_run %}selected{% endif %}>{{ run_labels.get(r, r) }} · {{ r[:8] }}</option>{% endfor %}</select>
+      <button class="rv-icon-btn" type="button" id="run-name-btn" title="给选中的 run 命名" aria-label="给 run 命名">✎</button></div>
     <div class="rv-field"><label>维度</label><select class="rv-select" onchange="f('dim',this.value)">
       <option value="">全部维度</option>{% for d in dims %}<option value="{{ d }}" {% if d == q_dim %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
+    {% if tab == 'spot' %}
+    <div class="rv-field"><label>抽检比例</label><select class="rv-select" onchange="f('spot',this.value)">
+      {% for p in (10, 20, 100) %}<option value="{{ p }}" {% if p == spot %}selected{% endif %}>{{ '全部' if p == 100 else p ~ '%' }}</option>{% endfor %}</select></div>
+    {% endif %}
+    {% if tab == 'mismatch' %}
+    <div class="rv-field"><label>算子</label><select class="rv-select" onchange="f('op',this.value)">
+      <option value="">全部算子</option>{% for o in operators %}<option value="{{ o }}" {% if o == q_op %}selected{% endif %}>{{ o }}</option>{% endfor %}</select></div>
+    {% endif %}
     <div class="rv-field"><label>评审人</label><input class="rv-input" id="reviewer" placeholder="记入 localStorage" style="width:140px"></div>
   </form>
 
   {% if not convs %}<div class="rv-empty"><b>队列为空</b>这个标签下没有待处理对话。</div>{% endif %}
+  {% set review_qs = 'tab=' + tab %}
+  {% if q_op %}{% set review_qs = review_qs + '&op=' + (q_op|urlencode) %}{% endif %}
+  {% if tab == 'spot' %}{% set review_qs = review_qs + '&spot=' + (spot|string) %}{% endif %}
   <ul class="rv-cq">
     {% for c in convs %}
     <li>{{ m.verdict(c.status, lg=True) }}
       <div class="rv-cq-main">
-        <div class="rv-cq-title"><a href="/review/{{ c.answer_id|urlencode }}?tab={{ tab }}">{{ c.uid }}{% if c.rewrite is defined %}{% endif %}</a>
+        <div class="rv-cq-title"><a href="/review/{{ c.answer_id|urlencode }}?{{ review_qs }}">{{ c.uid }}{% if c.rewrite is defined %}{% endif %}</a>
           {% if tab == 'undecided' %}{{ c.first_input[:60] }}{% endif %}</div>
         {{ m.runtag(c) }}
       </div>
@@ -47,12 +59,18 @@
         {% if c.pending %}<span class="rv-state" data-s="need">待判 {{ c.pending }}</span>
           {% for k, n in c.pending_kinds.items() %}<span class="rv-kind">{{ k|kind_label }} {{ n }}</span>{% endfor %}{% endif %}
         {% if tab == 'failed' %}<span class="rv-state" data-s="void">{{ c.run_status }}</span>{% endif %}
-        <a class="rv-btn" href="/review/{{ c.answer_id|urlencode }}?tab={{ tab }}">复核</a></span></li>
+        <a class="rv-btn" href="/review/{{ c.answer_id|urlencode }}?{{ review_qs }}">复核</a></span></li>
     {% endfor %}
   </ul>
-  {{ m.pager(meta.page, pages, '/review?tab=' + tab + '&run_id=' + (q_run or '') + '&dim=' + (q_dim or '') + '&') }}
+  {{ m.pager(meta.page, pages, pager_base) }}
 </main>
 <script>
 function f(k, v) { var u = new URL(location); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); u.searchParams.delete('page'); location = u; }
+rvRename({ btn: document.getElementById('run-name-btn'), host: document.getElementById('run-select'),
+  getId: function () { return document.getElementById('run-select').value; },
+  getLabel: function () { var s = document.getElementById('run-select');
+    return s.selectedOptions[0] ? (s.selectedOptions[0].dataset.label || '') : ''; },
+  url: '/api/run/rename', key: 'run_id', field: 'title',
+  placeholder: '如 基线-glm53low（空 = 回默认标题）', emptyHint: '先选择一个 run 再命名' });
 </script>
 {% endblock %}

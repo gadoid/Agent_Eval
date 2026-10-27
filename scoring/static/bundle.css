@@ -4,6 +4,7 @@
 
 .rv-app {
   margin: 0;
+  display: flex; align-items: stretch; min-height: 100vh;
   background: var(--bg-page);
   color: var(--ink);
   font-family: var(--font-sans);
@@ -19,25 +20,25 @@
 .rv-meta { color: var(--ink-3); font-size: 12px; line-height: 18px; }
 .rv-meta > * + *::before { content: "·"; margin: 0 6px; color: var(--ink-3); }
 
-/* ---------------------------------------------------------------- AppHeader */
+/* ---------------------------------------------------------------- AppHeader（竖直侧边栏） */
 .rv-header {
   position: sticky; top: 0; z-index: 10;
-  display: flex; align-items: center; gap: var(--space-5);
-  height: 52px; padding: 0 var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-4);
+  flex: none; width: 210px; height: 100vh; overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
   background: var(--bg-surface);
-  border-bottom: 1px solid var(--line);
-  box-shadow: var(--shadow-sticky);
+  border-right: 1px solid var(--line);
 }
-.rv-brand { font-weight: 600; font-size: 15px; color: var(--ink); white-space: nowrap; }
-.rv-nav { display: flex; gap: var(--space-1); height: 100%; }
+.rv-brand { font-weight: 600; font-size: 15px; color: var(--ink); white-space: nowrap; padding: 0 var(--space-2); }
+.rv-nav { display: flex; flex-direction: column; gap: 2px; }
 .rv-nav a {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 var(--space-3); height: 100%;
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 var(--space-3); height: 34px;
+  border-radius: var(--radius-md);
   color: var(--ink-2); font-size: 14px;
-  border-bottom: 2px solid transparent;
 }
 .rv-nav a:hover { color: var(--ink); text-decoration: none; background: var(--bg-page); }
-.rv-nav a[aria-current="page"] { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
+.rv-nav a[aria-current="page"] { color: var(--accent-ink); background: var(--accent-soft); font-weight: 600; }
 .rv-count {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 20px; height: 18px; padding: 0 6px;
@@ -46,7 +47,12 @@
   font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
 }
 .rv-count[data-tone="notice"] { background: var(--notice-soft); color: var(--notice-ink); }
-.rv-header .rv-header-meta { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-main { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 900px) {
+  .rv-header { width: 176px; padding: var(--space-3) var(--space-2); }
+  .rv-nav a { padding: 0 var(--space-2); }
+  .rv-case .rv-card { scroll-margin-top: 24px; }
+}
 
 /* ---------------------------------------------------------------- Page */
 .rv-page { max-width: var(--page-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); }
@@ -210,7 +216,7 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-fact .rv-kind { margin-top: 1px; }
 .rv-fact-text { font-size: 14px; line-height: 22px; }
 .rv-fact-meta { display: block; color: var(--ink-3); font-size: 12px; line-height: 18px; }
-.rv-expect--sticky { position: sticky; top: 60px; z-index: 5; box-shadow: var(--shadow-sticky); }
+.rv-expect--sticky { position: sticky; top: 8px; z-index: 5; box-shadow: var(--shadow-sticky); }
 
 /* ---------------------------------------------------------------- Tabs & progress（队列筛选） */
 .rv-tabs { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px solid var(--line); }
@@ -312,8 +318,35 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-pill--mono { font-family: var(--font-mono); font-size: 11.5px; }
 
 /* ---------------------------------------------------------------- JudgeSwitch：判定配置 */
-.rv-judge { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--ink-2); }
-.rv-judge .rv-select { height: 28px; font-size: 12px; max-width: 260px; }
+.rv-judge { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); font-size: 12px; color: var(--ink-2); }
+.rv-judge-k { font-weight: 600; padding-left: 2px; }
+.rv-judge-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rv-judge .rv-select { height: 28px; font-size: 12px; flex: 1; min-width: 0; }
+.rv-header-tools { margin-top: auto; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); }
+.rv-header-tools .rv-theme { align-self: flex-start; }
+
+/* 命名改造：run / 判定配置 重命名的小图标按钮（rename.js 内联编辑入口） */
+.rv-icon-btn { flex: none; width: 26px; height: 26px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg-surface); color: var(--ink-2); cursor: pointer; font-size: 13px; line-height: 1; }
+.rv-icon-btn:hover { border-color: var(--accent); color: var(--accent-ink); }
+.rv-icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* ---------------------------------------------------------------- ThemeSwitch：配色方案 */
+.rv-theme {
+  display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--bg-sunken);
+}
+.rv-theme button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px; padding: 0;
+  border: 0; border-radius: var(--radius-pill); background: transparent;
+  color: var(--ink-2); font: inherit; cursor: pointer;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.rv-theme button svg { display: block; width: 15px; height: 15px; }
+.rv-theme button:hover { color: var(--ink); background: var(--bg-surface); }
+.rv-theme button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* ---------------------------------------------------------------- ConclusionBar */
 .rv-concl {
@@ -329,7 +362,7 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 
 /* ---------------------------------------------------------------- ConversationPane */
 .rv-conv { display: grid; gap: var(--space-4); }
-.rv-turn { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); overflow: hidden; scroll-margin-top: 120px; }
+.rv-turn { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); overflow: hidden; scroll-margin-top: 16px; }
 .rv-turn.is-linked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .rv-turn-head {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
@@ -395,7 +428,7 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 
 /* ---------------------------------------------------------------- ReviewLayout */
 .rv-review-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 460px); gap: var(--space-4); align-items: start; }
-.rv-review-layout > .rv-sheet { position: sticky; top: 68px; max-height: calc(100vh - 84px); overflow: auto; }
+.rv-review-layout > .rv-sheet { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
 @media (max-width: 1100px) { .rv-review-layout { grid-template-columns: 1fr; } .rv-review-layout > .rv-sheet { position: static; max-height: none; } }
 .rv-crumb { font-size: 12px; color: var(--ink-3); }
 .rv-crumb a { color: var(--ink-2); }
@@ -514,3 +547,224 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-inj[data-s="na"]     { background: var(--neutral-soft); color: var(--neutral-ink); }
 
 .rv-proto-note{padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)}.rv-proto-note a{margin:0 2px}[hidden]{display:none!important}
+
+/* ================================================================ v5：用例详情（信息分层 + 动态展示） */
+
+/* ---------------------------------------------------------------- 页头 */
+.rv-case-hero {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background:
+    radial-gradient(120% 160% at 0% 0%, var(--accent-soft) 0%, transparent 55%),
+    var(--bg-surface);
+  box-shadow: var(--shadow-card);
+}
+.rv-case-hero-main { flex: 1 1 420px; min-width: 0; display: grid; gap: var(--space-2); }
+.rv-case-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-case-title h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.01em; }
+.rv-case-sub { font-size: 12.5px; }
+.rv-case-health { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rv-case-health .rv-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--pass-ink); font-weight: 600; }
+.rv-case-health .rv-ok::before { content: "✓"; }
+.rv-tagrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rv-tagrow:empty::after { content: "—"; color: var(--ink-3); }
+
+.rv-case .rv-card { scroll-margin-top: 16px; transition: box-shadow .18s ease, border-color .18s ease; }
+.rv-case .rv-card:hover { box-shadow: var(--shadow-sticky); }
+
+/* ---------------------------------------------------------------- 筛选 chips */
+.rv-chips-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+.rv-chip-filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--bg-surface); color: var(--ink-2);
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 1; cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.rv-app a.rv-chip-filter:hover { text-decoration: none; }
+.rv-chip-filter:hover { background: var(--bg-page); color: var(--ink); }
+.rv-chip-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.rv-chip-n { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; opacity: .9; }
+
+/* ---------------------------------------------------------------- 期望 */
+.rv-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-top: var(--space-2); }
+.rv-expect-qs { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-md); background: var(--bg-page); }
+.rv-expect .rv-facts { margin-top: 2px; }
+.rv-fold { margin-top: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-page); overflow: hidden; }
+.rv-fold > summary {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; user-select: none;
+}
+.rv-fold > summary::-webkit-details-marker { display: none; }
+.rv-fold > summary::before { content: "▸"; color: var(--ink-3); font-size: 11px; transition: transform .15s ease; }
+.rv-fold[open] > summary::before { transform: rotate(90deg); }
+.rv-fold > summary:hover { background: var(--bg-sunken); }
+.rv-fold .rv-fold-hint { margin-left: auto; color: var(--accent); font-size: 12px; font-weight: 500; }
+.rv-fold .rv-fold-hint[data-open] { display: none; }
+.rv-fold[open] .rv-fold-hint[data-closed] { display: none; }
+.rv-fold[open] .rv-fold-hint[data-open] { display: inline; }
+.rv-fold-body { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); background: var(--bg-surface); }
+
+/* ---------------------------------------------------------------- 变体选择器 */
+.rv-vtabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.rv-app a.rv-vtab {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--bg-surface); color: var(--ink-2);
+  font-size: 13px; font-weight: 500; white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  transition: background .16s ease, border-color .16s ease, color .16s ease,
+              box-shadow .16s ease, transform .16s ease;
+}
+.rv-app a.rv-vtab:hover {
+  text-decoration: none; color: var(--ink);
+  border-color: var(--line-strong); transform: translateY(-1px);
+  box-shadow: var(--shadow-sticky);
+}
+.rv-app a.rv-vtab:active { transform: translateY(0); }
+.rv-app a.rv-vtab[aria-selected="true"] {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  font-weight: 600; box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.rv-vtab .rv-kind { height: 18px; padding: 0 5px; border-color: currentColor; color: inherit; font-weight: 500; opacity: .8; }
+.rv-vtab-id { font-family: var(--font-mono); font-size: 13px; }
+.rv-vtab-n {
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--bg-sunken); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.rv-app a.rv-vtab[aria-selected="true"] .rv-vtab-n {
+  background: color-mix(in srgb, var(--on-accent) 20%, transparent); color: var(--on-accent);
+}
+.rv-vtab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.rv-app a.rv-vtab[aria-selected="true"] .rv-vtab-dot { background: var(--on-accent); }
+.rv-vpanels { margin-top: var(--space-3); }
+.rv-vpanel[hidden] { display: none; }
+.rv-vpanel { animation: rv-panel-in .22s ease both; animation-delay: calc(var(--i, 0) * 35ms); }
+.rv-vpanel + .rv-vpanel { margin-top: var(--space-3); }
+@keyframes rv-panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.rv-vfocus { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-page); }
+.rv-vfocus-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-vfocus-num { font-family: var(--font-mono); font-size: 18px; line-height: 24px; font-weight: 600; }
+.rv-vfocus-stats { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-vfocus-link { margin-left: auto; }
+.rv-vfocus .rv-expect-qs { background: var(--bg-surface); }
+
+/* ---------------------------------------------------------------- 对话：筛选与并排勾选 */
+.rv-pairbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-page);
+}
+.rv-pairbar-hint { font-size: 12px; color: var(--ink-2); }
+.rv-pair-count { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rv-pair-pick { display: inline-flex; align-items: center; gap: 6px; }
+.rv-pair-pick input { margin: 0; }
+.rv-cq-group { margin-bottom: var(--space-3); }
+.rv-cq-group:last-of-type { margin-bottom: 0; }
+.rv-cq-group-head { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.rv-cq-group-head .rv-meta { font-weight: 400; margin-left: 4px; }
+.rv-cq li { transition: background .12s ease; }
+.rv-cq li[data-pair-selected] { background: var(--bg-selected); box-shadow: inset 3px 0 0 var(--accent); }
+
+/* 并排对照：两列逐轮对齐 */
+.rv-pair { margin-top: var(--space-5); }
+.rv-pair-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.rv-pair-head {
+  position: sticky; top: 12px; z-index: 3;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface);
+  box-shadow: var(--shadow-card); font-size: 13px;
+}
+.rv-pair-cell { max-width: none; }
+.rv-pair-cell .rv-md { font-size: 14px; line-height: 23px; }
+
+/* ---------------------------------------------------------------- 窄屏 */
+@media (max-width: 860px) {
+  .rv-case-hero { padding: var(--space-3); }
+  .rv-app a.rv-vtab { height: 36px; padding: 0 12px; }
+  .rv-vfocus-link { margin-left: 0; }
+  .rv-case .rv-cq li { grid-template-columns: 1fr; gap: var(--space-2); }
+  .rv-cq-todo { justify-content: flex-start; }
+  .rv-pair-grid { grid-template-columns: 1fr; }
+  .rv-pair-head { position: static; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rv-case *, .rv-case *::before, .rv-case *::after { transition: none !important; animation: none !important; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.rv-case) { scroll-behavior: smooth; }
+}
+
+/* ---------------------------------------------------------------- WeightPie（用例详情：简要条目 + 饼图 + 详情下钻） */
+.rv-expect-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--space-4); align-items: start; }
+@media (max-width: 1000px) { .rv-expect-grid { grid-template-columns: 1fr; } }
+.rv-facts-brief .rv-item { display: flex; align-items: center; gap: var(--space-2); padding: 4px 6px; border-radius: var(--radius-md); }
+.rv-facts-brief .rv-item:hover, .rv-facts-brief .rv-item.is-active { background: var(--bg-page); }
+.rv-facts-brief .rv-item .rv-fact-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-facts-brief .rv-item .rv-btn { height: 24px; padding: 0 var(--space-2); font-size: 12px; }
+.rv-wpct-chip { min-width: 44px; text-align: center; }
+.rv-item-detail { margin-top: var(--space-2); }
+.rv-detail-card { border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--bg-selected); padding: var(--space-3); }
+.rv-pie-col { display: grid; gap: var(--space-2); justify-items: center; position: sticky; top: 12px; }
+.rv-pie-col svg { width: 240px; height: 240px; touch-action: none; }
+.rv-pie-legend { display: grid; gap: 10px; width: 100%; }
+.rv-wbar-row { display: grid; grid-template-columns: 12px 52px minmax(0, 1fr) 44px; gap: var(--space-2); align-items: center; font-size: 12.5px; }
+.rv-lg-dot { width: 10px; height: 10px; border-radius: 3px; }
+.rv-lg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-weight: 500; }
+.rv-bar-pct { text-align: right; font-weight: 600; }
+.rv-wbar { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); touch-action: none; }
+.rv-wbar-fill { position: absolute; left: 0; top: -1px; bottom: -1px; border-radius: var(--radius-pill); opacity: .85; }
+.rv-wbar-knob { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--bg-surface); cursor: ew-resize; padding: 0; box-shadow: var(--shadow-card); }
+.rv-wbar-knob:hover { border-color: var(--accent-hover); box-shadow: 0 0 0 4px var(--accent-soft); }
+.rv-wbar-knob:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-wsum { font-size: 12.5px; color: var(--ink-2); }
+.rv-wsum b { font-family: var(--font-mono); }
+
+/* 百分比双击编辑：平时是纯展示态，仅激活编辑时出现输入框 */
+.rv-bar-pct:hover { color: var(--accent-ink); }
+.rv-bar-edit { width: 100%; height: 24px; padding: 0 2px; text-align: right; font-family: var(--font-mono);
+  font-size: 12px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--ink); }
+.rv-bar-edit:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* ---------------- 新建用例表单（用例管理 → 新建用例） */
+
+.rv-notice[data-tone="pass"] { background: var(--pass-soft); color: var(--pass-ink); border-color: var(--pass-ink); }
+.rv-notice[data-tone="notice"] { background: var(--notice-soft); color: var(--notice-ink); border-color: var(--notice-ink); }
+
+.rv-cn-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.rv-cn-head b { font-size: 14px; }
+.rv-cn-head .rv-btn { height: 26px; padding: 0 10px; font-size: 12px; margin-left: auto; }
+
+.rv-cn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
+.rv-cn-tags { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; align-items: center; }
+.rv-cn-tag-group { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rv-cn-tag { display: inline-flex; gap: 4px; align-items: center; font-size: 13px; color: var(--ink-2); }
+.rv-cn-tag-k { font-weight: 600; font-size: 13px; color: var(--ink-2); }
+
+.rv-cn-rows { display: grid; gap: 8px; margin-bottom: 6px; }
+.rv-cn-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.rv-cn-row .rv-input, .rv-cn-row .rv-select { height: 30px; font-size: 13px; }
+.rv-cn-row textarea.rv-input { height: auto; min-height: 44px; flex: 1; min-width: 220px; font-family: inherit; }
+.rv-cn-row .rv-btn--ghost { height: 26px; padding: 0 6px; align-self: center; }
+.rv-cn-row [data-ev-inline] { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+
+.rv-cn-itemid { flex: none; min-width: 34px; height: 22px; padding: 0 6px; border-radius: 11px;
+  font-size: 12px; font-family: ui-monospace, monospace; display: inline-flex; align-items: center;
+  justify-content: center; background: var(--bg-page); color: var(--ink-2); align-self: center; }
+.rv-cn-row .rv-cn-user { font-weight: 500; }
+
+.rv-cn-area { min-height: 56px; font-family: inherit; }
+.rv-cn-md { margin: 8px 0 0; padding: 12px; background: var(--bg-page); border: 1px solid var(--border);
+  border-radius: 8px; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.6;
+  white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow: auto; }
+
+.rv-cn-saverow { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.rv-config-runs a { white-space: nowrap; }
+.rv-config-runlabel { font-weight: 600; }

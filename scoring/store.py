@@ -19,11 +19,11 @@ from collections import defaultdict
 
 from .items import (SCALES, build_context, episode_error, extract_items, input_fp_of,
                     judge_fp_of, qkey_of, variant_leak_suspects, TOTAL_ITEM, conversation_sha,
-                    weight_of)
+                    version_label, weight_of)
 from .operators import Verdict
 from .policy import EpisodeVerdict, Policy, session_conclusion
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 7
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -230,6 +230,54 @@ _MIGRATION_4_SQL = """
 _MIGRATIONS[4] = [_MIGRATION_4_SQL]
 
 
+def _migrate_granularity(conn) -> None:
+    """v5：题目粒度（环节/细节）。已有题从当前期望的编译行回填。"""
+    conn.execute("ALTER TABLE questions ADD COLUMN granularity TEXT")
+    rows = conn.execute(
+        "SELECT q.qkey, s.spec_json FROM questions q"
+        " LEFT JOIN specs s ON s.qkey=q.qkey AND s.judge_fp=q.current_judge_fp").fetchall()
+    for row in rows:
+        try:
+            g = (json.loads(row["spec_json"] or "{}") or {}).get("granularity")
+        except (json.JSONDecodeError, TypeError):
+            g = None
+        if g:
+            conn.execute("UPDATE questions SET granularity=? WHERE qkey=?", (g, row["qkey"]))
+
+
+_MIGRATIONS[5] = [_migrate_granularity]
+
+
+def _migrate_weight_percent(conn) -> None:
+    """v6：给权重在线调整早期落库的期望补 weight_percent 标记。标记只影响用例页
+    回显（带标记按原值显示、剩余为未分配；缺标记会被归一化，未分配丢失），不进
+    judge_fp/item_sha。evalset_version='权重调整' 的行只可能来自 revise_weights，
+    权值必为百分比语义。"""
+    rows = conn.execute(
+        "SELECT qkey, judge_fp, spec_json FROM specs WHERE evalset_version='权重调整'"
+        " AND spec_json NOT LIKE '%\"weight_percent\"%'").fetchall()
+    for row in rows:
+        try:
+            spec = json.loads(row["spec_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        spec["weight_percent"] = True
+        conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
+                     (json.dumps(spec, ensure_ascii=False), row["qkey"], row["judge_fp"]))
+
+
+_MIGRATIONS[6] = [_migrate_weight_percent]
+
+
+def _migrate_run_title(conn) -> None:
+    """v7：执行记录命名（runs.title，纯展示层）。缺省标题由 run_labels() 按已知
+    条件现拼（评测集版本 · profile · modes×trials），不落库、不进任何键。"""
+    conn.execute("ALTER TABLE runs ADD COLUMN title TEXT")
+
+
+_MIGRATIONS[7] = [_migrate_run_title]
+
+
 class StoreError(Exception):
     """评测库操作错误。"""
 
@@ -254,11 +302,14 @@ def answer_id_of(run_id: str, episode_id: str) -> str:
 
 
 def evalset_version_of(manifest: dict | None) -> str:
-    """环境快照 evalset → 版本串（优先 version，其次 file，最后整体串化）。"""
+    """环境快照 evalset → 版本串（优先 version，其次 file，最后整体串化）。
+    file 是全路径时规整为短名（items.version_label），避免比较轴与页面上出现路径。"""
     ev = ((manifest or {}).get("snapshot") or {}).get("evalset")
     if isinstance(ev, dict):
-        return str(ev.get("version") or ev.get("file") or "?")
-    return str(ev or "?")
+        if ev.get("version"):
+            return str(ev["version"])
+        return version_label(ev.get("file") or "?")
+    return version_label(str(ev or "?"))
 
 
 def profile_id_of(manifest: dict | None) -> str:
@@ -319,10 +370,10 @@ class Store:
         variant = case.get("variant") or {}
         tags = [t.get("tag") if isinstance(t, dict) else t for t in (case.get("tags") or [])]
         sets = ["uid=?", "case_id=?", "variant_index=?", "rewrite=?", "dim=?", "topic=?",
-                "tags_json=?", "input_fp=?"]
+                "granularity=?", "tags_json=?", "input_fp=?"]
         args: list = [case.get("uid", "?"), case.get("case_id") or case.get("id"),
                       case.get("variant_index", 0), variant.get("rewrite"),
-                      case.get("dim"), case.get("topic"),
+                      case.get("dim"), case.get("topic"), case.get("granularity"),
                       json.dumps(tags, ensure_ascii=False), input_fp_of(case)]
         if active is not None:
             sets.append("active=?")
@@ -344,9 +395,9 @@ class Store:
             else:
                 fp = current_judge_fp if current_judge_fp is not None else current_if_absent
                 self.conn.execute(
-                    "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic, tags_json,"
-                    " input_fp, current_judge_fp, active, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (qkey, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7],
+                    "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic, granularity,"
+                    " tags_json, input_fp, current_judge_fp, active, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (qkey, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8],
                      fp, 1 if (active is None and fp) or active else 0, now()))
         return qkey
 
@@ -359,6 +410,53 @@ class Store:
                               (qkey, judge_fp, json.dumps(spec_json, ensure_ascii=False), evalset_version, ts))
             self.conn.execute("INSERT OR IGNORE INTO spec_versions VALUES(?,?,?,?)",
                               (qkey, judge_fp, evalset_version, ts))
+
+    def revise_weights(self, qkey: str, base_fp: str, weights: dict[str, float],
+                       label: str = "权重调整") -> dict:
+        """在页面上调整计分条目权重（doc/10 权重语义的在线编辑入口）：以 base_fp 的
+        期望为底本，把给出的条目权重（百分制，总和 ≤ 100）写成新 judge_fp 的期望并设为
+        当前期望。label 为期望版本标签（历史版本切换条显示，可自定义命名）。
+        item_sha 不含权重 → 已有人工改判继续有效；judge_fp 含权重 → 分数要
+        rejudge 后才按新权重算（算子走判定缓存，不重复调模型）。"""
+        version = (label or "").strip()[:40] or "权重调整"
+        spec = self.spec_of(qkey, base_fp) if base_fp else None
+        if spec is None:
+            cur = self.current_spec(qkey)
+            if cur is None:
+                raise StoreError(f"期望不存在：{qkey}")
+            base_fp, spec = cur
+        weightable = {f.get("id") for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")}
+        unknown = [k for k in weights if k not in weightable]
+        if unknown:
+            raise StoreError(f"不可调权重的条目：{unknown}（只有必要/期望事实按权重计分）")
+        for k, v in weights.items():
+            if not isinstance(v, (int, float)) or not 0 <= float(v) <= 100:
+                raise StoreError(f"权重应为 0–100 的百分比：{k} = {v!r}")
+        total = sum(float(v) for v in weights.values())
+        if total > 100 + 1e-9:
+            raise StoreError(f"权重总和 {total:.0f}% 超过 100%")
+        new_spec = json.loads(json.dumps(spec, ensure_ascii=False))
+        for f in new_spec.get("facts") or []:
+            if f.get("id") in weights:
+                f["weight"] = round(float(weights[f["id"]]), 1)
+        # 标记权值即百分比（0–100，剩余为未分配）：用例页按原值回显，不重新归一。
+        # judge_fp_of 只哈希固定字段，不含该标记 → 不影响指纹与比较。
+        new_spec["weight_percent"] = True
+        new_fp = judge_fp_of(new_spec)
+        if new_fp == base_fp:
+            if not spec.get("weight_percent"):
+                # 权重没变但底本是旧结构（标记落地前保存的）：就地补标记，
+                # 修复这类期望被用例页重新归一、未分配丢失的回显。
+                with self.lock, self.conn:
+                    self.conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
+                                      (json.dumps(new_spec, ensure_ascii=False), qkey, base_fp))
+            return {"changed": False, "judge_fp": base_fp, "qkey": qkey}
+        self.register_spec(qkey, new_fp, new_spec, version)
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE questions SET current_judge_fp=?, active=1 WHERE qkey=?",
+                              (new_fp, qkey))
+        return {"changed": True, "judge_fp": new_fp, "qkey": qkey,
+                "rejudge": f"python -m scoring rejudge --question {qkey}"}
 
     def import_evalset(self, rows: list[dict], version: str) -> dict:
         """specs import：登记全部期望并成为当前期望；未出现的题保留旧期望、标记非活跃。"""
@@ -424,18 +522,22 @@ class Store:
         snapshot_json = json.dumps(manifest or {}, ensure_ascii=False)
         # started_at 只认 run.json 的真实值；缺失时首次导入以导入时间回填落列（与 v3
         # 迁移同语义），重导沿用已落列的值、真实值一旦出现即覆盖——不会被反复刷新。
+        # title（下发时 --title 命名）同理：manifest 带标题就以它为准，不带则保留
+        # 已有值——页面上手工改的名不会被无标题的重导冲掉。
         started_at = (manifest or {}).get("started_at")
+        title = str((manifest or {}).get("title") or "").strip() or None
         with self.lock, self.conn:
             if started_at is None:
                 row = self.conn.execute("SELECT started_at FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 started_at = row["started_at"] if row else now()
             self.conn.execute(
-                "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at)"
-                " VALUES(?,?,?,?,?,?,?)"
+                "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at, title)"
+                " VALUES(?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
                 " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
-                " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at",
-                (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at))
+                " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at,"
+                " title=COALESCE(excluded.title, title)",
+                (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at, title))
 
     def ingest_answer(self, record: dict, run_id: str, manifest: dict | None) -> str:
         """入库一条答案：完整 EpisodeRecord 随行保存（run 目录移走后仍可重判），
@@ -453,18 +555,20 @@ class Store:
         answer_id = answer_id_of(run_id, episode_id)
         found_gt1 = any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or [])
         leak_json = json.dumps(variant_leak_suspects([record]), ensure_ascii=False)
+        observed = record.get("injection_observed")
         self._exec(
             "INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id, judge_fp_at_run,"
             " profile_id, models_json, mode, trial, skills_mode, skills_base, evalset_version,"
-            " run_status, record_json, injection_found_gt1, variant_leak_json)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " run_status, record_json, injection_found_gt1, variant_leak_json, injection_observed_json)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
              profile_id_of(manifest),
              json.dumps(models, ensure_ascii=False) if models is not None else None,
              record.get("mode", "?"), record.get("trial", 0),
              snap.get("skills_mode"), snap.get("skills_base"), evalset_version_of(manifest),
              record.get("status", "?"), json.dumps(record, ensure_ascii=False),
-             1 if found_gt1 else 0, leak_json))
+             1 if found_gt1 else 0, leak_json,
+             json.dumps(observed, ensure_ascii=False) if observed is not None else None))
         return answer_id
 
     def answer(self, answer_id: str) -> dict | None:
@@ -491,6 +595,47 @@ class Store:
     def run(self, run_id: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         return dict(row) if row else None
+
+    def run_labels(self) -> dict[str, str]:
+        """run 的展示名（命名改造）：自定义标题优先；否则按已知条件拼默认
+        「评测集版本 · profile · modes×trials」。标题是纯展示层元数据，
+        不参与任何键与比较轴；run_id 始终是机器身份。"""
+        out: dict[str, str] = {}
+        for r in self.conn.execute("SELECT run_id, title, evalset_version, profile_id, snapshot_json FROM runs"):
+            title = (r["title"] or "").strip()
+            if title:
+                out[r["run_id"]] = title
+                continue
+            try:
+                m = json.loads(r["snapshot_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                m = {}
+            # run.json 的 modes/trials 在顶层（真实 run）；缺省夹具/旧数据只有 snapshot 内的
+            inner = m.get("snapshot") if isinstance(m.get("snapshot"), dict) else {}
+            modes = "+".join(str(x) for x in (m.get("modes") or inner.get("modes") or []))
+            trials = m.get("trials") or inner.get("trials")
+            mode_part = f"{modes}×{trials}" if modes and trials else (modes or None)
+            parts = [version_label(r["evalset_version"]), r["profile_id"], mode_part]
+            out[r["run_id"]] = " · ".join(p for p in parts if p) or r["run_id"]
+        return out
+
+    def rename_run(self, run_id: str, title: str) -> None:
+        """改执行记录标题；空串 = 清除（回默认拼接标题）。run_id 不变。"""
+        t = str(title or "").strip()[:60]
+        with self.lock, self.conn:
+            cur = self.conn.execute("UPDATE runs SET title=? WHERE run_id=?",
+                                    (t or None, run_id))
+            if cur.rowcount == 0:
+                raise StoreError(f"run 不存在：{run_id}")
+
+    def rename_chain(self, chain_sha: str, name: str) -> None:
+        """改判定配置（评分链）名称；空串 = 清除。chain_sha 不变。"""
+        n = str(name or "").strip()[:60]
+        with self.lock, self.conn:
+            cur = self.conn.execute("UPDATE chains SET name=? WHERE chain_sha=?",
+                                    (n or None, chain_sha))
+            if cur.rowcount == 0:
+                raise StoreError(f"判定配置不存在：{chain_sha}")
 
     # ---------------------------------------------------------------- 判定入库（C8/C10）
 
@@ -822,20 +967,24 @@ class Store:
 
     # ---------------------------------------------------------------- 质量聚合（R7）
 
-    def human_machine_compare(self, chain_sha: str) -> tuple[list[dict], int, int]:
+    def human_machine_compare(self, chain_sha: str, operator: str | None = None) -> tuple[list[dict], int, int]:
         """人工与机器不一致清单 + 规则一致率（一条 SQL 聚合，R7）：
         只看有人工改判的条目；每条目取最后一条有效改判（sha 匹配 + 取值合法）。
-        返回 (mismatch 列表, rule_agree, rule_total)。"""
+        operator 非空时只看该算子的条目（判定质量页分歧链接）。返回 (mismatch 列表, rule_agree, rule_total)。"""
         sql = """SELECT v.answer_id, v.item_id, v.kind, v.value AS machine_value, v.source AS machine_source,
-                 q.uid, r.value AS review_value, r.review_id
+                 v.operator, q.uid, r.value AS review_value, r.review_id
                  FROM verdicts v
                  JOIN answers a ON a.answer_id = v.answer_id
                  JOIN questions q ON q.qkey = a.qkey AND q.current_judge_fp = v.judge_fp
                  JOIN reviews r ON r.answer_id = v.answer_id AND r.item_id = v.item_id
                     AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
                  WHERE v.chain_sha = ?"""
+        args: tuple = (chain_sha,)
+        if operator:
+            sql += " AND v.operator = ?"
+            args += (operator,)
         best: dict[tuple, dict] = {}
-        for row in self.conn.execute(sql, (chain_sha,)):
+        for row in self.conn.execute(sql, args):
             d = dict(row)
             if d["review_value"] not in SCALES.get(d["kind"], ()):
                 continue
@@ -963,7 +1112,11 @@ class Store:
         LEFT JOIN conclusions c ON c.answer_id = a.answer_id AND c.judge_fp = q.current_judge_fp
              AND c.chain_sha = ? AND c.policy_sha = ?
         ORDER BY a.answer_id"""
-        return [dict(r) for r in self.conn.execute(sql, (chain_sha, policy_sha))]
+        rows = [dict(r) for r in self.conn.execute(sql, (chain_sha, policy_sha))]
+        labels = self.run_labels()          # 展示名随行（命名改造）：runtag/队列/对比用
+        for r in rows:
+            r["run_label"] = labels.get(r["run_id"]) or r["run_id"]
+        return rows
 
     # ---------------------------------------------------------------- 判定配置（chains，§6.4）
 
@@ -1006,7 +1159,8 @@ class Store:
 
     def review_conversations(self, chain_sha: str, policy: Policy, policy_sha: str,
                              tab: str = "undecided", run_id: str | None = None, dim: str | None = None,
-                             spot_ratio: float = 0.1, page: int = 0, size: int = 20,
+                             spot_ratio: float = 0.1, operator: str | None = None,
+                             page: int = 0, size: int = 20,
                              first_input: bool = True) -> tuple[list[dict], dict]:
         """复核队列（以对话为单位，五个标签）：SQL 聚合 + 分页。
         undecided=结论待定（区间跨及格线/前提未判，含判定异常）；unjudged=结论已定仍有未判；
@@ -1021,7 +1175,7 @@ class Store:
         pend_by_answer: dict[str, list[dict]] = defaultdict(list)
         for c in pend_items:
             pend_by_answer[c["answer_id"]].append(c)
-        mismatch_ids = {m["answer_id"] for m in self.human_machine_compare(chain_sha)[0]}
+        mismatch_ids = {m["answer_id"] for m in self.human_machine_compare(chain_sha, operator)[0]}
         judge_ids = {r["answer_id"] for r in self.conn.execute(
             "SELECT DISTINCT answer_id FROM verdicts WHERE chain_sha=? AND source='judge'", (chain_sha,))}
         human_ids = {r["answer_id"] for r in self.conn.execute("SELECT DISTINCT answer_id FROM reviews")}
@@ -1040,6 +1194,7 @@ class Store:
                 "status": r["c_status"], "reason": r["c_reason"] or "",
                 "score": r["c_score"], "score_min": r["c_score_min"], "score_max": r["c_score_max"],
                 "run_status": r["run_status"], "pending": len(pend), "pending_kinds": dict(kinds),
+                "run_label": r.get("run_label") or r["run_id"],
             }
             lo, hi = c["score_min"], c["score_max"] if c["score_max"] is not None else c["score"]
             if lo is None and hi is None:
@@ -1099,6 +1254,7 @@ class Store:
         reviews = self.reviews_for(answer_id)
         vrows = {r["item_id"]: r for r in self.verdicts(answer_id, fp, chain_sha)}
         sp = policy.score
+        wpct = bool(spec.get("weight_percent"))   # 百分制权重（revise_weights）→ 复核行按百分比显示
         sections = []
         for kind, label, hint in (("precond", "前提", "门槛：不成立 → 会话无效，不计分"),
                                   ("path", "路径", "否决项：违反 → 总分 0"),
@@ -1121,7 +1277,8 @@ class Store:
                 rows_.append({
                     "id": it.id, "kind": kind, "turn": it.turn, "text": it.text or "",
                     "keywords": it.attrs.get("keywords") or [],
-                    "weight": weight_of(it, sp.default_weight), "group": it.attrs.get("group"),
+                    "weight": weight_of(it, sp.default_weight), "weight_is_pct": wpct,
+                    "group": it.attrs.get("group"),
                     "answer": ctx.answer_for(it),
                     "machine": None if vrow is None else {
                         "value": vrow["value"], "score": vrow["score"], "source": vrow["source"],
@@ -1154,7 +1311,8 @@ class Store:
             "answer_id": answer_id, "qkey": a["qkey"], "uid": q.get("uid") or record.get("uid", "?"),
             "case_id": q.get("case_id"), "dim": q.get("dim"),
             "topic": q.get("topic"), "rewrite": q.get("rewrite"), "variant_index": q.get("variant_index"),
-            "run_id": a["run_id"], "mode": a["mode"], "trial": a["trial"], "run_status": a["run_status"],
+            "run_id": a["run_id"], "run_label": self.run_labels().get(a["run_id"]) or a["run_id"],
+            "mode": a["mode"], "trial": a["trial"], "run_status": a["run_status"],
             "profile": a["profile_id"], "models": json.loads(a["models_json"] or "[]"),
             "skills_mode": a["skills_mode"], "evalset_version": a["evalset_version"],
             "reasoning_effort": profile_content.get("reasoning_effort"),

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}执行记录 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page" data-page="runs">
+  <div class="rv-page-head"><h1>执行记录</h1>
+    <span class="rv-meta"><span>{{ run_table|length }} 次执行</span>
+      <span>每行一次 run；✎ 重命名</span>
+      <span>按配置的分数在 <a href="/configs">配置管理</a></span>
+      <span>评测库 {{ db_path }}</span></span></div>
+
+  <div class="rv-table-wrap">
+  <table class="rv-table">
+    <thead><tr><th class="rv-sticky-col">执行</th><th>配置（profile）</th><th>被测模型</th><th>干预/采样</th>
+      <th>期望版本</th><th>技能</th><th class="rv-num">对话</th><th>结论待定</th><th>时间</th></tr></thead>
+    <tbody>
+    {% for r in run_table %}
+    <tr>
+      <th scope="row" class="rv-sticky-col">
+        <span class="rv-config-runlabel" data-run="{{ r.run_id }}" data-label="{{ r.title }}">{{ r.label }}</span>
+        <button class="rv-icon-btn" type="button" data-rename-run="{{ r.run_id }}" title="重命名执行记录" aria-label="重命名执行记录">✎</button>
+        <div class="rv-meta rv-pill--mono" title="{{ r.run_id }}">{{ r.run_id[:8] }}</div>
+      </th>
+      <td><span class="rv-pill rv-pill--mono">{{ r.profile }}</span></td>
+      <td>{{ r.models|join('、') if r.models else '?' }}{% if r.effort %} <span class="rv-meta">· 努力 {{ r.effort }}</span>{% endif %}</td>
+      <td>{{ r.mode_part or '—' }}</td>
+      <td>{{ r.evalset_version }}</td>
+      <td>{{ r.skills_mode|join('、') if r.skills_mode else '—' }}{% if r.stale %} <span class="rv-flag">技能基底过期</span>{% endif %}</td>
+      <td class="rv-num"><a href="/review?run_id={{ r.run_id|urlencode }}" title="该执行的复核队列">{{ r.n }}</a></td>
+      <td>{% if r.undecided %}<span class="rv-state" data-s="need">{{ r.undecided }} 段</span>{% else %}<span class="rv-meta">—</span>{% endif %}</td>
+      <td class="rv-meta">{{ r.at }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</main>
+<script>
+document.querySelectorAll('[data-rename-run]').forEach(function (btn) {
+  var runId = btn.dataset.renameRun;
+  rvRename({ btn: btn,
+    host: document.querySelector('.rv-config-runlabel[data-run="' + runId + '"]'),
+    getId: function () { return runId; },
+    getLabel: function () {
+      return document.querySelector('.rv-config-runlabel[data-run="' + runId + '"]').dataset.label || ''; },
+    url: '/api/run/rename', key: 'run_id', field: 'title',
+    placeholder: '空 = 默认拼接标题（评测集版本 · profile · 模式×次数）' });
+});
+</script>
+{% endblock %}

@@ -1,19 +1,23 @@
 """复核服务（doc/10 复核服务改造方案）：以对话为单位的百分制复核。
 
-四个页面各答一个问题：用例 /（复核队列、复核页）/ 结果对比 / 判定质量。
+页面各答一个问题：用例管理（+ 新建用例）/ 配置管理 /（复核队列、复核页）/
+结果对比 / 判定质量。
 全部视图从评测库取数（store.review_conversations / conversation_view /
 answer_view_rows + views 聚合）；服务不触发算子，缺判定时给出 rejudge 命令。
 改判按「校验 → 同一事务追加 → 重算一次结论」完成（store.submit_reviews）。
+新建用例走 md2case：表单 → 结构化 → md（唯一数据源）→ 校验 → 落盘 cases 目录。
 依赖 FastAPI / Jinja2 / markdown / bleach，缺任一即启动报错（不再静默退化）。
 """
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 from pathlib import Path
-from urllib.parse import quote
+from typing import Annotated
+from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -95,6 +99,300 @@ class ReviewBatchIn(BaseModel):
     reviewer: str = ""
 
 
+class WeightsIn(BaseModel):
+    qkey: str
+    judge_fp: str = ""
+    weights: dict[str, float]
+    label: str = "权重调整"
+
+
+class RunRenameIn(BaseModel):
+    run_id: str
+    title: str = ""
+
+
+class ChainRenameIn(BaseModel):
+    chain_sha: str
+    name: str = ""
+
+
+# ---------------- 新建用例（表单 → 结构化 → md；字段与 md2case 段落一一对应）
+
+class CaseNewCondition(BaseModel):
+    slot: str = ""
+    value: str = ""
+    turn: int | None = None
+    keywords: list[str] = []
+
+
+class CaseNewInjection(BaseModel):
+    point: str = ""
+    option: str = ""
+
+
+class CaseNewPrecond(BaseModel):
+    text: str = ""
+    turn: int | None = None
+    injections: list[str] = []
+
+
+class CaseNewFact(BaseModel):
+    kind: str = "required"          # required / expected / forbidden
+    text: str = ""
+    keywords: list[str] = []
+    turn: int | None = None
+    group: str = ""
+    evidence: str = ""              # 空 / 外部 / R1…
+    weight: float | None = None
+
+
+class CaseNewPath(BaseModel):
+    type: str = "must"              # must / forbid
+    skill: str = ""
+    turn: int | None = None
+    weight: float | None = None
+
+
+class CaseNewEvidence(BaseModel):
+    point: str = ""                 # 方式一：@注入点
+    skill: str = ""                 # 方式二：内联 skill:file / 章节 ｜ 原文
+    file: str = ""
+    section: str = ""
+    quote: str = ""
+
+
+class CaseNewVariant(BaseModel):
+    text: str = ""
+    turn: int | None = None         # 空 = 最后一轮
+    rewrite: str = ""
+
+
+class CaseNewIn(BaseModel):
+    id: str = ""
+    dim: str
+    topic: str = ""
+    granularity: str = ""
+    source: str = ""
+    owner: str = ""
+    tags: list[str] = []
+    history: str = "live"
+    turns: list[str] = []
+    assistant_refs: list[str] = []
+    conditions: list[CaseNewCondition] = []
+    injections: list[CaseNewInjection] = []
+    preconditions: list[CaseNewPrecond] = []
+    facts: list[CaseNewFact] = []
+    paths: list[CaseNewPath] = []
+    evidences: list[CaseNewEvidence] = []
+    variants: list[CaseNewVariant] = []
+    reference_answer: str = ""
+    note: str = ""
+    directory: str = ""
+
+
+# ---------------------------------------------------------------- md2case 桥接
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CASES_DIR = _REPO_ROOT / "evalset" / "cases"
+
+_MD2CASE = None
+
+
+def _md2case():
+    """按需加载 evalset/md2case.py（非包内模块，用文件位置加载并缓存）。"""
+    global _MD2CASE
+    if _MD2CASE is None:
+        import importlib.util
+        import sys
+        p = _REPO_ROOT / "evalset" / "md2case.py"
+        spec = importlib.util.spec_from_file_location("agent_eval_md2case", p)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        _MD2CASE = mod
+    return _MD2CASE
+
+
+def _iter_case_md(cases_dir: Path):
+    if cases_dir.is_dir():
+        yield from sorted(cases_dir.rglob("*.md"))
+
+
+def _existing_case_ids(cases_dir: Path) -> dict[str, str]:
+    """cases 目录下全部用例 id → 文件路径（新建时查重、推荐下一个 id）。"""
+    m2c = _md2case()
+    out: dict[str, str] = {}
+    for f in _iter_case_md(cases_dir):
+        meta = m2c.frontmatter_of(f.read_text(encoding="utf-8"))
+        cid = str((meta or {}).get("id") or "")
+        if cid:
+            out.setdefault(cid, str(f))
+    return out
+
+
+def _suggest_ids(cases_dir: Path, dims: dict) -> dict[str, str]:
+    """每个 id 前缀推荐下一个编号（目录内该前缀最大号 + 1）。"""
+    ids = _existing_case_ids(cases_dir)
+    out: dict[str, str] = {}
+    for dim, prefix in dims.items():
+        used = []
+        for i in ids:
+            m = re.fullmatch(rf"{prefix}-([0-9]{{4}})", i)
+            if m:
+                used.append(int(m.group(1)))
+        out[prefix] = f"{prefix}-{(max(used) + 1) if used else 1:04d}"
+    return out
+
+
+def _case_dirs(cases_dir: Path) -> list[str]:
+    if not cases_dir.is_dir():
+        return []
+    return sorted(d.name for d in cases_dir.iterdir() if d.is_dir())
+
+
+def _default_dir(cases_dir: Path) -> str:
+    """默认目标目录 = 最近有改动的子目录（新建用例通常归入当前批次）。"""
+    if not cases_dir.is_dir():
+        return ""
+    dirs = [d for d in cases_dir.iterdir() if d.is_dir()]
+    return max(dirs, key=lambda d: d.stat().st_mtime).name if dirs else ""
+
+
+_FACT_PREFIX = {"required": "F", "expected": "E", "forbidden": "X"}
+
+
+def _case_from_form(b: CaseNewIn) -> dict:
+    """表单 → case_to_md 认识的结构化用例（编号 F/E/X/J/P/R/V 按填写顺序重排）。"""
+    turns = [t.strip() for t in b.turns if t and t.strip()]
+    refs = [r.strip() or None for r in (b.assistant_refs + [""] * len(turns))[:len(turns)]]
+
+    def turn_of(v):
+        return int(v) if v else None
+
+    conditions = []
+    for c in b.conditions:
+        if c.slot.strip() and c.value.strip():
+            item = {"slot": c.slot.strip(), "value": c.value.strip(),
+                    "keywords": [k.strip() for k in c.keywords if k.strip()]}
+            if c.turn:
+                item["turn"] = turn_of(c.turn)
+            conditions.append(item)
+
+    facts, counters = [], {"required": 0, "expected": 0, "forbidden": 0}
+    for f in b.facts:
+        if not f.text.strip():
+            continue
+        kind = f.kind if f.kind in _FACT_PREFIX else "required"
+        counters[kind] += 1
+        item = {"id": f"{_FACT_PREFIX[kind]}{counters[kind]}", "kind": kind, "text": f.text.strip(),
+                "keywords": [k.strip() for k in f.keywords if k.strip()]}
+        if f.turn:
+            item["turn"] = turn_of(f.turn)
+        if f.group.strip():
+            item["group"] = f.group.strip()
+        if f.evidence.strip():
+            item["evidence"] = "external" if f.evidence.strip() == "外部" else f.evidence.strip()
+        if f.weight is not None:
+            item["weight"] = f.weight
+        facts.append(item)
+
+    injections = [{"id": f"J{i}", "point": j.point.strip(), "option": j.option.strip()}
+                  for i, j in enumerate((x for x in b.injections
+                                         if x.point.strip() and x.option.strip()), 1)]
+    preconditions = []
+    for p in b.preconditions:
+        if not p.text.strip():
+            continue
+        item = {"id": f"P{len(preconditions) + 1}", "text": p.text.strip()}
+        if p.turn:
+            item["turn"] = turn_of(p.turn)
+        inj = [x.strip() for x in p.injections if x.strip()]
+        if inj:
+            item["injections"] = inj
+        preconditions.append(item)
+
+    paths = []
+    for p in b.paths:
+        if not p.skill.strip():
+            continue
+        item = {"type": "forbid" if p.type == "forbid" else "must",
+                "action": {"kind": "load_skill", "skill": p.skill.strip()}}
+        if p.turn:
+            item["turn"] = turn_of(p.turn)
+        if p.weight is not None:
+            item["weight"] = p.weight
+        paths.append(item)
+
+    evidences = []
+    for r in b.evidences:
+        if r.point.strip():
+            evidences.append({"id": f"R{len(evidences) + 1}", "point": r.point.strip(), "inline": None})
+        elif r.skill.strip() and r.file.strip():
+            evidences.append({"id": f"R{len(evidences) + 1}", "point": None,
+                              "inline": {"doc": {"skill": r.skill.strip(), "file": r.file.strip()},
+                                         "section": r.section.strip() or None,
+                                         "quote": r.quote.strip() or None}})
+
+    variants = []
+    for v in b.variants:
+        if not v.text.strip():
+            continue
+        item = {"id": f"V{len(variants) + 1}", "scope": "turn", "text": v.text.strip()}
+        if v.turn:
+            item["turn"] = turn_of(v.turn)
+        if v.rewrite.strip():
+            item["rewrite"] = v.rewrite.strip()
+        variants.append(item)
+
+    return {
+        "id": b.id.strip(), "dim": b.dim.strip(), "status": "structured", "answerable": True,
+        "history": b.history if b.history in ("live", "prefill") else "live",
+        "topic": b.topic.strip() or None, "granularity": b.granularity.strip() or None,
+        "source": b.source.strip() or None, "owner": b.owner.strip() or None,
+        "tags": [t for t in b.tags if t.strip()],
+        "turns": turns, "assistant_refs": refs,
+        "conditions": conditions, "facts": facts, "path": paths,
+        "injections_ref": injections, "preconditions": preconditions,
+        "evidence_ref": evidences, "variants": variants,
+        "reference_answer": b.reference_answer.strip() or None,
+        "note": b.note.strip() or None,
+    }
+
+
+def _build_case_md(b: CaseNewIn) -> tuple[str, list[str], list[str]]:
+    """表单 → md 全文 + 校验错误/提示（一次给全，含 knowledge 引用检查）。"""
+    m2c = _md2case()
+    mapping = m2c.load_mapping()
+    case = _case_from_form(b)
+    md = m2c.case_to_md(case, mapping)
+    errors: list[str] = []
+    warnings: list[str] = []
+    try:
+        parsed = m2c.md_to_case(md, f"{case.get('id') or '?'}.md", mapping)
+        warnings = list(parsed.get("_warnings") or [])
+    except m2c.CaseError as e:
+        errors, warnings = list(e.errors), list(e.warnings)
+    points = m2c.load_knowledge([m2c.KNOWLEDGE_DIR]) if m2c.KNOWLEDGE_DIR.is_dir() else {}
+    m2c.check_knowledge(case, points, errors)
+    return md, errors, warnings
+
+
+def _build_hint(rel_path: str) -> list[str]:
+    """保存成功后的下一步命令（check → build 新版本 → 执行）。"""
+    dist = _REPO_ROOT / "evalset" / "dist"
+    prevs = sorted(dist.glob("evalset-*.jsonl")) if dist.is_dir() else []
+    version = f"v{_dt.date.today().strftime('%Y%m%d')}-1"
+    while any(p.stem.endswith(version) for p in prevs):
+        n = int(version.rsplit("-", 1)[1]) + 1
+        version = f"{version.rsplit('-', 1)[0]}-{n}"
+    build = (f"python evalset/md2case.py build evalset/cases"
+             f" -o evalset/dist/evalset-{version}.jsonl --version {version}")
+    if prevs:
+        build += f" --prev {prevs[-1].as_posix()}"
+    return [f"python evalset/md2case.py check {rel_path}", build,
+            "runner 执行新版本后导入：python -m scoring score <run目录>"]
+
+
 def _ev_dict(v) -> dict:
     return {"status": v.status, "score": v.score, "score_min": v.score_min, "score_max": v.score_max,
             "auto_score": v.auto_score, "score_source": v.score_source,
@@ -104,10 +402,12 @@ def _ev_dict(v) -> dict:
 # ---------------------------------------------------------------- 应用
 
 def create_app(db: str | Path, policy_path: str | Path | None = None,
-               operators_path: str | Path | None = None) -> FastAPI:
+               operators_path: str | Path | None = None,
+               cases_dir: str | Path | None = None) -> FastAPI:
     app = FastAPI(title="Agent_Eval 复核服务", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     store = Store(db)
+    cases_root = Path(cases_dir) if cases_dir else DEFAULT_CASES_DIR
     policy, policy_sha = load_policy(policy_path or default_policy_path())
     cfg = load_operator_config(operators_path or default_operators_path())
     default_chain = cfg.chain_sha
@@ -141,35 +441,39 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             _nav_cache.update({"chain": chain, "n": n})
         return _nav_cache["n"]
 
+    def needs_rescore() -> bool:
+        """当前口径下尚无会话结论（改 policy 后未 rescore）：页面提示执行命令。"""
+        return store.conn.execute("SELECT 1 FROM conclusions WHERE policy_sha=? LIMIT 1",
+                                  (policy_sha,)).fetchone() is None
+
+    def stale_runs() -> list[str]:
+        """技能基底与导出清单不一致的 run（快照 skills_base_stale）。"""
+        out = []
+        for r in store.runs():
+            try:
+                manifest = json.loads(r.get("snapshot_json") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            snap = manifest.get("snapshot") if isinstance(manifest, dict) else None
+            if isinstance(snap, dict) and snap.get("skills_base_stale"):
+                out.append(r["run_id"])
+        return out
+
     def render(request: Request, name: str, **ctx):
         chain = chain_of(request)
         return templates.TemplateResponse(request=request, name=name, context={
             "db_path": str(store.path), "chain_sha": chain, "chain_short": chain[:8],
             "chains": store.chains(), "nav_count": nav_count(chain),
+            "needs_rescore": needs_rescore(), "stale_runs": stale_runs(),
             "policy": policy, "pass_mark": policy.score.pass_mark,
             "tab_labels": TAB_LABELS, "axis_labels": AXIS_LABELS, **ctx})
 
-    def configs_of(rs: list[dict]) -> list[dict]:
-        """被测配置分组（配置 = profile/model/skills_mode/skills_base/evalset_version）。"""
-        by: dict[tuple, dict] = {}
-        for r in rs:
-            key = views.config_value(r)
-            c = by.setdefault(key, {"key": "|".join(key), "label": views.config_label(r), "n": 0})
-            c["n"] += 1
-        return sorted(by.values(), key=lambda c: -c["n"])
-
-    # ---------------- 用例页（首页）
+    # ---------------- 用例管理页（首页；跨配置汇总，按配置的分数在配置管理页）
     @app.get("/")
-    async def cases(request: Request, config: str = "", dim: str = "", topic: str = "",
-                    sort: str = "pending", flag_only: str = "", page: int = 0):
+    async def cases(request: Request, dim: str = "", topic: str = "",
+                    granularity: str = "", sort: str = "pending", flag_only: str = "", page: int = 0):
         all_rows = rows(request)
-        configs = configs_of(all_rows)
-        sel = next((c for c in configs if c["key"] == config), configs[0] if configs else None)
-        if sel is None:
-            return render(request, "cases.html", configs=[], summary=None, table=[], total=0)
-        sel_key = tuple(sel["key"].split("|"))
-        cfg_rows = [r for r in all_rows if views.config_value(r) == sel_key]
-        summary = views.score_summary(cfg_rows, policy)
+        summary = views.score_summary(all_rows, policy)
         known_dims = {r["dim"] for r in all_rows if r["dim"]}
         comp = views.composite(summary["dims"], policy, known_dims=known_dims)
         stats = views.question_stats(all_rows)
@@ -180,35 +484,19 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                 continue
             if topic and (q["topic"] or "") != topic:
                 continue
+            if granularity and (q["granularity"] or "") != granularity:
+                continue
             by_case.setdefault(q["case_id"] or q["uid"], []).append(q)
         conv_counts: dict[str, dict] = {}
-        leak_cases: set[str] = set()
-        inj_cases: set[str] = set()
-        forced_sts: dict[str, list[str]] = {}
-        for r in cfg_rows:
-            cid = r["case_id"]
-            c = conv_counts.setdefault(cid, {"n": 0, "undecided": 0})
+        for r in all_rows:
+            c = conv_counts.setdefault(r["case_id"], {"n": 0, "undecided": 0})
             c["n"] += 1
             c["undecided"] += r["c_status"] == "undecided"
-            if cid not in leak_cases and json.loads(r.get("variant_leak_json") or "[]"):
-                leak_cases.add(cid)
-            if r.get("injection_found_gt1"):
-                inj_cases.add(cid)
-            if r["mode"] == "forced" and r["c_status"]:
-                forced_sts.setdefault(cid, []).append(r["c_status"])
+        health = views.case_health(all_rows, summary["cases"])
         table = []
         for case, members in by_case.items():
             cs = summary["cases"].get(case, {})
-            flags = []
-            if case in leak_cases:
-                flags.append("变体泄露嫌疑")
-            if cs.get("all_unscored"):
-                flags.append("全部采样无效")
-            if case in inj_cases:
-                flags.append("注入 found>1")
-            sts = forced_sts.get(case) or []
-            if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5:
-                flags.append("forced 前提成立率偏低")
+            flags = list(health.get(case, []))
             member_stats = [stats.get(q["qkey"], {}) for q in members]
             diffs = [s["difficulty"] for s in member_stats if s.get("difficulty") is not None]
             discs = [s["discrimination"] for s in member_stats if s.get("discrimination") is not None]
@@ -231,17 +519,102 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         size = 50
         total = len(table)
         page = max(0, min(page, (max(total, 1) - 1) // size))
-        return render(request, "cases.html", configs=configs, config_key=sel["key"], summary=summary,
+        return render(request, "cases.html", summary=summary,
                       composite=comp, known_dims=sorted(known_dims),
                       table=table[page * size:(page + 1) * size], total=total, page=page,
                       pages=max(1, (total + size - 1) // size),
                       dims=sorted({q["dim"] for q in qs if q["dim"]}),
                       topics=sorted({q["topic"] for q in qs if q["topic"]}),
-                      f_dim=dim, f_topic=topic, sort=sort, flag_only=flag_only)
+                      granularities=sorted({q["granularity"] for q in qs if q["granularity"]}),
+                      f_dim=dim, f_topic=topic, f_granularity=granularity, sort=sort,
+                      flag_only=flag_only)
+
+    # ---------------- 配置管理页（被测配置；执行记录在 /runs）
+    @app.get("/configs")
+    async def configs_page(request: Request):
+        rs = rows(request)
+        known_dims = {r["dim"] for r in rs if r["dim"]}
+        groups: dict[tuple, list] = {}
+        for r in rs:
+            groups.setdefault(views.config_value(r), []).append(r)
+        table = []
+        for key, grp in groups.items():
+            summary = views.score_summary(grp, policy)
+            comp = views.composite(summary["dims"], policy, known_dims=known_dims)
+            table.append({
+                "profile": key[0], "model": key[1], "skills_mode": key[2],
+                "skills_base": key[3], "evalset_version": key[4],
+                "n": len(grp), "undecided": sum(1 for r in grp if r["c_status"] == "undecided"),
+                "score": comp.get("score"), "provisional": comp.get("provisional"),
+                "complete": comp.get("complete"),
+                "dims_n": len(comp.get("parts") or {}),
+                "run_ids": sorted({r["run_id"] for r in grp})})
+        table.sort(key=lambda t: -t["n"])
+        return render(request, "configs.html", table=table,
+                      run_labels=store.run_labels(), known_dims=sorted(known_dims))
+
+    def _run_table(rs: list[dict]) -> list[dict]:
+        """执行记录表（/runs 页）：每行一次 run——标签/被测/干预采样/期望版本/技能。"""
+        labels = store.run_labels()
+        stale = set(stale_runs())
+        out = []
+        for r0 in reversed(store.runs()):          # 最新执行在前
+            rid = r0["run_id"]
+            grp = [r for r in rs if r["run_id"] == rid]
+            try:
+                manifest = json.loads(r0["snapshot_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                manifest = {}
+            inner = manifest.get("snapshot") if isinstance(manifest.get("snapshot"), dict) else {}
+            modes = "+".join(str(x) for x in (manifest.get("modes") or inner.get("modes") or []))
+            trials = manifest.get("trials") or inner.get("trials")
+            prof = manifest.get("profile") or {}
+            effort = prof.get("content", {}).get("reasoning_effort") if isinstance(prof, dict) else None
+            out.append({
+                "run_id": rid, "label": labels.get(rid) or rid, "title": r0["title"] or "",
+                "profile": r0["profile_id"] or "?",
+                "models": sorted({m for r in grp for m in json.loads(r["models_json"] or "[]")}),
+                "effort": effort,
+                "mode_part": f"{modes}×{trials}" if modes and trials else (modes or ""),
+                "evalset_version": views.attr_value(r0, "evalset_version"),
+                "skills_mode": sorted({r["skills_mode"] for r in grp if r["skills_mode"]}),
+                "stale": rid in stale,
+                "n": len(grp),
+                "undecided": sum(1 for r in grp if r["c_status"] == "undecided"),
+                "at": r0["started_at"] or r0["imported_at"] or ""})
+        return out
+
+    # ---------------- 执行记录页
+    @app.get("/runs")
+    async def runs_page(request: Request):
+        return render(request, "runs.html", run_table=_run_table(rows(request)),
+                      run_labels=store.run_labels())
+
+    # ---------------- 新建用例页（须先于 /case/{case_id} 注册）
+    @app.get("/case/new")
+    async def case_new(request: Request):
+        m2c = _md2case()
+        mapping = m2c.load_mapping()
+        points = m2c.load_knowledge([m2c.KNOWLEDGE_DIR]) if m2c.KNOWLEDGE_DIR.is_dir() else {}
+        return render(request, "case_new.html",
+                      dims=mapping["dims"], multi_turn_dims=mapping.get("multi_turn_dims", []),
+                      rewrites=mapping.get("rewrites", []),
+                      tag_vocab={k: v for k, v in (mapping.get("tags") or {}).items() if k != "业务"},
+                      dirs=_case_dirs(cases_root), default_dir=_default_dir(cases_root),
+                      cn_data={
+                          "dims": mapping["dims"],
+                          "multiTurnDims": mapping.get("multi_turn_dims", []),
+                          "rewrites": mapping.get("rewrites", []),
+                          "points": [{"id": p, "options": sorted(o["options"])}
+                                     for p, o in sorted(points.items())],
+                          "suggested": _suggest_ids(cases_root, mapping["dims"]),
+                          "maxTurns": 5})
 
     # ---------------- 用例详情
     @app.get("/case/{case_id}")
-    async def case_detail(request: Request, case_id: str, axis: str = "profile", judge_fp: str = ""):
+    async def case_detail(request: Request, case_id: str, axis: str = "profile", judge_fp: str = "",
+                          variant: str = "", saved: str = "",
+                          pair: Annotated[list[str], Query()] = []):
         members = [q for q in store.questions() if (q["case_id"] or q["uid"]) == case_id]
         if not members:
             return render(request, "error.html", message=f"未知用例：{case_id}")
@@ -267,32 +640,152 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             convs.append({"r": r, "concl": concl, "chips": chips,
                           "axis_label": views.attr_value(r, axis),
                           "pending_items": sum(1 for c in chips if c["value"] is None)})
+        health = views.case_health(case_rows, views.case_scores(case_rows, policy)).get(case_id, [])
+        by_uid: dict[str, list] = {}
+        for c in convs:
+            by_uid.setdefault(c["r"]["uid"], []).append(c)
+        variant_cards = []
+        for q in members:
+            cur_v = store.current_spec(q["qkey"])
+            vspec = cur_v[1] if cur_v else {}
+            rows_v = by_uid.get(q["uid"], [])
+            scores = [c["concl"].get("score") for c in rows_v
+                      if c["concl"].get("score") is not None]
+            variant_cards.append({
+                "uid": q["uid"], "index": q["variant_index"] or 0, "rewrite": q["rewrite"] or "",
+                "judge_fp": q["current_judge_fp"] or "",
+                "questions": [t.get("content") or "" for t in vspec.get("turns") or []
+                              if t.get("role") == "user"],
+                "convs": len(rows_v),
+                "score": sum(scores) / len(scores) if scores else None,
+                "undecided": sum(1 for c in rows_v
+                                 if (c["concl"].get("status") or c["r"]["c_status"]) == "undecided"),
+                "pending": sum(c["pending_items"] for c in rows_v),
+            })
+        variant_stats = {
+            "all": len(variant_cards),
+            "undecided": sum(1 for v in variant_cards if v["undecided"]),
+            "with_convs": sum(1 for v in variant_cards if v["convs"]),
+        }
+        # 变体选择只决定初始聚焦，不裁剪对话：前端可无刷新切换，全部对话也始终可筛
+        uids = {v["uid"] for v in variant_cards}
+        if variant == "__all":
+            show_all, focus_variant = True, ""
+        elif variant in uids:
+            show_all, focus_variant = False, variant
+        else:
+            show_all, focus_variant = False, (variant_cards[0]["uid"] if variant_cards else "")
+        def status_of(c):
+            return c["concl"].get("status") or c["r"]["c_status"]
+        # 服务端先按初始聚焦渲染对话（无 JS 也自洽），前端可再切变体/全部
+        scope_convs = convs if show_all else [c for c in convs if c["r"]["uid"] == focus_variant]
+        conv_stats = {
+            "all": len(scope_convs),
+            "undecided": sum(1 for c in scope_convs if status_of(c) == "undecided"),
+            "failed": sum(1 for c in scope_convs if status_of(c) in ("invalid", "error")),
+        }
+        conv_totals = {
+            "all": len(convs),
+            "undecided": sum(1 for c in convs if status_of(c) == "undecided"),
+            "failed": sum(1 for c in convs if status_of(c) in ("invalid", "error")),
+        }
+        conv_group_counts: dict[str, int] = {}
+        for c in scope_convs:
+            conv_group_counts[c["axis_label"]] = conv_group_counts.get(c["axis_label"], 0) + 1
+        # 勾选两段并排看：逐轮左右对照（§5.4）
+        pair_data, pair_rows = [], []
+        if len(pair) == 2:
+            by_aid = {c["r"]["answer_id"]: c for c in convs}
+            for aid in pair:
+                c = by_aid.get(aid)
+                if c is None:
+                    continue
+                record = json.loads((store.answer(aid) or {}).get("record_json") or "{}")
+                live = [t for t in record.get("turns") or [] if t.get("source") not in ("prefill", "preset")]
+                pair_data.append({**c, "turns": live})
+        if len(pair_data) == 2:
+            n = max(len(p["turns"]) for p in pair_data)
+            pair_rows = [{"index": i + 1,
+                          "cells": [p["turns"][i] if i < len(p["turns"]) else None for p in pair_data]}
+                         for i in range(n)]
         injections = spec.get("injections") or []
+        # 权重分配编辑器（doc/10 §5.4 权重在线调整）：只列计分条目。带 weight_percent
+        # 标记的期望（revise_weights 写入）权值即百分比、剩余为未分配，不能重新归一
+        # （否则带未分配保存后回显会被折算掉）；旧期望权重是相对值，展示时归一成百分比。
+        weight_facts = []
+        wf = [f for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")]
+        total_w = sum(float(f.get("weight", 1)) for f in wf)
+        weight_map: dict[str, int] = {}
+        for f in wf:
+            w = float(f.get("weight", 1))
+            if spec.get("weight_percent"):
+                pct = round(w)
+            else:
+                pct = round(w / total_w * 100) if total_w else round(100 / len(wf))
+            weight_map[f["id"]] = pct
+            weight_facts.append({"id": f["id"], "kind": f["kind"], "pct": pct})
+        # 条目详情（简要列表点「详情」下钻）：全部条目类型
+        item_details = []
+        for p in spec.get("preconditions") or []:
+            item_details.append({"id": p.get("id"), "kind": "precond", "text": p.get("text") or "",
+                                 "turn": p.get("turn"), "keywords": [], "group": None,
+                                 "weight": None, "note": "门槛：不成立 → 会话无效，不计分"})
+        for p in spec.get("path") or []:
+            item_details.append({"id": "path", "kind": "path", "text": f"必须加载技能 {(p.get('action') or {}).get('skill')}",
+                                 "turn": None, "keywords": [], "group": None,
+                                 "weight": None, "note": "否决项：违反 → 总分 0"})
+        for f in spec.get("facts") or []:
+            note = {"forbidden": "否决项：被采信 → 总分 0",
+                    "required": "按权重计分；判「错」→ 总分 0",
+                    "expected": "按权重计分"}.get(f.get("kind"), "")
+            item_details.append({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text") or "",
+                                 "turn": f.get("turn"), "keywords": f.get("keywords") or [],
+                                 "group": f.get("group"),
+                                 "weight": weight_map.get(f.get("id")) if f.get("kind") in ("required", "expected") else None,
+                                 "note": note})
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
                       judge_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
-                      injections=injections,
+                      injections=injections, health=health, variant_cards=variant_cards,
+                      weight_facts=weight_facts, weight_map=weight_map,
+                      item_details=item_details, saved=saved,
+                      variant_stats=variant_stats, conv_stats=conv_stats,
+                      conv_totals=conv_totals, conv_group_counts=conv_group_counts,
+                      focus_variant=focus_variant, show_all=show_all,
+                      pair=pair, pair_data=pair_data, pair_rows=pair_rows,
                       headline=policy.headline(seed["dim"] or "?"),
                       summary_dim=(spec.get("dim") or "?"))
 
     # ---------------- 复核队列
     @app.get("/review")
     async def review_queue(request: Request, tab: str = "undecided", run_id: str = "",
-                           dim: str = "", page: int = 0):
+                           dim: str = "", op: str = "", spot: int = 10, page: int = 0):
         if tab not in TAB_LABELS:
             tab = "undecided"
-        convs, meta = store.review_conversations(chain_of(request), policy, policy_sha, tab=tab,
-                                                 run_id=run_id or None, dim=dim or None, page=page)
+        spot = spot if spot in (10, 20, 100) else 10
+        chain = chain_of(request)
+        convs, meta = store.review_conversations(chain, policy, policy_sha, tab=tab,
+                                                 run_id=run_id or None, dim=dim or None,
+                                                 spot_ratio=spot / 100, operator=op or None, page=page)
+        operators = [r[0] for r in store.conn.execute(
+            "SELECT DISTINCT operator FROM verdicts WHERE chain_sha=? AND operator IS NOT NULL"
+            " ORDER BY operator", (chain,))]
+        keep = {"run_id": run_id, "dim": dim, "op": op, **({"spot": spot} if tab == "spot" else {})}
+        labels = store.run_labels()
         return render(request, "review_queue.html", tab=tab, convs=convs, meta=meta,
-                      run_ids=[r["run_id"] for r in store.runs()],
+                      run_ids=[r["run_id"] for r in store.runs()], run_labels=labels,
                       dims=sorted({q["dim"] for q in store.questions() if q["dim"]}),
-                      q_run=run_id, q_dim=dim, page=meta["page"],
+                      operators=operators, q_run=run_id, q_dim=dim, q_op=op, spot=spot,
+                      queue_url=lambda t: "/review?" + urlencode({**keep, "tab": t}),
+                      pager_base="/review?" + urlencode({**keep, "tab": tab}) + "&",
+                      page=meta["page"],
                       pages=max(1, (meta["total"] + 19) // 20),
-                      pending_rejudge=len(store.pending_rejudge(chain_of(request))))
+                      pending_rejudge=len(store.pending_rejudge(chain)))
 
     # ---------------- 复核页
     @app.get("/review/{answer_id:path}")
-    async def review_page(request: Request, answer_id: str, tab: str = "undecided"):
+    async def review_page(request: Request, answer_id: str, tab: str = "undecided",
+                          op: str = "", spot: int = 10):
         chain = chain_of(request)
         try:
             v = store.conversation_view(answer_id, chain, policy, policy_sha)
@@ -300,21 +793,26 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             return render(request, "error.html", message=str(e))
         if tab not in TAB_LABELS:
             tab = "undecided"
+        spot = spot if spot in (10, 20, 100) else 10
         convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6,
+                                              spot_ratio=spot / 100, operator=op or None,
                                               first_input=False)
         ids = [c["answer_id"] for c in convs]
+        extra = urlencode({**({"op": op} if op else {}), **({"spot": spot} if tab == "spot" else {})})
+        suffix = f"&{extra}" if extra else ""
         prev_url = next_url = ""
         if answer_id in ids:
             i = ids.index(answer_id)
             # uid 带 #（如 ec-0201#0），拼 URL 必须转义，否则被浏览器当锚点截断
-            prev_url = f"/review/{quote(ids[i - 1], safe='/')}?tab={tab}" if i > 0 else ""
-            next_url = f"/review/{quote(ids[i + 1], safe='/')}?tab={tab}" if i + 1 < len(ids) else ""
+            prev_url = f"/review/{quote(ids[i - 1], safe='/')}?tab={tab}{suffix}" if i > 0 else ""
+            next_url = f"/review/{quote(ids[i + 1], safe='/')}?tab={tab}{suffix}" if i + 1 < len(ids) else ""
             pos, total = i + 1, len(ids)
         else:
             pos, total = 0, 0
         m = policy.score.map
         return render(request, "review.html", v=v, tab=tab, pos=pos, total_q=total,
                       prev_url=prev_url, next_url=next_url, score_map=m,
+                      extra_qs=extra,
                       scales={k: list(v_) for k, v_ in SCALES.items()},
                       pass_mark=policy.score.pass_mark,
                       detail=(v["conclusion"] or {}).get("detail") or {})
@@ -322,16 +820,21 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     # ---------------- 结果对比
     @app.get("/compare")
     async def compare(request: Request, axis: str = "skills_base", base: str = "", target: str = "",
-                      any: str = "", factors: str = "", run: str = ""):
+                      any: str = "", fix: str = "", factors: str = "", run: str = ""):
         rep = error = shap = None
         rs = rows(request, with_records=True)
         run_order = {r["run_id"]: i for i, r in enumerate(store.runs())}
         axis_values = sorted({views.attr_value(r, axis) for r in rs})
         anys = tuple(a.strip() for a in (any or "").split(",") if a.strip())
+        fixes: dict[str, str] = {}
+        for part in (fix or "").split(","):
+            k, sep, v = part.partition("=")
+            if sep and k.strip() and v.strip():
+                fixes[k.strip()] = v.strip()
         if base and target:
             try:
                 rep = views.compare_scores(rs, axis=axis, base=base, target=target, policy=policy,
-                                           anys=anys, run_order=run_order)
+                                           fixes=fixes, anys=anys, run_order=run_order)
             except ValueError as e:
                 error = str(e)
         if factors and not error:
@@ -342,9 +845,10 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             except ValueError as e:
                 error = str(e)
         return render(request, "compare.html", axis=axis, axis_values=axis_values,
-                      base=base, target=target, any=any, factors=factors,
+                      base=base, target=target, any=any, fix=fix, factors=factors,
                       rep=rep, error=error, shap=shap, attrs=[a for a in views.ATTRS if a != "skills_mode"],
-                      axis_labels=AXIS_LABELS)
+                      axis_labels=AXIS_LABELS,
+                      value_labels=store.run_labels() if axis == "run" else {})
 
     # ---------------- 判定质量
     @app.get("/judging")
@@ -430,6 +934,74 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             return JSONResponse({"error": str(e)}, status_code=400)
         _nav_cache.clear()
         return {"episode_status": status, "reason": reason}
+
+    @app.post("/api/case/weights")
+    async def case_weights(body: WeightsIn):
+        """权重分配保存（用例详情页）：写成新 judge_fp 的期望并设为当前期望；
+        总和 ≤ 100% 在两端都校验。label 为期望版本标签（可自定义命名）。"""
+        try:
+            res = store.revise_weights(body.qkey, body.judge_fp, dict(body.weights), body.label)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return res
+
+    @app.post("/api/run/rename")
+    async def run_rename(body: RunRenameIn):
+        """执行记录命名（命名改造）：改展示标题，空串回默认拼接标题；run_id 不变。"""
+        try:
+            store.rename_run(body.run_id, body.title)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"run_id": body.run_id, "title": body.title.strip() or None}
+
+    @app.post("/api/chain/rename")
+    async def chain_rename(body: ChainRenameIn):
+        """判定配置命名：改名称，空串清除；chain_sha 不变。"""
+        try:
+            store.rename_chain(body.chain_sha, body.name)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"chain_sha": body.chain_sha, "name": body.name.strip() or None}
+
+    @app.post("/api/case/preview")
+    async def case_preview(body: CaseNewIn):
+        """新建用例预览：表单 → md 全文 + 校验错误/提示（不落盘）。"""
+        try:
+            md, errors, warnings = _build_case_md(body)
+        except Exception as e:  # 渲染前构建失败（表单异常）按 400 报出
+            return JSONResponse({"error": f"表单无法构造成用例：{e}"}, status_code=400)
+        return {"md": md, "errors": errors, "warnings": warnings, "ok": not errors}
+
+    @app.post("/api/case/create")
+    async def case_create(body: CaseNewIn):
+        """新建用例保存：校验通过 → 写 md 到 cases 目录（md 是唯一数据源）；
+        id 查重、目录名白名单。返回下一步命令（check/build/执行）。"""
+        md, errors, warnings = _build_case_md(body)
+        if errors:
+            return JSONResponse({"error": "校验未通过，未保存", "errors": errors,
+                                 "warnings": warnings}, status_code=400)
+        cid = body.id.strip()
+        if not re.fullmatch(r"[a-z]{2}-[0-9]{4}", cid):
+            return JSONResponse({"error": f"id 应形如 kr-0001，当前为 {cid!r}"}, status_code=400)
+        existing = _existing_case_ids(cases_root)
+        if cid in existing:
+            return JSONResponse({"error": f"用例 id {cid} 已存在：{existing[cid]}"}, status_code=400)
+        directory = body.directory.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", directory):
+            return JSONResponse({"error": "目标目录名只允许字母、数字、-、_（如 order_intake）"},
+                                status_code=400)
+        target_dir = cases_root / directory
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / f"{cid}.md"
+        if path.exists():
+            return JSONResponse({"error": f"文件已存在：{path}"}, status_code=400)
+        path.write_text(md, encoding="utf-8")
+        try:
+            rel = path.resolve().relative_to(_REPO_ROOT).as_posix()
+        except ValueError:
+            rel = str(path)
+        return {"id": cid, "path": rel, "warnings": warnings,
+                "md": md, "hint": _build_hint(rel)}
 
     # ---------------- 旧路由 301（§4.1）
     @app.get("/question/{qkey}")

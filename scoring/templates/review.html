@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_macros.html" as m with context %}
 {% block title %}复核 {{ v.uid }} · Agent_Eval 复核{% endblock %}
 {% block body %}
 {% set c = v.conclusion %}
@@ -15,7 +15,7 @@
       data-next="{{ next_url }}" data-prev="{{ prev_url }}"
       data-preview-url="/api/review/preview" data-submit-url="/api/reviews"
       data-concl='{{ concl0|tojson }}'>
-  <div class="rv-crumb"><a href="/review?tab={{ tab }}">复核</a> / {{ tab_labels[tab] }}{% if pos %} / 第 {{ pos }} 段，共 {{ total_q }} 段{% endif %}</div>
+  <div class="rv-crumb"><a href="/review?tab={{ tab }}{% if extra_qs %}&{{ extra_qs }}{% endif %}">复核</a> / {{ tab_labels[tab] }}{% if pos %} / 第 {{ pos }} 段，共 {{ total_q }} 段{% endif %}</div>
   <div class="rv-page-head" style="margin:4px 0 12px">
     <h1>{{ v.uid }}</h1>
     <span class="rv-meta"><span>{{ v.dim or '?' }}</span><span>{{ v.topic or '' }}</span>
@@ -27,7 +27,7 @@
     <span class="rv-pill"><b>{{ v.models|join('、') if v.models else '?' }}</b>{% if v.reasoning_effort %} · 努力 {{ v.reasoning_effort }}{% endif %}</span>
     <span class="rv-pill rv-pill--mono">{{ v.profile }}</span>
     <span class="rv-pill">{{ v.mode }} · 第 {{ v.trial }} 次</span>
-    <span class="rv-pill rv-pill--mono">{{ v.run_id }}</span>
+    <span class="rv-pill rv-pill--mono" title="{{ v.run_id }}">{{ v.run_label or v.run_id }}</span>
     <span class="rv-pill">技能 {{ v.skills_mode or '?' }}</span>
     {% for inj in v.injections_applied %}<span class="rv-pill">注入 {{ inj.point }} · {{ inj.option }}</span>{% endfor %}
   </div>
@@ -71,7 +71,7 @@
         <div class="rv-row-top">
           <span class="rv-kind" {% if r.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ sec.label }} {{ r.id }}</span>
           <span class="rv-meta"><span>第 {{ r.turn or 1 }} 轮</span>{% if r.group %}<span>组 {{ r.group }}</span>{% endif %}</span>
-          {% if r.kind in ('required', 'expected') %}<span class="rv-weight" {% if not r.weight %}data-zero{% endif %}>权重 {{ r.weight|f1 }}</span>{% endif %}
+          {% if r.kind in ('required', 'expected') %}<span class="rv-weight" {% if not r.weight %}data-zero{% endif %}>权重 {{ r.weight|f1 }}{% if r.weight_is_pct %}%{% endif %}</span>{% endif %}
           <span class="rv-state" data-s="{{ 'human' if r.human else ('need' if not r.machine or r.machine.value is none else 'off') }}" {% if r.machine and r.machine.value is not none and not r.human %}hidden{% endif %}>{{ '人工' if r.human else '待判' }}</span>
         </div>
         <div class="rv-row-text">{{ r.text }}</div>

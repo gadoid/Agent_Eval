@@ -124,3 +124,26 @@ def test_weight_changes_judge_fp_not_item_sha():
     b = Item("required", "F1", f1["text"], f1["turn"], dict(f1, weight=2))
     assert item_sha_of(a) == item_sha_of(b)
     assert weight_of(a, 1) == 1 and weight_of(b, 1) == 2 and weight_of(Item("expected", "E1", "", None, fact("E1", weight=0)), 1) == 0
+
+
+def test_version_label_shortens_paths():
+    """评测集版本短名（比较轴/配置分组不再出现文件全路径）。"""
+    from scoring.items import version_label
+    assert version_label(r"D:\Agent_Eval\evalset\dist\evalset-v20261022-1.jsonl") == "v20261022-1"
+    assert version_label("D:/x/out/adhoc/dist/evalset-adhoc-202610220540-58.jsonl") == "adhoc-202610220540-58"
+    assert version_label("v20261022-1") == "v20261022-1"
+    assert version_label(None) == "?"
+
+
+def test_evalset_version_of_prefers_version_shortens_file():
+    from scoring.store import evalset_version_of
+    assert evalset_version_of({"snapshot": {"evalset": {"version": "v1", "file": "D:/x/evalset-v1.jsonl"}}}) == "v1"
+    assert evalset_version_of({"snapshot": {"evalset": {"file": "D:/x/evalset-adhoc-1.jsonl"}}}) == "adhoc-1"
+    assert evalset_version_of({}) == "?"
+
+
+def test_attr_value_normalizes_evalset_version():
+    from scoring.views import attr_value
+    row = {"profile_id": "p", "evalset_version": "D:/a/b/evalset-v20261022-1.jsonl"}
+    assert attr_value(row, "evalset_version") == "v20261022-1"
+    assert attr_value(row, "profile") == "p"
