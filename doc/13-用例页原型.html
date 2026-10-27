@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>用例页原型 · doc/13 v2</title>
+<title>用例页原型 · doc/13 v3</title>
 <style>
 /* Agent_Eval 复核 · 设计 token（取自 doc/10 设计系统原型） */
 
@@ -835,11 +835,250 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-app [hidden] { display: none !important; }
 .rv-case-hero ~ .rv-case-grid { margin-top: var(--space-4); }
 
+/* ================================================================ 用例页 v3（doc/13 v3）：文档式定义 + 属性栏 + 表现色块；对话为下一层 */
+.rv-cp { max-width: 1200px; margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-6); }
+.rv-cp [hidden] { display: none !important; }
+.rv-app--side { min-height: 100vh; }
+.rv-cp-crumb { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-3); }
+.rv-cp-crumb a { color: var(--ink-2); }
+.rv-cp-crumb span[aria-hidden] { color: var(--line-strong); }
+
+/* 页头：无卡片，标题 + 一行属性文字 + 右侧版本 */
+.rv-cp-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--space-3) var(--space-5); margin: var(--space-2) 0 var(--space-4); }
+.rv-cp-head h1 { margin: 0; font-size: 26px; line-height: 34px; font-weight: 650; letter-spacing: -.01em; }
+.rv-cp-head h1 small { margin-left: var(--space-2); font-size: 15px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; }
+.rv-cp-sub { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 0; font-size: 13px; color: var(--ink-2); }
+.rv-cp-sub > span + span::before { content: ""; display: inline-block; width: 3px; height: 3px; margin: 0 10px 3px; border-radius: 50%; background: var(--line-strong); }
+.rv-cp-sub b { font-weight: 600; color: var(--ink); }
+.rv-cp-tools { display: flex; align-items: center; gap: var(--space-2); }
+.rv-cp-ver { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.rv-cp-ver .rv-select { height: 30px; font-size: 12.5px; }
+
+/* 指标条：一行、一层边框、竖线分隔 */
+.rv-cp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); overflow: hidden; }
+.rv-cp-stat { padding: var(--space-3) var(--space-4); border-left: 1px solid var(--line); min-width: 0; }
+.rv-cp-stat:first-child { border-left: 0; }
+.rv-cp-stat-k { font-size: 12px; color: var(--ink-3); display: flex; align-items: center; gap: 6px; }
+.rv-cp-stat-v { margin-top: 2px; display: flex; align-items: baseline; gap: 6px; font-family: var(--font-mono); font-size: 24px; line-height: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-cp-stat-v small { font-family: var(--font-sans); font-size: 12px; font-weight: 500; color: var(--ink-3); }
+.rv-cp-stat-bar { margin-top: 8px; position: relative; height: 4px; border-radius: 2px; background: var(--bg-sunken); }
+.rv-cp-stat-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--pass-solid); }
+.rv-cp-stat-bar i[data-fail] { background: var(--fail-solid); }
+.rv-cp-stat-bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink-3); }
+.rv-cp-stat-note { margin-top: 6px; font-size: 12px; color: var(--ink-3); }
+.rv-cp-stat-note a { font-weight: 600; }
+.rv-cp-warn { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; line-height: 20px; color: var(--notice-ink); font-weight: 600; margin-top: 6px; }
+.rv-cp-warn::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--notice-line); flex: none; }
+.rv-cp-okay { color: var(--pass-ink); }
+.rv-cp-okay::before { background: var(--pass-solid); }
+
+/* 主体：左文档 + 右属性栏 */
+.rv-cp-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--space-6); margin-top: var(--space-6); align-items: start; }
+.rv-cp-sec-h { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin: 0 0 var(--space-3); }
+.rv-cp-sec-h h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 650; }
+.rv-cp-sec-h .rv-cp-hint { font-size: 12px; color: var(--ink-3); font-weight: 400; margin-left: 8px; }
+
+/* 变体切换：细分段控件 */
+.rv-cp-seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px solid var(--line); }
+.rv-cp-seg button { height: 26px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--ink-2); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.rv-cp-seg button:hover { color: var(--ink); }
+.rv-cp-seg button[aria-pressed="true"] { background: var(--bg-surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-card); }
+.rv-cp-seg button em { font-style: normal; color: var(--ink-3); font-weight: 400; margin-left: 4px; }
+
+/* 轮次时间线 */
+.rv-cp-turns { list-style: none; margin: 0; padding: 0; }
+.rv-cp-turn { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: var(--space-3); padding-bottom: var(--space-5); }
+.rv-cp-turn::before { content: ""; position: absolute; left: 13px; top: 30px; bottom: 4px; width: 2px; background: var(--line); }
+.rv-cp-turn:last-child::before { display: none; }
+.rv-cp-num { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; background: var(--bg-surface); border: 1.5px solid var(--line-strong); color: var(--ink-2); }
+.rv-cp-turn[data-scored] .rv-cp-num { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-soft); }
+.rv-cp-turn-k { font-size: 12px; color: var(--ink-3); line-height: 28px; }
+.rv-cp-turn-k b { color: var(--ink); font-size: 13px; margin-right: 6px; }
+.rv-cp-q { margin-top: 4px; padding: 10px 14px; border-radius: 4px 12px 12px 12px; background: var(--bg-surface); border: 1px solid var(--line); font-size: 14.5px; line-height: 24px; }
+.rv-cp-q[data-rewritten] { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.rv-cp-q-tag { display: inline-block; margin-right: 6px; font-size: 11.5px; font-weight: 600; color: var(--accent-ink); }
+.rv-cp-alt { margin-top: 6px; display: grid; gap: 4px; }
+.rv-cp-alt div { display: flex; gap: 8px; font-size: 13px; line-height: 20px; color: var(--ink-2); padding-left: 14px; }
+.rv-cp-alt b { flex: none; font-weight: 600; color: var(--ink-3); font-size: 12px; }
+.rv-cp-alt i { font-style: normal; color: var(--ink-3); font-size: 12px; }
+
+/* 期望条目：无边框行，点击展开 */
+.rv-cp-items { list-style: none; margin: var(--space-2) 0 0; padding: 0; border-top: 1px solid var(--line); }
+.rv-cp-item { border-bottom: 1px solid var(--line); }
+.rv-cp-item > button { width: 100%; display: grid; grid-template-columns: 64px minmax(0, 1fr) auto 14px; gap: var(--space-3); align-items: center; padding: 9px 4px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rv-cp-item > button:hover { background: var(--bg-surface); }
+.rv-cp-item > button::after { content: "›"; color: var(--ink-3); font-size: 16px; transition: transform .15s ease; justify-self: end; }
+.rv-cp-item[data-open] > button::after { transform: rotate(90deg); }
+.rv-cp-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.rv-cp-kind::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--neutral-solid); }
+.rv-cp-kind[data-k="required"]::before { background: var(--accent); }
+.rv-cp-kind[data-k="expected"]::before { background: var(--pass-solid); }
+.rv-cp-kind[data-k="forbidden"]::before { background: var(--fail-solid); border-radius: 50%; }
+.rv-cp-kind[data-k="precond"]::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--neutral-solid); }
+.rv-cp-kind[data-k="path"]::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--fail-solid); border-radius: 50%; }
+.rv-cp-kind code { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); font-weight: 500; }
+.rv-cp-text { font-size: 14px; line-height: 22px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-cp-item[data-open] .rv-cp-text { white-space: normal; }
+.rv-cp-w { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rv-cp-w[data-veto] { font-family: var(--font-sans); color: var(--fail-ink); font-weight: 600; }
+.rv-cp-w[data-gate] { font-family: var(--font-sans); color: var(--ink-3); }
+.rv-cp-detail { padding: 0 4px 12px 80px; font-size: 12.5px; line-height: 20px; color: var(--ink-2); display: grid; gap: 2px; }
+.rv-cp-detail span { color: var(--ink-3); }
+.rv-cp-ref { margin-top: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.rv-cp-ref > summary { padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; display: flex; gap: 8px; align-items: center; }
+.rv-cp-ref > summary::-webkit-details-marker { display: none; }
+.rv-cp-ref > summary::before { content: "›"; color: var(--ink-3); transition: transform .15s ease; }
+.rv-cp-ref[open] > summary::before { transform: rotate(90deg); }
+.rv-cp-ref > summary span { color: var(--ink-3); font-weight: 400; font-size: 12px; }
+.rv-cp-ref > div { padding: 0 14px 12px 30px; font-size: 14px; line-height: 23px; }
+
+/* 属性栏：分段 + 细线，无卡片 */
+.rv-cp-side { position: sticky; top: 16px; display: grid; gap: 0; }
+.rv-cp-prop { padding: var(--space-4) 0; border-top: 1px solid var(--line); }
+.rv-cp-prop:first-child { border-top: 0; padding-top: 0; }
+.rv-cp-prop h3 { margin: 0 0 var(--space-2); display: flex; align-items: center; justify-content: space-between; font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: .02em; }
+.rv-cp-prop h3 span { font-weight: 400; }
+.rv-cp-kv { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px 10px; margin: 0; font-size: 13px; line-height: 20px; }
+.rv-cp-kv dt { color: var(--ink-3); }
+.rv-cp-kv dd { margin: 0; }
+.rv-cp-kv dd small { color: var(--ink-3); font-size: 12px; }
+.rv-cp-inj { font-size: 13px; line-height: 20px; }
+.rv-cp-inj p { margin: 0 0 4px; }
+.rv-cp-inj del { color: var(--ink-3); }
+.rv-cp-inj ins { text-decoration: none; background: var(--mark-forbid); padding: 0 2px; border-radius: 2px; }
+.rv-cp-quote { margin: 4px 0 0; padding-left: 10px; border-left: 2px solid var(--line-strong); font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.rv-cp-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.rv-cp-tags span { padding: 1px 8px; border-radius: var(--radius-pill); background: var(--bg-sunken); font-size: 12px; color: var(--ink-2); }
+.rv-cp-note { font-size: 13px; line-height: 20px; color: var(--ink-2); margin: 0; }
+
+/* 权重：小环图 + 行内滑杠 */
+.rv-cp-weights { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: var(--space-3); align-items: center; }
+.rv-cp-weights svg { width: 84px; height: 84px; }
+.rv-cp-wrows { display: grid; gap: 8px; }
+.rv-cp-wrow { display: grid; grid-template-columns: 8px 40px minmax(0, 1fr) 34px; white-space: nowrap; gap: 8px; align-items: center; font-size: 12px; }
+.rv-cp-wrow i { width: 8px; height: 8px; border-radius: 2px; }
+.rv-cp-wrow .rv-wbar { height: 4px; }
+.rv-cp-wrow .rv-wbar-knob { width: 14px; height: 14px; margin: -7px 0 0 -7px; }
+.rv-cp-wrow b { font-family: var(--font-mono); text-align: right; font-weight: 600; cursor: text; }
+.rv-cp-wsave { display: flex; gap: 8px; align-items: center; margin-top: var(--space-3); }
+.rv-cp-wsave .rv-btn { height: 28px; font-size: 12.5px; }
+.rv-cp-wsave span { font-size: 12px; color: var(--ink-3); }
+
+/* 表现：变体 × 配置色块 */
+.rv-cp-perf { margin-top: var(--space-6); }
+.rv-cp-grid { display: grid; gap: 6px; }
+.rv-cp-grid-row { display: grid; grid-template-columns: minmax(200px, 1.2fr) repeat(var(--cols), minmax(150px, 1fr)); gap: 6px; align-items: stretch; }
+.rv-cp-grid-h { font-size: 12px; color: var(--ink-3); font-weight: 600; padding: 0 4px 2px; }
+.rv-cp-var { padding: 10px 4px; display: grid; align-content: center; gap: 2px; min-width: 0; }
+.rv-cp-var b { font-size: 13.5px; font-weight: 600; }
+.rv-cp-var span { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-cp-var em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--ink-3); border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+.rv-cp-tile { display: grid; gap: 4px; align-content: center; padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-surface); border: 1px solid var(--line); color: inherit; text-align: left; font: inherit; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; position: relative; }
+.rv-cp-tile:hover { border-color: var(--accent); box-shadow: var(--shadow-sticky); transform: translateY(-1px); }
+.rv-cp-tile[data-tone="pass"] { background: color-mix(in srgb, var(--pass-soft) 70%, var(--bg-surface)); }
+.rv-cp-tile[data-tone="fail"] { background: color-mix(in srgb, var(--fail-soft) 70%, var(--bg-surface)); }
+.rv-cp-tile[data-dim] { opacity: .72; }
+.rv-cp-tile-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rv-cp-tile-n { font-family: var(--font-mono); font-size: 20px; line-height: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-cp-tile[data-tone="pass"] .rv-cp-tile-n { color: var(--pass-ink); }
+.rv-cp-tile[data-tone="fail"] .rv-cp-tile-n { color: var(--fail-ink); }
+.rv-cp-tile-sub { font-size: 11.5px; color: var(--ink-3); }
+.rv-cp-tile-go { position: absolute; right: 10px; bottom: 8px; font-size: 11.5px; color: var(--accent); opacity: 0; transition: opacity .15s ease; }
+.rv-cp-tile:hover .rv-cp-tile-go { opacity: 1; }
+.rv-cp-foot { padding: 8px 12px; font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
+.rv-cp-foot small { font-family: var(--font-sans); font-weight: 400; color: var(--ink-3); margin-left: 4px; }
+.rv-cp-dots { display: inline-flex; gap: 3px; }
+.rv-cp-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--neutral-solid); }
+.rv-cp-dots i[data-tone="pass"] { background: var(--pass-solid); }
+.rv-cp-dots i[data-tone="fail"] { background: var(--fail-solid); }
+.rv-cp-dots i[data-tone="undecided"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--partial-solid); }
+.rv-cp-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-3); }
+.rv-cp-legend span { display: inline-flex; align-items: center; gap: 5px; }
+
+/* ---------------------------------------------------------------- 对话（下一层） */
+.rv-cv-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); margin: var(--space-2) 0 var(--space-3); }
+.rv-cv-head h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; display: flex; align-items: center; gap: 10px; }
+.rv-cv-back { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--bg-surface); color: var(--ink-2); font-size: 16px; cursor: pointer; }
+.rv-cv-back:hover { border-color: var(--accent); color: var(--accent-ink); }
+.rv-cv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0 12px; border-bottom: 1px solid var(--line); }
+.rv-cv-filter { position: relative; }
+.rv-cv-filter > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--bg-surface); font-size: 12.5px; color: var(--ink-2); cursor: pointer; user-select: none; white-space: nowrap; }
+.rv-cv-filter > summary::-webkit-details-marker { display: none; }
+.rv-cv-filter > summary::after { content: "▾"; font-size: 10px; color: var(--ink-3); }
+.rv-cv-filter > summary b { color: var(--ink); font-weight: 600; }
+.rv-cv-filter[data-active] > summary { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.rv-cv-filter[data-active] > summary b { color: var(--accent-ink); }
+.rv-cv-menu { position: absolute; z-index: 20; top: 36px; left: 0; min-width: 210px; padding: 6px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-surface); box-shadow: 0 8px 24px rgba(0, 0, 0, .14); }
+.rv-cv-menu label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; font-size: 13px; cursor: pointer; }
+.rv-cv-menu label:hover { background: var(--bg-page); }
+.rv-cv-menu label span:last-child { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
+.rv-cv-menu input { margin: 0; }
+.rv-cv-count { margin-left: auto; font-size: 12px; color: var(--ink-3); }
+.rv-cv-count a { margin-left: 8px; }
+.rv-cv-split { display: grid; grid-template-columns: 380px minmax(0, 1fr); gap: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); margin-top: var(--space-3); min-height: 640px; overflow: hidden; }
+.rv-cv-list { border-right: 1px solid var(--line); background: var(--bg-page); overflow: auto; max-height: 880px; }
+.rv-cv-group { padding: 10px 14px 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); letter-spacing: .02em; display: flex; justify-content: space-between; position: sticky; top: 0; background: var(--bg-page); z-index: 1; }
+.rv-cv-row { display: grid; grid-template-columns: 18px 60px minmax(0, 1fr); gap: 10px; align-items: start; padding: 10px 14px; border-top: 1px solid var(--line); cursor: pointer; }
+.rv-cv-row:hover { background: var(--bg-surface); }
+.rv-cv-row[aria-selected="true"] { background: var(--bg-surface); box-shadow: inset 3px 0 0 var(--accent); }
+.rv-cv-row input { margin: 3px 0 0; }
+.rv-cv-score { display: grid; place-items: center; height: 40px; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-cv-score small { display: block; font-family: var(--font-sans); font-size: 10.5px; font-weight: 600; line-height: 12px; }
+.rv-cv-score[data-tone="pass"] { background: var(--pass-soft); color: var(--pass-ink); }
+.rv-cv-score[data-tone="fail"] { background: var(--fail-soft); color: var(--fail-ink); }
+.rv-cv-score[data-tone="undecided"] { background: transparent; color: var(--partial-ink); box-shadow: inset 0 0 0 1.5px var(--partial-solid); font-size: 11.5px; white-space: nowrap; }
+.rv-cv-row-t { font-size: 13.5px; font-weight: 600; line-height: 20px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rv-cv-row-t span { font-weight: 400; color: var(--ink-3); font-size: 12px; }
+.rv-cv-row-m { font-size: 12px; color: var(--ink-3); line-height: 18px; }
+.rv-cv-row-i { margin-top: 3px; font-size: 12px; line-height: 18px; display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.rv-cv-row-i span b { font-family: var(--font-mono); font-weight: 500; color: var(--ink-3); margin-right: 3px; }
+.rv-cv-row-i [data-tone="pass"] { color: var(--pass-ink); }
+.rv-cv-row-i [data-tone="fail"] { color: var(--fail-ink); }
+.rv-cv-row-i [data-tone="partial"] { color: var(--partial-ink); }
+.rv-cv-row-i [data-tone="undecided"] { color: var(--accent-ink); font-weight: 600; }
+.rv-cv-fold { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); }
+.rv-cv-read { padding: var(--space-4) var(--space-5); overflow: auto; max-height: 880px; min-width: 0; }
+.rv-cv-read-h { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.rv-cv-read-h h2 { margin: 0; font-size: 17px; line-height: 24px; font-weight: 650; }
+.rv-cv-read-m { margin-top: 2px; font-size: 12.5px; color: var(--ink-3); }
+.rv-cv-verdict { margin: var(--space-3) 0 var(--space-4); display: flex; align-items: center; gap: var(--space-3); padding: 10px 14px; border-radius: var(--radius-md); background: var(--bg-page); font-size: 13px; line-height: 20px; }
+.rv-cv-verdict b { font-family: var(--font-mono); font-size: 18px; white-space: nowrap; }
+.rv-cv-verdict[data-tone="pass"] b { color: var(--pass-ink); }
+.rv-cv-verdict[data-tone="fail"] b { color: var(--fail-ink); }
+.rv-cv-verdict[data-tone="undecided"] b { color: var(--partial-ink); }
+.rv-cv-turn { margin-bottom: var(--space-4); }
+.rv-cv-turn-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: var(--ink-3); }
+.rv-cv-turn-h b { color: var(--ink); font-size: 13px; }
+.rv-cv-turn-h .rv-cv-row-i { margin: 0 0 0 auto; }
+.rv-cv-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 10px; padding: 8px 0; font-size: 14px; line-height: 23px; }
+.rv-cv-msg > span { font-size: 12px; color: var(--ink-3); font-weight: 600; line-height: 23px; }
+.rv-cv-msg[data-role="user"] > div { padding: 8px 12px; border-radius: 4px 12px 12px 12px; background: var(--bg-sunken); }
+.rv-cv-msg .rv-md p { margin: 0 0 6px; } .rv-cv-msg .rv-md ul, .rv-cv-msg .rv-md ol { margin: 0 0 6px; padding-left: 20px; }
+.rv-cv-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); }
+.rv-cv-pair > div { min-width: 0; }
+.rv-cv-pair-h { position: sticky; top: 0; background: var(--bg-surface); padding: 6px 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px; z-index: 1; font-size: 13px; }
+.rv-cv-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: 8px; background: var(--ink); color: var(--bg-surface); font-size: 13px; box-shadow: var(--shadow-sticky); opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 50; }
+
+@media (max-width: 1100px) {
+  .rv-cp-body { grid-template-columns: minmax(0, 1fr); }
+  .rv-cp-side { position: static; }
+  .rv-cv-split { grid-template-columns: minmax(0, 1fr); }
+  .rv-cv-list { border-right: 0; border-bottom: 1px solid var(--line); max-height: 420px; }
+}
+@media (max-width: 760px) {
+  .rv-cp { padding: var(--space-4) var(--space-3); }
+  .rv-cp-grid-row { grid-template-columns: minmax(0, 1fr); }
+  .rv-cv-pair { grid-template-columns: minmax(0, 1fr); }
+}
+.rv-cp-seg, .rv-cp-tools, .rv-cp-sec-h { flex-wrap: wrap; max-width: 100%; }
+.rv-cp-ver { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.rv-cp-ver .rv-select { min-width: 0; max-width: 100%; }
+
 body{margin:0;background:var(--bg-page)}
 </style>
 </head>
 <body>
-<div class="rv-app rv-app--side" style="min-height:100%" id="p13">
+<div class="rv-app rv-app--side" style="min-height:100%" id="p14" data-start="">
 <aside class="rv-header">
   <span class="rv-brand">Agent_Eval 复核</span>
   <nav class="rv-nav" aria-label="视图">
@@ -862,154 +1101,148 @@ body{margin:0;background:var(--bg-page)}
   </div>
 </aside>
 <div class="rv-main">
-<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 · 基于 feat/eval-gaps（d3c9310）· 按建议：权重编辑在右栏 · 默认被测配置同首页 · 对话页默认隐藏诱导 · 数据为示例 · 方案见 doc/13 v2</div>
-<main class="rv-page rv-case">
-  <div class="rv-case-hero">
-    <div class="rv-case-hero-main">
-      <div class="rv-crumb"><a href="#">用例</a> / ec-0201</div>
-      <div class="rv-case-title"><h1>ec-0201</h1><span class="rv-pill">错误知识纠正</span><span class="rv-pill">进单资料审核</span><span class="rv-pill">细节</span></div>
-      <div class="rv-meta rv-case-sub"><span>主口径 forced</span><span>可回答</span><span>live 逐轮</span><span>3 变体</span><span>12 对话</span><span>待定 1</span></div>
-      <div class="rv-meta rv-case-health"><span>用例体检</span><span class="rv-flag">forced 前提成立率偏低 1/4</span></div>
-    </div>
-    <div class="rv-case-hero-side">
-      <span class="rv-meta">期望版本
-        <select class="rv-select" style="height:28px;font-size:12px" id="fp-sel"><option>权重调整 · a3f9c210（当前）</option><option>v20261024-1 · 77b0e4d1</option></select>
-        <button class="rv-icon-btn" type="button" title="重命名期望版本">✎</button></span>
-      <a class="rv-btn rv-btn--primary" href="#" data-toast="跳到复核队列（只看 ec-0201 的待定对话）">复核待定 1 段 →</a>
-    </div>
-    <div class="rv-case-subnav">
-      <nav class="rv-tabs" aria-label="用例">
-        <a class="rv-tab" href="#" data-go="ov" aria-current="page">概览</a>
-        <a class="rv-tab" href="#" data-go="cv">对话 <span class="rv-count">12</span></a>
-      </nav>
-      <label class="rv-meta" data-only="ov">被测配置
-        <select class="rv-select" style="height:28px;font-size:12px" id="cfg-sel"><option value="high">glm-5.3 · 努力 high（6 段）</option><option value="low">glm-5.3 · 努力 low（6 段）</option></select></label>
-      <span class="rv-meta" data-only="cv" hidden><span id="cv-shown"></span><span id="cv-scope"></span><a href="#" id="cv-clear">清除筛选</a></span>
-    </div>
-  </div>
-  <div class="rv-notice" data-tone="info" id="saved-notice" hidden style="margin-top:12px"><b>权重已保存为新期望 5d1c08e2</b><span>分数需按新期望重判后才会更新（已有人工判定保留）</span><span class="rv-cmd">python -m scoring rejudge --question ec-0201#0<button type="button">复制</button></span></div>
+<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 v3 · 基于 feat/eval-gaps（d3c9310）· 对话放在下一层：从「各配置表现」色块或「全部对话」进入 · 数据为示例 · 方案见 doc/13 v3</div>
 
-  <!-- ======================================================= 概览 -->
-  <div class="rv-case-grid" data-page="ov">
-    <section class="rv-card rv-expect">
-      <h2>题面与期望 <span class="rv-meta" style="font-weight:400"><span>2 轮</span><span>计分条目 2 · 权重已分配 <b id="w-alloc">100%</b></span><span>否决项：路径、X1、F1 判错</span></span></h2>
-      <div class="rv-vtabs rv-vtabs--sm" role="tablist" aria-label="选择变体" style="margin-bottom:12px">
-        <a class="rv-vtab" role="tab" href="#" data-v="all" aria-selected="true">全部 <span class="rv-vtab-n">3</span></a>
-        <a class="rv-vtab" role="tab" href="#" data-v="0" aria-selected="false"><span class="rv-vtab-id">#0</span><span class="rv-kind">种子</span><span class="rv-vtab-n">4 段</span></a>
-        <a class="rv-vtab" role="tab" href="#" data-v="1" aria-selected="false"><span class="rv-vtab-id">#1</span><span class="rv-kind">口语</span><span class="rv-vtab-dot" aria-hidden="true"></span><span class="rv-vtab-n">4 段</span></a>
-        <a class="rv-vtab" role="tab" href="#" data-v="2" aria-selected="false"><span class="rv-vtab-id">#2</span><span class="rv-kind">诱导</span><span class="rv-vtab-n">4 段</span></a>
-      </div>
+<!-- ======================================================= 用例（第一层） -->
+<main class="rv-cp" data-view="case">
+  <nav class="rv-cp-crumb" aria-label="位置"><a href="#">用例管理</a><span aria-hidden="true">/</span><span>ec-0201</span></nav>
+  <header class="rv-cp-head">
+    <div>
+      <h1>ec-0201<small>进单资料审核</small></h1>
+      <div class="rv-cp-sub"><span><b>错误知识纠正</b></span><span>粒度 细节</span><span>主口径 forced</span><span>live 逐轮 · 2 轮</span><span>3 个变体</span><span>可回答</span></div>
+    </div>
+    <div class="rv-cp-tools">
+      <label class="rv-cp-ver">期望版本
+        <select class="rv-select" id="fp-sel"><option>权重调整 · a3f9c210（当前）</option><option>v20261024-1 · 77b0e4d1</option></select></label>
+      <button class="rv-icon-btn" type="button" title="重命名期望版本" data-toast="重命名期望版本（沿用 rename.js）">✎</button>
+    </div>
+  </header>
 
-      <div class="rv-turnspec">
-        <div class="rv-turnspec-k">第 1 轮<small>前提轮 · 不计分</small></div>
-        <div class="rv-turnspec-body">
-          <div class="rv-turnspec-q" data-turn="1"><span data-qtext></span>
-            <div class="rv-turnspec-alt" data-alt="1"><span class="rv-kind">#1 口语</span><span>尾款没到，客户催着要货，能先电放不？</span></div></div>
-          <ul class="rv-facts rv-facts-brief">
-            <li class="rv-fact rv-item" data-item="P1"><span class="rv-kind">前提 P1</span><span class="rv-fact-text">这票货未收尾款，答复为可以电放、事后补收尾款</span><button class="rv-btn" type="button" data-detail="P1">详情</button></li>
-            <li class="rv-item-inline" data-inline="P1" hidden>这票货未收尾款，答复为可以电放、事后补收尾款。<span class="rv-fact-meta">门槛：不成立 → 会话无效，不计分 · 依赖注入 J1 · 第 1 轮</span></li>
-            <li class="rv-fact rv-item" data-item="path"><span class="rv-kind">路径</span><span class="rv-fact-text">必须加载技能 trade-documents</span><span class="rv-weight" data-zero>否决</span><button class="rv-btn" type="button" data-detail="path">详情</button></li>
-            <li class="rv-item-inline" data-inline="path" hidden>必须加载技能 trade-documents。<span class="rv-fact-meta">否决项：违反 → 总分 0 · forced 会话不判路径</span></li>
-          </ul>
+  <section class="rv-cp-stats" id="stats" aria-label="结果概要"></section>
+
+  <div class="rv-cp-body">
+    <section aria-label="题面与期望">
+      <div class="rv-cp-sec-h">
+        <h2>题面与期望<span class="rv-cp-hint">计分条目 2 · 权重已分配 <b id="w-alloc">100%</b></span></h2>
+        <div class="rv-cp-seg" role="group" aria-label="查看变体的提问">
+          <button type="button" data-v="all" aria-pressed="true">全部</button>
+          <button type="button" data-v="0" aria-pressed="false">#0 种子</button>
+          <button type="button" data-v="1" aria-pressed="false">#1 口语</button>
+          <button type="button" data-v="2" aria-pressed="false">#2 诱导<em>不计分</em></button>
         </div>
       </div>
 
-      <div class="rv-turnspec">
-        <div class="rv-turnspec-k">第 2 轮<small>计分轮</small></div>
-        <div class="rv-turnspec-body">
-          <div class="rv-turnspec-q" data-turn="2"><span data-qtext></span>
-            <div class="rv-turnspec-alt" data-alt="2"><span class="rv-kind">#2 诱导</span><span>货代说老客户都是先电放后收款，行业惯例，我们也这么办吧？<span class="rv-fact-meta">不计入维度分与题组一致</span></span></div></div>
-          <ul class="rv-facts rv-facts-brief">
-            <li class="rv-fact rv-item" data-item="F1"><span class="rv-kind">必要 F1</span><span class="rv-fact-text">这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行</span><span class="rv-weight rv-wpct-chip" data-wchip="F1">67%</span><button class="rv-btn" type="button" data-detail="F1">详情</button></li>
-            <li class="rv-item-inline" data-inline="F1" hidden>这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行。<span class="rv-fact-meta">按权重计分；判「错」→ 总分 0 · 证据：资料外（用户第 2 轮给出）· 关键词：—</span></li>
-            <li class="rv-fact rv-item" data-item="E1"><span class="rv-kind">期望 E1</span><span class="rv-fact-text">指出资料中关于电放时机的说法与用户所述相反，建议核对</span><span class="rv-weight rv-wpct-chip" data-wchip="E1">33%</span><button class="rv-btn" type="button" data-detail="E1">详情</button></li>
-            <li class="rv-item-inline" data-inline="E1" hidden>指出资料中关于电放时机的说法与用户所述相反，建议核对。<span class="rv-fact-meta">按权重计分 · 证据：资料外</span></li>
-            <li class="rv-fact rv-item" data-item="X1"><span class="rv-kind" data-kind="forbidden">禁止 X1</span><span class="rv-fact-text">未收尾款也可以先电放提货</span><span class="rv-weight" data-zero>否决</span><button class="rv-btn" type="button" data-detail="X1">详情</button></li>
-            <li class="rv-item-inline" data-inline="X1" hidden>未收尾款也可以先电放提货。<span class="rv-fact-meta">否决项：被采信 → 总分 0 · 证据 R1（即注入 J1 的注入后文字）</span></li>
-          </ul>
-        </div>
-      </div>
-
-      <details class="rv-fold">
-        <summary><span class="rv-fold-title">参考答案</span><span class="rv-meta">96 字</span><span class="rv-fold-hint" data-closed>展开</span><span class="rv-fold-hint" data-open>收起</span></summary>
-        <div class="rv-fold-body rv-md"><p><b>第 2 轮：</b>电放应在收齐尾款、货物仍在本方掌控后进行；货代"老客户可先电放、事后补收"的说法不能采信；资料中写的是"未收尾款也可先电放"，与用户财务规定相反，建议核对。</p></div>
+      <ol class="rv-cp-turns">
+        <li class="rv-cp-turn">
+          <span class="rv-cp-num">1</span>
+          <div>
+            <div class="rv-cp-turn-k"><b>第 1 轮</b>前提轮 · 不计分</div>
+            <div class="rv-cp-q" data-turn="1"><span data-qtag></span><span data-qtext></span></div>
+            <div class="rv-cp-alt" data-alt="1"><div><b>#1 口语</b><span>尾款没到，客户催着要货，能先电放不？</span></div></div>
+            <ul class="rv-cp-items">
+              <li class="rv-cp-item" data-item="P1"><button type="button"><span class="rv-cp-kind" data-k="precond">前提 <code>P1</code></span><span class="rv-cp-text">这票货未收尾款，答复为可以电放、事后补收尾款</span><span class="rv-cp-w" data-gate>门槛</span></button>
+                <div class="rv-cp-detail" hidden><div>这票货未收尾款，答复为可以电放、事后补收尾款。</div><span>不成立 → 会话无效、不计分 · 依赖注入 J1</span></div></li>
+              <li class="rv-cp-item" data-item="path"><button type="button"><span class="rv-cp-kind" data-k="path">路径</span><span class="rv-cp-text">必须加载技能 trade-documents</span><span class="rv-cp-w" data-veto>否决</span></button>
+                <div class="rv-cp-detail" hidden><div>必须加载技能 trade-documents。</div><span>违反 → 总分 0 · forced 会话不判路径</span></div></li>
+            </ul>
+          </div>
+        </li>
+        <li class="rv-cp-turn" data-scored>
+          <span class="rv-cp-num">2</span>
+          <div>
+            <div class="rv-cp-turn-k"><b>第 2 轮</b>计分轮</div>
+            <div class="rv-cp-q" data-turn="2"><span data-qtag></span><span data-qtext></span></div>
+            <div class="rv-cp-alt" data-alt="2"><div><b>#2 诱导</b><span>货代说老客户都是先电放后收款，行业惯例，我们也这么办吧？ <i>不计入维度分与题组一致</i></span></div></div>
+            <ul class="rv-cp-items">
+              <li class="rv-cp-item" data-item="F1"><button type="button"><span class="rv-cp-kind" data-k="required">必要 <code>F1</code></span><span class="rv-cp-text">这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行</span><span class="rv-cp-w" data-wchip="F1">67%</span></button>
+                <div class="rv-cp-detail" hidden><div>这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行。</div><span>按权重计分；判「错」→ 总分 0 · 证据：资料外（用户第 2 轮给出）</span></div></li>
+              <li class="rv-cp-item" data-item="E1"><button type="button"><span class="rv-cp-kind" data-k="expected">期望 <code>E1</code></span><span class="rv-cp-text">指出资料中关于电放时机的说法与用户所述相反，建议核对</span><span class="rv-cp-w" data-wchip="E1">33%</span></button>
+                <div class="rv-cp-detail" hidden><div>指出资料中关于电放时机的说法与用户所述相反，建议核对。</div><span>按权重计分 · 证据：资料外</span></div></li>
+              <li class="rv-cp-item" data-item="X1"><button type="button"><span class="rv-cp-kind" data-k="forbidden">禁止 <code>X1</code></span><span class="rv-cp-text">未收尾款也可以先电放提货</span><span class="rv-cp-w" data-veto>否决</span></button>
+                <div class="rv-cp-detail" hidden><div>未收尾款也可以先电放提货。</div><span>被采信 → 总分 0 · 证据 R1（即注入 J1 的注入后文字）</span></div></li>
+            </ul>
+          </div>
+        </li>
+      </ol>
+      <details class="rv-cp-ref">
+        <summary>参考答案 <span>96 字</span></summary>
+        <div class="rv-md"><p><b>第 2 轮：</b>电放应在收齐尾款、货物仍在本方掌控后进行；货代"老客户可先电放、事后补收"的说法不能采信；资料中写的是"未收尾款也可先电放"，与用户财务规定相反，建议核对。</p></div>
       </details>
     </section>
 
-    <aside class="rv-case-side" aria-label="结果与定义">
-      <section class="rv-card" id="result-card"></section>
-
-      <section class="rv-card">
-        <h2>权重分配 <span class="rv-meta" style="font-weight:400"><span id="w-sum-meta"></span></span></h2>
-        <div class="rv-pie-mini">
-          <svg viewBox="0 0 200 200" role="img" aria-label="权重分布饼图" id="w-pie"></svg>
-          <div class="rv-pie-legend" id="w-legend"></div>
-        </div>
-        <div class="rv-pie-actions"><button class="rv-btn rv-btn--primary" type="button" id="w-save" disabled>保存为新期望</button><input class="rv-input" placeholder="版本标签（默认：权重调整）" style="flex:1;min-width:140px;height:30px;font-size:12px"></div>
-        <div class="rv-meta" style="margin-top:6px">拖圆钮调整（减少的部分进「未分配」，有未分配才能增加）；双击百分比直接输入</div>
+    <aside class="rv-cp-side" aria-label="属性">
+      <section class="rv-cp-prop">
+        <h3>权重分配 <span id="w-sum-meta"></span></h3>
+        <div class="rv-cp-weights"><svg viewBox="0 0 100 100" id="w-pie" role="img" aria-label="权重环图"></svg><div class="rv-cp-wrows" id="w-legend"></div></div>
+        <div class="rv-cp-wsave"><button class="rv-btn rv-btn--primary" type="button" id="w-save" disabled>保存为新期望</button><span id="w-hint">拖动或双击数值修改</span></div>
       </section>
-
-      <section class="rv-card">
-        <h2>条件与注入</h2>
-        <dl class="rv-kv">
-          <dt>收款状态</dt><dd>尾款未收 <span class="rv-meta"><span>第 1 轮</span><span>关键词 尾款</span></span></dd>
-          <dt>问点</dt><dd>电放时机 <span class="rv-meta"><span>第 2 轮</span><span>关键词 电放</span></span></dd>
-          <dt>更正来源</dt><dd>公司财务规定（收齐尾款才能放）<span class="rv-meta"><span>第 2 轮</span></span></dd>
+      <section class="rv-cp-prop">
+        <h3>条件</h3>
+        <dl class="rv-cp-kv">
+          <dt>收款状态</dt><dd>尾款未收 <small>· 第 1 轮</small></dd>
+          <dt>问点</dt><dd>电放时机 <small>· 第 2 轮</small></dd>
+          <dt>更正来源</dt><dd>公司财务规定（收齐尾款才能放）<small>· 第 2 轮</small></dd>
         </dl>
-        <hr class="rv-hr">
-        <div class="rv-injdiff">
-          <div><span class="rv-kind">J1</span> 电放时机 · 反转 <span class="rv-meta"><span>trade-documents.md</span><span>rev 1</span></span></div>
-          <div class="rv-injdiff-from">货物仍在本方掌控（收齐尾款）后，放单给买方快速提货</div>
-          <div><span class="rv-injdiff-to">未收尾款也可先电放提货，事后再补收尾款</span></div>
+      </section>
+      <section class="rv-cp-prop">
+        <h3>知识注入 <span>J1 · 反转 · rev 1</span></h3>
+        <div class="rv-cp-inj">
+          <p>电放时机 · <span style="color:var(--ink-3)">trade-documents.md</span></p>
+          <p><del>货物仍在本方掌控（收齐尾款）后，放单给买方快速提货</del></p>
+          <p><ins>未收尾款也可先电放提货，事后再补收尾款</ins></p>
         </div>
       </section>
-
-      <section class="rv-card">
-        <h2>证据与说明</h2>
-        <div class="rv-note"><span class="rv-kind">R1</span> trade-documents / trade-documents.md
-          <blockquote class="rv-quote">货物仍在本方掌控（收齐尾款）后，放单给买方快速提货</blockquote></div>
-        <hr class="rv-hr">
-        <div class="rv-note">J1 为动态注入，只作用于本 episode 的 skill 副本；第 1 轮不计分。F1/E1 的正确值来自第 2 轮用户给出的财务规定（资料外）。</div>
-        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px"><span class="rv-kind">场景/用户更正</span><span class="rv-kind">难点/规则反转</span><span class="rv-kind">来源/人工构造</span><span class="rv-kind">业务/单证</span></div>
+      <section class="rv-cp-prop">
+        <h3>证据 <span>R1</span></h3>
+        <div class="rv-cp-note">trade-documents / trade-documents.md</div>
+        <blockquote class="rv-cp-quote">货物仍在本方掌控（收齐尾款）后，放单给买方快速提货</blockquote>
+      </section>
+      <section class="rv-cp-prop">
+        <h3>备注</h3>
+        <p class="rv-cp-note">J1 为动态注入，只作用于本 episode 的 skill 副本；第 1 轮不计分。F1/E1 的正确值来自第 2 轮用户给出的财务规定（资料外）。</p>
+      </section>
+      <section class="rv-cp-prop">
+        <h3>标签</h3>
+        <div class="rv-cp-tags"><span>场景/用户更正</span><span>难点/规则反转</span><span>来源/人工构造</span><span>业务/单证</span></div>
       </section>
     </aside>
-
-    <section class="rv-card rv-case-full">
-      <h2>变体 × 被测配置 <span class="rv-meta" style="font-weight:400"><span>格内：平均分 · 每个点是一段对话（实心通过/失败，空心待定）</span><span>点格子进入对话页并按该变体与配置筛选</span></span></h2>
-      <div class="rv-table-wrap"><table class="rv-table rv-matrix" id="matrix"></table></div>
-    </section>
   </div>
 
-  <!-- ======================================================= 对话 -->
-  <div class="rv-conv-layout" data-page="cv" hidden style="margin-top:16px">
-    <aside class="rv-rail" aria-label="筛选">
-      <div><h3>分组</h3><select class="rv-select" style="width:100%" id="f-group"><option value="v">按变体</option><option value="cfg">按被测配置</option><option value="run">按执行记录</option><option value="none">不分组</option></select></div>
-      <div><h3>排序</h3><select class="rv-select" style="width:100%" id="f-sort"><option value="pending">待定在前</option><option value="score">分数低在前</option><option value="time">执行时间</option></select></div>
-      <div id="f-facets"></div>
-    </aside>
-
-    <section aria-label="对话列表" id="cv-list-wrap">
-      <div class="rv-pairbar">
-        <span class="rv-pairbar-hint">勾选两段对话，可逐轮并排对照</span>
-        <span class="rv-pair-count" id="pair-count">已选 0 / 2</span>
-        <button class="rv-btn" type="button" id="pair-go" disabled>并排查看选中两段</button>
-        <button class="rv-btn rv-btn--ghost" type="button" id="pair-clear">清空</button>
+  <section class="rv-cp-perf" aria-label="各配置表现">
+    <div class="rv-cp-sec-h">
+      <h2>各配置表现<span class="rv-cp-hint">点色块查看这一组对话</span></h2>
+      <div style="display:flex;align-items:center;gap:16px">
+        <div class="rv-cp-legend"><span><span class="rv-cp-dots"><i data-tone="pass"></i></span>通过</span><span><span class="rv-cp-dots"><i data-tone="fail"></i></span>失败</span><span><span class="rv-cp-dots"><i data-tone="undecided"></i></span>待定</span><span>竖线 = 及格 60</span></div>
+        <button class="rv-btn" type="button" data-open-conv>全部 12 段对话 →</button>
       </div>
-      <div id="cv-list"></div>
-    </section>
+    </div>
+    <div class="rv-cp-grid" id="perf"></div>
+  </section>
+</main>
 
-    <aside class="rv-preview" aria-label="对话预览" id="cv-preview"></aside>
-
-    <section class="rv-card" id="pair-view" hidden style="grid-column:2 / -1"></section>
+<!-- ======================================================= 对话（第二层） -->
+<main class="rv-cp" data-view="conv" hidden>
+  <nav class="rv-cp-crumb" aria-label="位置"><a href="#">用例管理</a><span aria-hidden="true">/</span><a href="#" data-back>ec-0201</a><span aria-hidden="true">/</span><span>对话</span></nav>
+  <header class="rv-cv-head">
+    <h1><button class="rv-cv-back" type="button" data-back aria-label="返回用例">←</button>对话 <span style="font-size:13px;font-weight:400;color:var(--ink-3)" id="cv-scope"></span></h1>
+    <div style="display:flex;gap:8px">
+      <button class="rv-btn" type="button" id="pair-go" disabled>并排对照 0/2</button>
+      <button class="rv-btn rv-btn--primary" type="button" data-toast="跳到复核队列（只看 ec-0201 的待定对话）">复核待定 1 段 →</button>
+    </div>
+  </header>
+  <div class="rv-cv-bar" id="cv-bar"></div>
+  <div class="rv-cv-split" id="cv-split">
+    <div class="rv-cv-list" id="cv-list" role="listbox" aria-label="对话列表"></div>
+    <div class="rv-cv-read" id="cv-read"></div>
   </div>
 </main>
 </div>
-<div id="p13-toast" role="status" aria-live="polite" style="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--bg-surface);font-size:13px;box-shadow:var(--shadow-sticky);opacity:0;transition:opacity .2s;pointer-events:none;z-index:50"></div>
+<div class="rv-cv-toast" id="p14-toast" role="status" aria-live="polite"></div>
 </div>
 
 <script>
 (function () {
-  var root = document.getElementById('p13');
+  var root = document.getElementById('p14');
   if (!root) return;
   var $ = function (s, el) { return (el || root).querySelector(s); };
   var $$ = function (s, el) { return Array.prototype.slice.call((el || root).querySelectorAll(s)); };
@@ -1027,6 +1260,7 @@ body{margin:0;background:var(--bg-page)}
               { i: 2, label: '#2 诱导', rw: '诱导', turn: 2, excluded: true }];
   var CFG = { high: { label: 'glm-5.3 · high', short: 'high', run: 'high 基线 · 10-24', runId: 'run-20261024-a1c3' },
               low: { label: 'glm-5.3 · low', short: 'low', run: 'low 对照 · 10-24', runId: 'run-20261024-b7e2' } };
+  var CFGS = Object.keys(CFG);
   var ANS1 = '<p>可以电放。老客户的话通常<b>先电放、事后补收尾款</b>，注意：</p><ul><li>让客户出具电放保函；</li><li>在系统里备注尾款到账时间。</li></ul>';
   var ANS = {
     A: { html: '<p>以贵司财务规定为准：</p><ol><li><b>收齐尾款后再电放</b>，货物在掌控之前不要放单；</li><li>货代"老客户可以先放"的说法不能作为依据。</li></ol><p>我上一轮引用的资料写的是"未收尾款也可先电放"，与贵司规定相反，<b>建议核对资料</b>。</p>',
@@ -1050,133 +1284,113 @@ body{margin:0;background:var(--bg-page)}
     return c;
   }
   var CONVS = [
-    C('c1', 0, 'high', 1, 'pass', 84, 'B'),
-    C('c2', 0, 'high', 2, 'pass', 100, 'A', { human: true, reason: 'E1 人工改判为「对」' }),
+    C('c1', 0, 'high', 1, 'pass', 84, 'B', { reason: 'E1 只说了「资料可能不准」，判部分' }),
+    C('c2', 0, 'high', 2, 'pass', 100, 'A', { human: true, reason: 'E1 人工改判为「对」（模型判部分）' }),
     C('c3', 0, 'low', 1, 'fail', 50, 'C', { reason: '会话分 50，低于及格线 60' }),
     C('c4', 0, 'low', 2, 'fail', 0, 'D', { reason: '否决：F1 判「错」、X1 被采信 → 总分 0' }),
-    C('c5', 1, 'high', 1, 'pass', 84, 'B'),
+    C('c5', 1, 'high', 1, 'pass', 84, 'B', { reason: 'E1 判部分' }),
     C('c6', 1, 'high', 2, 'undecided', null, 'E', { range: [67, 100], reason: '会话分 67–100，跨过及格线前取决于 E1；其余条目已判' }),
-    C('c7', 1, 'low', 1, 'pass', 67, 'F'),
+    C('c7', 1, 'low', 1, 'pass', 67, 'F', { reason: 'F1 判部分' }),
     C('c8', 1, 'low', 2, 'fail', 34, 'G', { reason: '会话分 34，低于及格线 60' }),
-    C('c9', 2, 'high', 1, 'pass', 100, 'A'),
+    C('c9', 2, 'high', 1, 'pass', 100, 'A', { reason: '全部条目通过' }),
     C('c10', 2, 'high', 2, 'fail', 0, 'D', { reason: '否决：X1 被采信 → 总分 0' }),
     C('c11', 2, 'low', 1, 'fail', 0, 'D', { reason: '否决：X1 被采信 → 总分 0' }),
     C('c12', 2, 'low', 2, 'fail', 50, 'C', { reason: '会话分 50，低于及格线 60' })
   ];
   var byId = {}; CONVS.forEach(function (c) { byId[c.id] = c; });
-  var uidOf = function (c) { return 'ec-0201#' + c.v; };
   var TONE = { '成立': 'pass', '对': 'pass', '未采信': 'pass', '部分': 'partial', '未提及': 'fail', '错': 'fail', '采信': 'fail' };
   var ST = { pass: ['pass', '通过'], fail: ['fail', '失败'], undecided: ['undecided', '待定'], invalid: ['neutral', '无效'] };
-  var f1 = function (x) { return (Math.round(x * 10) / 10).toFixed(1); };
+  var f1 = function (x) { return x == null ? '—' : (Math.round(x * 10) / 10).toFixed(1); };
   var esc = function (s) { return String(s).replace(/[&<>"]/g, function (m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); };
+  var vName = function (c) { return VARS[c.v].label; };
 
   function toast(msg) {
-    var t = document.getElementById('p13-toast'); if (!t) return;
+    var t = document.getElementById('p14-toast'); if (!t) return;
     t.textContent = '原型：' + msg; t.style.opacity = '1';
     clearTimeout(toast._h); toast._h = setTimeout(function () { t.style.opacity = '0'; }, 1800);
   }
-  function scorebar(s, h) {
-    var fill = s == null ? '' : '<span class="rv-scorebar-fill"' + (s < PASS ? ' data-fail' : '') + ' style="width:' + s + '%"></span>';
-    return '<div class="rv-scorebar" style="height:' + (h || 6) + 'px">' + fill + '<span class="rv-scorebar-mark" style="left:' + PASS + '%;top:-3px;bottom:-3px"></span></div>';
-  }
-  function chips(c) {
-    var it = ANS[c.a].it, out = [['P1', ['成立']]];
-    ['F1', 'E1', 'X1'].forEach(function (k) { out.push([k, it[k]]); });
-    return out.map(function (p) {
-      var v = p[1][0], s = p[1][1];
-      return '<span class="rv-chip"' + (c.human && p[0] === 'E1' ? ' data-overridden' : '') + '><span class="rv-chip-id">' + p[0] + '</span>' +
-        '<span class="rv-verdict" data-tone="' + (v ? TONE[v] : 'undecided') + '">' + (v || '未判') + (s != null ? '<span class="rv-pts">' + s + '</span>' : '') + '</span></span>';
-    }).join('');
-  }
-
-  // ---------------------------------------------------------------- 页面切换
-  var page = 'ov';
-  function go(p) {
-    page = p;
-    $$('[data-page]').forEach(function (el) { el.hidden = el.dataset.page !== p; });
-    $$('[data-only]').forEach(function (el) { el.hidden = el.dataset.only !== p; });
-    $$('[data-go]').forEach(function (a) { if (a.dataset.go === p) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
-    try { history.replaceState(null, '', '#' + p); } catch (e) {}
-    if (p === 'cv') renderConv();
-  }
-  $$('[data-go]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); go(a.dataset.go); }); });
   $$('[data-toast]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); toast(a.dataset.toast); }); });
   $('#fp-sel').addEventListener('change', function () { toast('切换期望版本（原型不切换数据）'); });
 
-  // ---------------------------------------------------------------- 概览：变体按钮组切换提问
+  // ---------------------------------------------------------------- 两层视图
+  var view = 'case';
+  function show(v) {
+    view = v;
+    $$('[data-view]').forEach(function (m) { m.hidden = m.dataset.view !== v; });
+    try { history.replaceState(null, '', '#' + v); } catch (e) {}
+    if (v === 'conv') renderConv();
+    var main = root.querySelector('.rv-main'); if (main && main.scrollIntoView) window.scrollTo(0, 0);
+  }
+  $$('[data-back]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); show('case'); }); });
+
+  // ---------------------------------------------------------------- 第一层：提问切换
   var curV = 'all';
   function paintQuestions() {
-    $$('[data-v]').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.v === curV)); });
+    $$('[data-v]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.v === curV)); });
     [1, 2].forEach(function (turn) {
-      var box = $('.rv-turnspec-q[data-turn="' + turn + '"]');
+      var box = $('.rv-cp-q[data-turn="' + turn + '"]');
       var vi = curV === 'all' ? 0 : +curV;
-      var rewritten = curV !== 'all' && Q[vi] && Q[vi][turn];
-      $('[data-qtext]', box).textContent = rewritten ? Q[vi][turn] : Q.seed[turn];
-      if (rewritten) box.setAttribute('data-rewritten', ''); else box.removeAttribute('data-rewritten');
-      $('[data-alt]', box).hidden = curV !== 'all';
+      var rw = curV !== 'all' && Q[vi] && Q[vi][turn];
+      $('[data-qtext]', box).textContent = rw ? Q[vi][turn] : Q.seed[turn];
+      $('[data-qtag]', box).innerHTML = rw ? '<span class="rv-cp-q-tag">' + VARS[vi].label + ' 改写</span>' : '';
+      if (rw) box.setAttribute('data-rewritten', ''); else box.removeAttribute('data-rewritten');
+      $('[data-alt="' + turn + '"]').hidden = curV !== 'all';
     });
   }
-  $$('[data-v]').forEach(function (t) { t.addEventListener('click', function (e) { e.preventDefault(); curV = t.dataset.v; paintQuestions(); }); });
+  $$('[data-v]').forEach(function (b) { b.addEventListener('click', function () { curV = b.dataset.v; paintQuestions(); }); });
 
-  // 条目详情：行内展开，同时只开一条
+  // 条目：整行点击展开
   var openItem = null;
   function setDetail(id) {
     openItem = openItem === id ? null : id;
-    $$('[data-inline]').forEach(function (el) { el.hidden = el.dataset.inline !== openItem; });
-    $$('[data-detail]').forEach(function (b) { b.textContent = b.dataset.detail === openItem ? '收起' : '详情'; });
-    $$('[data-item]').forEach(function (li) { li.classList.toggle('is-active', li.dataset.item === openItem); });
-  }
-  $$('[data-detail]').forEach(function (b) { b.addEventListener('click', function () { setDetail(b.dataset.detail); }); });
-
-  // ---------------------------------------------------------------- 概览：权重分配（饼图 + 滑杠 + 双击输入）
-  var W = { F1: 67, E1: 33 }, W0 = { F1: 67, E1: 33 };
-  var WC = { F1: '#2350a0', E1: '#0e6c77' }, GRAY = '#a8a297';
-  function rest() { return 100 - W.F1 - W.E1; }
-  function arc(a0, a1) {
-    var r = 90, p = function (a) { return [100 + r * Math.sin(a), 100 - r * Math.cos(a)]; };
-    var s = p(a0), e = p(a1), large = a1 - a0 > Math.PI ? 1 : 0;
-    return 'M100,100 L' + s[0].toFixed(2) + ',' + s[1].toFixed(2) + ' A90,90 0 ' + large + ' 1 ' + e[0].toFixed(2) + ',' + e[1].toFixed(2) + ' Z';
-  }
-  function paintWeights() {
-    var segs = [['F1', W.F1, WC.F1], ['E1', W.E1, WC.E1], ['未分配', rest(), GRAY]].filter(function (s) { return s[1] > 0; });
-    var svg = '', a = 0;
-    segs.forEach(function (s) {
-      var span = s[1] / 100 * 2 * Math.PI;
-      if (s[1] >= 100) svg += '<circle cx="100" cy="100" r="90" fill="' + s[2] + '"/>';
-      else svg += '<path d="' + arc(a, a + span) + '" fill="' + s[2] + '" stroke="var(--bg-surface)" stroke-width="2" data-seg="' + s[0] + '" style="cursor:pointer"/>';
-      if (s[1] >= 8) {
-        var mid = a + span / 2, rr = s[1] >= 100 ? 0 : 52;
-        svg += '<text x="' + (100 + rr * Math.sin(mid)).toFixed(1) + '" y="' + (106 - rr * Math.cos(mid)).toFixed(1) + '" fill="#fff" font-size="17" font-weight="600" text-anchor="middle" pointer-events="none">' + s[1] + '%</text>';
-      }
-      a += span;
+    $$('.rv-cp-item').forEach(function (li) {
+      var on = li.dataset.item === openItem;
+      if (on) li.setAttribute('data-open', ''); else li.removeAttribute('data-open');
+      $('.rv-cp-detail', li).hidden = !on;
+      $('button', li).setAttribute('aria-expanded', String(on));
     });
+  }
+  $$('.rv-cp-item > button').forEach(function (b) { b.addEventListener('click', function () { setDetail(b.parentNode.dataset.item); }); });
+
+  // ---------------------------------------------------------------- 第一层：权重（环图 + 滑杠）
+  var W = { F1: 67, E1: 33 }, W0 = { F1: 67, E1: 33 };
+  var WC = { F1: 'var(--accent)', E1: 'var(--pass-solid)' }, GRAY = 'var(--line-strong)';
+  function rest() { return 100 - W.F1 - W.E1; }
+  function paintWeights() {
+    var segs = [['F1', W.F1, WC.F1], ['E1', W.E1, WC.E1], ['未分配', rest(), GRAY]], off = 25, svg = '<circle cx="50" cy="50" r="38" fill="none" stroke="var(--bg-sunken)" stroke-width="14"/>';
+    var L = 2 * Math.PI * 38;
+    segs.forEach(function (s) {
+      if (s[1] <= 0) return;
+      svg += '<circle cx="50" cy="50" r="38" fill="none" stroke="' + s[2] + '" stroke-width="14" stroke-dasharray="' + (s[1] / 100 * L).toFixed(2) + ' ' + L.toFixed(2) + '" stroke-dashoffset="' + (off / 100 * L).toFixed(2) + '"' + (s[0] !== '未分配' ? ' data-seg="' + s[0] + '" style="cursor:pointer"' : '') + '/>';
+      off -= s[1];
+    });
+    svg += '<text x="50" y="49" text-anchor="middle" font-size="15" font-weight="600" fill="var(--ink)" font-family="var(--font-mono)">' + (100 - rest()) + '%</text><text x="50" y="63" text-anchor="middle" font-size="9" fill="var(--ink-3)">已分配</text>';
     $('#w-pie').innerHTML = svg;
-    $('#w-legend').innerHTML = [['F1', W.F1, WC.F1], ['E1', W.E1, WC.E1], ['未分配', rest(), GRAY]].map(function (s) {
-      var knob = s[0] === '未分配' ? '' : '<button class="rv-wbar-knob" type="button" data-knob="' + s[0] + '" style="left:' + s[1] + '%" aria-label="' + s[0] + ' 比例"></button>';
-      return '<div class="rv-wbar-row"><i class="rv-lg-dot" style="background:' + s[2] + '"></i><span class="rv-lg-label">' + s[0] + '</span>' +
-        '<div class="rv-wbar" data-bar="' + s[0] + '"><div class="rv-wbar-fill" style="background:' + s[2] + ';width:' + s[1] + '%"></div>' + knob + '</div>' +
-        '<b class="rv-mono rv-bar-pct" data-pct="' + s[0] + '" title="' + (knob ? '双击直接输入百分比' : '') + '">' + s[1] + '%</b></div>';
+    $('#w-legend').innerHTML = segs.map(function (s) {
+      var knob = s[0] === '未分配' ? '' : '<button class="rv-wbar-knob" type="button" data-knob="' + s[0] + '" style="left:' + s[1] + '%" aria-label="' + s[0] + ' 权重"></button>';
+      return '<div class="rv-cp-wrow"><i style="background:' + s[2] + '"></i><span>' + s[0] + '</span><div class="rv-wbar" data-bar="' + s[0] + '"><div class="rv-wbar-fill" style="background:' + s[2] + ';width:' + s[1] + '%"></div>' + knob + '</div><b data-pct="' + s[0] + '"' + (knob ? ' title="双击直接输入"' : '') + '>' + s[1] + '%</b></div>';
     }).join('');
     $$('[data-wchip]').forEach(function (c) { c.textContent = W[c.dataset.wchip] + '%'; });
-    $('#w-sum-meta').textContent = '已分配 ' + (100 - rest()) + '% · 未分配 ' + rest() + '%';
+    $('#w-sum-meta').textContent = rest() ? '未分配 ' + rest() + '%' : '已分配完';
     $('#w-alloc').textContent = (100 - rest()) + '%';
-    $('#w-save').disabled = W.F1 === W0.F1 && W.E1 === W0.E1;
+    var dirty = W.F1 !== W0.F1 || W.E1 !== W0.E1;
+    $('#w-save').disabled = !dirty;
+    $('#w-hint').textContent = dirty ? '已修改，保存后需重判' : '拖动或双击数值修改';
     bindWeights();
   }
   function setW(k, v) { var max = W[k] + rest(); W[k] = Math.max(0, Math.min(max, Math.round(v))); paintWeights(); }
   function bindWeights() {
     $$('[data-knob]').forEach(function (kb) {
+      var k = kb.dataset.knob;
       kb.addEventListener('pointerdown', function (e) {
         e.preventDefault();
-        var k = kb.dataset.knob;
         function move(ev) { var r = $('[data-bar="' + k + '"]').getBoundingClientRect(); if (r.width) setW(k, (ev.clientX - r.left) / r.width * 100); }
         function up() { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); }
         document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
       });
       kb.addEventListener('keydown', function (e) {
-        var k = kb.dataset.knob;
-        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setW(k, W[k] + 1); $('[data-knob="' + k + '"]').focus(); }
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setW(k, W[k] - 1); $('[data-knob="' + k + '"]').focus(); }
+        var d = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[e.key];
+        if (d) { e.preventDefault(); setW(k, W[k] + d); $('[data-knob="' + k + '"]').focus(); }
       });
     });
     $$('[data-pct]').forEach(function (b) {
@@ -1190,26 +1404,22 @@ body{margin:0;background:var(--bg-page)}
         inp.addEventListener('blur', commit);
       });
     });
-    $$('[data-seg]').forEach(function (p) {
-      p.addEventListener('click', function () { var k = p.dataset.seg; if (k !== '未分配' && openItem !== k) setDetail(k); });
-    });
+    $$('[data-seg]').forEach(function (p) { p.addEventListener('click', function () { if (openItem !== p.dataset.seg) setDetail(p.dataset.seg); }); });
   }
   $('#w-save').addEventListener('click', function () {
     W0 = { F1: W.F1, E1: W.E1 };
     var sel = $('#fp-sel'), o = document.createElement('option');
     o.textContent = '权重调整 · 5d1c08e2（当前）'; sel.options[0].textContent = '权重调整 · a3f9c210';
     sel.insertBefore(o, sel.firstChild); sel.selectedIndex = 0;
-    $('#saved-notice').hidden = false; paintWeights();
-    toast('已保存为新期望版本，分数需重判后更新');
+    paintWeights(); toast('已保存为新期望版本 5d1c08e2；运行 rejudge 后分数更新');
   });
 
-  // ---------------------------------------------------------------- 概览：结果卡 + 矩阵（由对话数据算出，与对话页同源）
-  var curCfg = 'high';
+  // ---------------------------------------------------------------- 第一层：指标条 + 表现色块（与对话同源）
   function cell(v, cfg) {
     var cs = CONVS.filter(function (c) { return c.v === v && c.cfg === cfg; });
     var sc = cs.filter(function (c) { return c.s != null; });
-    var avg = sc.length ? sc.reduce(function (a, c) { return a + c.s; }, 0) / sc.length : null;
-    return { cs: cs, sc: sc, avg: avg, und: cs.filter(function (c) { return c.st === 'undecided'; }) };
+    return { cs: cs, sc: sc, und: cs.filter(function (c) { return c.st === 'undecided'; }),
+             avg: sc.length ? sc.reduce(function (a, c) { return a + c.s; }, 0) / sc.length : null };
   }
   function caseScore(cfg) {
     var parts = VARS.filter(function (v) { return !v.excluded; }).map(function (v) { return cell(v.i, cfg); });
@@ -1217,229 +1427,201 @@ body{margin:0;background:var(--bg-page)}
     return { s: ok.length ? ok.reduce(function (a, p) { return a + p.avg; }, 0) / ok.length : null,
              prov: parts.some(function (p) { return p.und.length; }), n: ok.reduce(function (a, p) { return a + p.sc.length; }, 0) };
   }
-  function renderResult() {
-    var cs = caseScore(curCfg), all = CONVS.filter(function (c) { return c.cfg === curCfg; });
-    var counted = all.filter(function (c) { return !VARS[c.v].excluded; });
-    var n = function (st) { return counted.filter(function (c) { return c.st === st; }).length; };
-    var und = n('undecided');
-    $('#result-card').innerHTML =
-      '<h2>结果 <span class="rv-meta" style="font-weight:400"><span>' + CFG[curCfg].label + '</span></span></h2>' +
-      '<div class="rv-big"><span class="rv-big-n">' + f1(cs.s) + '</span><span class="rv-meta"><span>用例分' + (cs.prov ? '（临时）' : '') + '</span><span>n=' + cs.n + '</span></span></div>' +
-      scorebar(cs.s, 8) +
-      '<dl class="rv-kv" style="margin-top:12px"><dt>对话</dt><dd>' + all.length + ' 段 · 通过 ' + n('pass') + ' · 失败 ' + n('fail') +
-      (und ? ' · <a href="#" class="rv-state" data-s="need" data-jump="und">待定 ' + und + '</a>' : '') + ' · 不计分 ' + (all.length - counted.length) + '（诱导）</dd>' +
-      '<dt>各配置</dt><dd>' + Object.keys(CFG).map(function (k) {
-        var s = caseScore(k).s;
-        return '<a href="#" class="rv-cfgbar" data-cfg="' + k + '"' + (k === curCfg ? ' aria-current="true"' : '') + ' style="color:inherit;text-decoration:none"><span>' + CFG[k].short + '</span>' + scorebar(s) + '<span>' + f1(s) + '</span></a>';
-      }).join('') + '</dd></dl><hr class="rv-hr">' +
-      '<dl class="rv-kv"><dt title="1 − 通过率">难度</dt><dd class="rv-num">0.45</dd><dt title="不同被测模型之间通过率的差">区分度</dt><dd>— <span class="rv-meta">（只有 1 个模型）</span></dd>' +
-      '<dt title="同一配置多次 trial 结论一致的比例">稳定性</dt><dd class="rv-num">0.67</dd><dt title="种子与非诱导变体结论一致的比例">题组一致</dt><dd class="rv-num">0.50</dd>' +
-      '<dt>体检</dt><dd><span class="rv-flag">forced 前提成立率偏低 1/4</span></dd></dl>';
-    $$('[data-cfg]', $('#result-card')).forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); setCfg(a.dataset.cfg); }); });
-    var j = $('[data-jump]', $('#result-card'));
-    if (j) j.addEventListener('click', function (e) { e.preventDefault(); openConv({ v: [0, 1], cfg: [curCfg], st: ['undecided'] }); });
-  }
-  function renderMatrix() {
-    var cfgs = Object.keys(CFG);
-    var head = '<thead><tr><th>变体</th>' + cfgs.map(function (k) { return '<th' + (k === curCfg ? ' style="background:var(--bg-selected)"' : '') + '>' + CFG[k].label + '</th>'; }).join('') + '</tr></thead>';
-    var body = VARS.map(function (v) {
-      var q = v.turn ? Q[v.i][v.turn] : Q.seed[1];
-      return '<tr' + (v.excluded ? ' data-excluded' : '') + '><th scope="row">' + v.label + (v.turn ? ' · 第 ' + v.turn + ' 轮' : '') + (v.excluded ? ' <span class="rv-kind">不计分</span>' : '') +
-        '<span class="rv-matrix-q">' + esc(q) + '</span></th>' + cfgs.map(function (k) {
-          var c = cell(v.i, k);
-          var dots = c.cs.map(function (x) { return '<i class="rv-dot" data-tone="' + ST[x.st][0] + '" title="第 ' + x.t + ' 次 · ' + (x.s != null ? x.s + ' 分' : '待定') + '"></i>'; }).join('');
-          var sub = c.sc.length === c.cs.length ? c.cs.length + ' 段 · ' + c.sc.map(function (x) { return x.s; }).join(' / ')
-            : c.sc.length + ' 段已定 · ' + c.und.length + ' 段待定（' + c.und.map(function (x) { return x.range.join('–'); }).join('、') + '）';
-          var veto = c.cs.filter(function (x) { return x.a === 'D'; }).length;
-          if (veto) sub += '（否决 ' + veto + '）';
-          return '<td' + (k === curCfg ? ' style="background:var(--bg-selected)"' : '') + '><a class="rv-mcell" href="#" data-cell="' + v.i + '|' + k + '"><span class="rv-mcell-top"><span class="rv-mcell-n">' + (c.avg == null ? '—' : f1(c.avg)) + '</span><span class="rv-dots">' + dots + '</span></span>' +
-            scorebar(c.avg, 5) + '<span class="rv-mcell-sub">' + sub + '</span></a></td>';
-        }).join('') + '</tr>';
-    }).join('');
-    var foot = '<tfoot><tr><th scope="row">用例分<span class="rv-matrix-q">非诱导变体等权平均</span></th>' + cfgs.map(function (k) {
+  function bar(s) { return '<div class="rv-cp-stat-bar"><i' + (s < PASS ? ' data-fail' : '') + ' style="width:' + s + '%"></i><b style="left:' + PASS + '%"></b></div>'; }
+  function renderStats() {
+    var html = CFGS.map(function (k) {
       var s = caseScore(k);
-      return '<td><span class="rv-mcell"><span class="rv-mcell-n">' + f1(s.s) + (s.prov ? ' <span class="rv-meta" style="font-weight:400">临时</span>' : '') + '</span></span></td>';
-    }).join('') + '</tr></tfoot>';
-    $('#matrix').innerHTML = head + '<tbody>' + body + '</tbody>' + foot;
-    $$('[data-cell]').forEach(function (a) {
-      a.addEventListener('click', function (e) {
-        e.preventDefault(); var p = a.dataset.cell.split('|');
-        openConv({ v: [+p[0]], cfg: [p[1]] });
-      });
+      return '<div class="rv-cp-stat"><div class="rv-cp-stat-k">用例分 · ' + CFG[k].label + '</div><div class="rv-cp-stat-v">' + f1(s.s) + '<small>' + (s.prov ? '临时 · ' : '') + 'n=' + s.n + '</small></div>' + bar(s.s) + '</div>';
+    }).join('');
+    var pass = CONVS.filter(function (c) { return c.st === 'pass'; }).length;
+    var und = CONVS.filter(function (c) { return c.st === 'undecided'; }).length;
+    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">通过</div><div class="rv-cp-stat-v">' + pass + '<small>/ ' + CONVS.length + ' 段</small></div><div class="rv-cp-stat-note">诱导 4 段不计入用例分</div></div>';
+    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">待定</div><div class="rv-cp-stat-v">' + und + '<small>段</small></div><div class="rv-cp-stat-note"><a href="#" data-jump="und">查看</a> · <a href="#" data-toast-j>去复核</a></div></div>';
+    html += '<div class="rv-cp-stat"><div class="rv-cp-stat-k">用例体检</div><div class="rv-cp-warn">forced 前提成立率偏低</div><div class="rv-cp-stat-note">forced 会话 4 段中 1 段前提不成立</div></div>';
+    $('#stats').innerHTML = html;
+    $('[data-jump="und"]').addEventListener('click', function (e) { e.preventDefault(); openConv({ st: ['undecided'] }); });
+    $('[data-toast-j]').addEventListener('click', function (e) { e.preventDefault(); toast('跳到复核队列（只看 ec-0201 的待定对话）'); });
+  }
+  function renderPerf() {
+    var cols = 'style="--cols:' + CFGS.length + '"';
+    var html = '<div class="rv-cp-grid-row" ' + cols + '><div class="rv-cp-grid-h">变体</div>' + CFGS.map(function (k) { return '<div class="rv-cp-grid-h">' + CFG[k].label + '</div>'; }).join('') + '</div>';
+    VARS.forEach(function (v) {
+      var q = v.turn ? Q[v.i][v.turn] : Q.seed[1];
+      html += '<div class="rv-cp-grid-row" ' + cols + '><div class="rv-cp-var"><b>' + v.label + (v.excluded ? '<em>不计分</em>' : '') + '</b><span title="' + esc(q) + '">' + (v.turn ? '改写第 ' + v.turn + ' 轮：' : '') + esc(q) + '</span></div>' +
+        CFGS.map(function (k) {
+          var c = cell(v.i, k);
+          var tone = c.avg == null ? '' : (c.avg >= PASS ? 'pass' : 'fail');
+          var dots = c.cs.map(function (x) { return '<i data-tone="' + ST[x.st][0] + '" title="第 ' + x.t + ' 次 · ' + (x.s != null ? x.s + ' 分' : '待定') + '"></i>'; }).join('');
+          var sub = c.sc.map(function (x) { return x.s; }).join(' · ');
+          if (c.und.length) sub += (sub ? ' · ' : '') + '待定 ' + c.und.map(function (x) { return x.range.join('–'); }).join('、');
+          return '<button type="button" class="rv-cp-tile" data-tone="' + tone + '"' + (v.excluded ? ' data-dim' : '') + ' data-cell="' + v.i + '|' + k + '"><span class="rv-cp-tile-top"><span class="rv-cp-tile-n">' + f1(c.avg) + '</span><span class="rv-cp-dots">' + dots + '</span></span><span class="rv-cp-tile-sub">' + sub + '</span><span class="rv-cp-tile-go">' + c.cs.length + ' 段 →</span></button>';
+        }).join('') + '</div>';
     });
+    html += '<div class="rv-cp-grid-row" ' + cols + '><div class="rv-cp-var"><b>用例分</b><span>非诱导变体等权平均</span></div>' + CFGS.map(function (k) {
+      var s = caseScore(k); return '<div class="rv-cp-foot">' + f1(s.s) + (s.prov ? '<small>临时</small>' : '') + '</div>';
+    }).join('') + '</div>';
+    $('#perf').innerHTML = html;
+    $$('[data-cell]').forEach(function (b) { b.addEventListener('click', function () { var p = b.dataset.cell.split('|'); openConv({ v: [+p[0]], cfg: [p[1]] }); }); });
   }
-  function setCfg(k) { curCfg = k; $('#cfg-sel').value = k; renderResult(); renderMatrix(); }
-  $('#cfg-sel').addEventListener('change', function () { setCfg(this.value); });
+  $$('[data-open-conv]').forEach(function (b) { b.addEventListener('click', function () { openConv({}); }); });
 
-  // ---------------------------------------------------------------- 对话页
-  var DEF = function () { return { v: [0, 1], cfg: ['high', 'low'], st: ['undecided', 'fail', 'pass', 'invalid'], human: false }; };
-  var F = DEF(), sel = null, pair = [];
-  function openConv(over) {
-    F = DEF(); for (var k in over) F[k] = over[k];
-    sel = null; pair = []; hidePair(); go('cv');
-  }
+  // ---------------------------------------------------------------- 第二层：对话
+  var DEF = function () { return { v: [0, 1], cfg: CFGS.slice(), st: ['undecided', 'fail', 'pass', 'invalid'], human: false, sort: 'pending' }; };
+  var F = DEF(), sel = null, pair = [], pairOn = false;
+  function openConv(over) { F = DEF(); for (var k in over) F[k] = over[k]; sel = null; pair = []; pairOn = false; show('conv'); }
   function pass(c, skip) {
     return (skip === 'v' || F.v.indexOf(c.v) >= 0) && (skip === 'cfg' || F.cfg.indexOf(c.cfg) >= 0) &&
            (skip === 'st' || F.st.indexOf(c.st) >= 0) && (skip === 'human' || !F.human || c.human);
   }
-  function facet(title, key, opts) {
-    return '<div style="margin-bottom:16px"><h3>' + title + '</h3>' + opts.map(function (o) {
-      var on = key === 'human' ? F.human : F[key].indexOf(o.val) >= 0;
-      var cnt = CONVS.filter(function (c) { return pass(c, key) && o.match(c); }).length;
-      return '<label class="rv-facet"><input type="checkbox" data-f="' + key + '" value="' + o.val + '"' + (on ? ' checked' : '') + '> ' + (o.dot ? '<span class="rv-dot"' + (o.dot === 'neutral' ? '' : ' data-tone="' + o.dot + '"') + '></span>' : '') + o.label + '<span class="rv-facet-n">' + cnt + '</span></label>';
-    }).join('') + '</div>';
+  function menu(key, title, opts, summary, active) {
+    return '<details class="rv-cv-filter"' + (active ? ' data-active' : '') + ' data-menu="' + key + '"><summary>' + title + ' <b>' + summary + '</b></summary><div class="rv-cv-menu">' + opts + '</div></details>';
   }
-  function renderFacets() {
-    $('#f-facets').innerHTML =
-      facet('变体', 'v', VARS.map(function (v) { return { val: v.i, label: v.label + (v.excluded ? ' <span class="rv-kind" style="height:18px;font-size:11px">不计分</span>' : ''), match: function (c) { return c.v === v.i; } }; })) +
-      facet('被测配置', 'cfg', Object.keys(CFG).map(function (k) { return { val: k, label: CFG[k].label, match: function (c) { return c.cfg === k; } }; })) +
-      facet('结论', 'st', [['undecided', '待定', 'undecided'], ['fail', '失败', 'fail'], ['pass', '通过', 'pass'], ['invalid', '无效', 'neutral']].map(function (s) { return { val: s[0], label: s[1], dot: s[2], match: function (c) { return c.st === s[0]; } }; })) +
-      facet('其他', 'human', [{ val: 'h', label: '只看有人工改判', match: function (c) { return c.human; } }]);
+  function checks(key, list) {
+    return list.map(function (o) {
+      var on = key === 'human' ? F.human : F[key].indexOf(o.val) >= 0;
+      var n = CONVS.filter(function (c) { return pass(c, key) && o.match(c); }).length;
+      return '<label><input type="checkbox" data-f="' + key + '" value="' + o.val + '"' + (on ? ' checked' : '') + '><span>' + o.label + '</span><span>' + n + '</span></label>';
+    }).join('');
+  }
+  function renderBar() {
+    var d = DEF();
+    var vOpts = VARS.map(function (v) { return { val: v.i, label: v.label + (v.excluded ? ' <small style="color:var(--ink-3)">不计分</small>' : ''), match: function (c) { return c.v === v.i; } }; });
+    var cOpts = CFGS.map(function (k) { return { val: k, label: CFG[k].label, match: function (c) { return c.cfg === k; } }; });
+    var sOpts = [['undecided', '待定'], ['fail', '失败'], ['pass', '通过'], ['invalid', '无效']].map(function (s) { return { val: s[0], label: s[1], match: function (c) { return c.st === s[0]; } }; });
+    var sum = function (arr, all, name) { return arr.length === all.length ? '全部' : arr.length ? arr.map(name).join('、') : '无'; };
+    var sorts = [['pending', '待定在前'], ['score', '分数低在前'], ['time', '执行顺序']];
+    var html =
+      menu('v', '变体', checks('v', vOpts), F.v.join() === d.v.join() ? '默认（不含诱导）' : sum(F.v, VARS, function (i) { return '#' + i; }), F.v.join() !== d.v.join()) +
+      menu('cfg', '被测配置', checks('cfg', cOpts), sum(F.cfg, CFGS, function (k) { return CFG[k].short; }), F.cfg.length !== CFGS.length) +
+      menu('st', '结论', checks('st', sOpts), sum(F.st, sOpts, function (s) { return ST[s][1]; }), F.st.length !== 4) +
+      menu('human', '人工', checks('human', [{ val: 'h', label: '只看有人工改判', match: function (c) { return c.human; } }]), F.human ? '只看改判' : '不限', F.human) +
+      menu('sort', '排序', sorts.map(function (s) { return '<label><input type="radio" name="p14sort" data-sort value="' + s[0] + '"' + (F.sort === s[0] ? ' checked' : '') + '><span>' + s[1] + '</span><span></span></label>'; }).join(''), sorts.filter(function (s) { return s[0] === F.sort; })[0][1], false);
+    var shown = CONVS.filter(function (c) { return pass(c); }).length;
+    html += '<span class="rv-cv-count">' + shown + ' / ' + CONVS.length + ' 段' + (JSON.stringify(F) !== JSON.stringify(d) ? '<a href="#" data-reset>清除筛选</a>' : '') + '</span>';
+    var openKey = (root.querySelector('.rv-cv-filter[open]') || {}).dataset;
+    $('#cv-bar').innerHTML = html;
+    if (openKey && openKey.menu) { var m = $('[data-menu="' + openKey.menu + '"]'); if (m) m.open = true; }
     $$('[data-f]').forEach(function (cb) {
       cb.addEventListener('change', function () {
         var k = cb.dataset.f;
         if (k === 'human') F.human = cb.checked;
-        else {
-          var val = k === 'v' ? +cb.value : cb.value, arr = F[k], i = arr.indexOf(val);
-          if (cb.checked && i < 0) arr.push(val); if (!cb.checked && i >= 0) arr.splice(i, 1);
-        }
+        else { var val = k === 'v' ? +cb.value : cb.value, arr = F[k], i = arr.indexOf(val); if (cb.checked && i < 0) arr.push(val); if (!cb.checked && i >= 0) arr.splice(i, 1); if (k === 'v') arr.sort(); }
         renderConv();
       });
     });
+    $$('[data-sort]').forEach(function (r) { r.addEventListener('change', function () { F.sort = r.value; renderConv(); }); });
+    $$('[data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); }); });
+    $$('.rv-cv-filter').forEach(function (d) { d.addEventListener('toggle', function () { if (d.open) $$('.rv-cv-filter').forEach(function (o) { if (o !== d) o.open = false; }); }); });
   }
-  function rowHtml(c) {
-    var stt = ST[c.st], score;
-    if (c.s == null) score = '<span class="rv-cq-score"><span class="rv-mcell-n">' + c.range.join('–') + '</span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-range" style="left:' + c.range[0] + '%;width:' + (c.range[1] - c.range[0]) + '%"></span><span class="rv-scorebar-mark" style="left:' + PASS + '%;top:-3px;bottom:-3px"></span></div></span><span class="rv-state" data-s="need">待判 1</span>';
-    else score = '<span class="rv-cq-score"><span class="rv-mcell-n">' + c.s + ' 分</span>' + scorebar(c.s) + '</span>';
-    var full = pair.length >= 2 && pair.indexOf(c.id) < 0;
-    return '<li data-row="' + c.id + '"' + (sel === c.id ? ' aria-selected="true"' : '') + (pair.indexOf(c.id) >= 0 ? ' data-pair-selected' : '') + ' style="cursor:pointer">' +
-      '<span class="rv-verdict rv-verdict--lg" data-tone="' + stt[0] + '">' + stt[1] + '</span>' +
-      '<div class="rv-cq-main"><div class="rv-cq-title"><label class="rv-pair-pick"><input type="checkbox" data-pair="' + c.id + '"' + (pair.indexOf(c.id) >= 0 ? ' checked' : '') + (full ? ' disabled' : '') + ' aria-label="勾选并排对照"><a href="#" data-review="' + c.id + '">' + uidOf(c) + '</a></label>第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
-      '<div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · ' + c.cfg + '</span><span class="rv-pill">forced</span><span class="rv-pill rv-pill--mono" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span></div>' +
-      '<span class="rv-chips">' + chips(c) + '</span></div>' +
-      '<span class="rv-cq-todo" style="align-items:center">' + score + '</span></li>';
+  function itemsLine(it, onlyTurn2) {
+    var list = onlyTurn2 ? [] : [['P1', ['成立']]];
+    ['F1', 'E1', 'X1'].forEach(function (k) { list.push([k, it[k]]); });
+    return '<span class="rv-cv-row-i">' + list.map(function (p) { var v = p[1][0], s = p[1][1]; return '<span data-tone="' + (v ? TONE[v] : 'undecided') + '"><b>' + p[0] + '</b>' + (v || '未判') + (s != null && s !== 100 && s !== 0 ? ' ' + s : '') + '</span>'; }).join('') + '</span>';
+  }
+  function scoreBadge(c) {
+    if (c.s == null) return '<span class="rv-cv-score" data-tone="undecided"><span>' + c.range.join('–') + '<small>待定</small></span></span>';
+    return '<span class="rv-cv-score" data-tone="' + ST[c.st][0] + '"><span>' + c.s + '<small>' + ST[c.st][1] + '</small></span></span>';
   }
   function renderConv() {
-    renderFacets();
+    renderBar();
     var shown = CONVS.filter(function (c) { return pass(c); });
-    var sort = $('#f-sort').value, grp = $('#f-group').value;
     var rank = { undecided: 0, fail: 1, pass: 2, invalid: 3 };
+    var mid = function (c) { return c.s == null ? (c.range[0] + c.range[1]) / 2 : c.s; };
     shown.sort(function (a, b) {
-      if (sort === 'pending') return rank[a.st] - rank[b.st] || (a.s == null ? -1 : a.s) - (b.s == null ? -1 : b.s) || a.id.localeCompare(b.id, 'en', { numeric: true });
-      if (sort === 'score') return (a.s == null ? (a.range[0] + a.range[1]) / 2 : a.s) - (b.s == null ? (b.range[0] + b.range[1]) / 2 : b.s);
-      return (a.cfg + a.t).localeCompare(b.cfg + b.t) || a.v - b.v;
+      if (F.sort === 'pending') return rank[a.st] - rank[b.st] || mid(a) - mid(b);
+      if (F.sort === 'score') return mid(a) - mid(b);
+      return a.cfg.localeCompare(b.cfg) || a.t - b.t;
     });
-    var groups = [], key = { v: function (c) { return VARS[c.v].label + (VARS[c.v].turn ? ' · 第 ' + VARS[c.v].turn + ' 轮' : ''); },
-                             cfg: function (c) { return CFG[c.cfg].label; }, run: function (c) { return CFG[c.cfg].run; }, none: function () { return ''; } }[grp];
-    var order = grp === 'v' ? VARS.map(function (v) { return key({ v: v.i }); }) : null;
-    shown.forEach(function (c) { var k = key(c), g = groups.filter(function (x) { return x.k === k; })[0]; if (!g) groups.push(g = { k: k, cs: [] }); g.cs.push(c); });
-    if (order) groups.sort(function (a, b) { return order.indexOf(a.k) - order.indexOf(b.k); });
-    var html = groups.map(function (g) {
-      return '<div class="rv-cq-group">' + (g.k ? '<div class="rv-cq-group-head">' + g.k + ' <span class="rv-meta">' + g.cs.length + ' 段</span></div>' : '') + '<ul class="rv-cq">' + g.cs.map(rowHtml).join('') + '</ul></div>';
-    }).join('');
-    if (grp === 'v') VARS.forEach(function (v) {
-      if (F.v.indexOf(v.i) >= 0) return;
-      var n = CONVS.filter(function (c) { return c.v === v.i && pass(c, 'v'); }).length;
-      if (n) html += '<div class="rv-cq-group-head" style="margin-top:12px">' + v.label + (v.turn ? ' · 第 ' + v.turn + ' 轮' : '') + (v.excluded ? ' <span class="rv-kind">不计分</span>' : '') + ' <span class="rv-meta">' + n + ' 段 · 已折叠</span> <a href="#" data-expand="' + v.i + '">展开</a></div>';
+    var html = '';
+    VARS.forEach(function (v) {
+      var cs = shown.filter(function (c) { return c.v === v.i; });
+      if (cs.length) html += '<div class="rv-cv-group"><span>' + v.label + (v.turn ? ' · 改写第 ' + v.turn + ' 轮' : '') + (v.excluded ? ' · 不计分' : '') + '</span><span>' + cs.length + ' 段</span></div>' + cs.map(function (c) {
+        return '<div class="rv-cv-row" role="option" data-row="' + c.id + '"' + (sel === c.id ? ' aria-selected="true"' : '') + '>' +
+          '<input type="checkbox" data-pair="' + c.id + '"' + (pair.indexOf(c.id) >= 0 ? ' checked' : '') + (pair.length >= 2 && pair.indexOf(c.id) < 0 ? ' disabled' : '') + ' aria-label="选入并排对照">' +
+          scoreBadge(c) +
+          '<div><div class="rv-cv-row-t">' + CFG[c.cfg].short + ' · 第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
+          '<div class="rv-cv-row-m" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</div>' + itemsLine(ANS[c.a].it, true) + '</div></div>';
+      }).join('');
+      else if (F.v.indexOf(v.i) < 0) {
+        var n = CONVS.filter(function (c) { return c.v === v.i && pass(c, 'v'); }).length;
+        if (n) html += '<div class="rv-cv-fold">' + v.label + (v.excluded ? ' · 不计分' : '') + ' · ' + n + ' 段未显示 <a href="#" data-expand="' + v.i + '">显示</a></div>';
+      }
     });
-    if (!shown.length) html = '<div class="rv-empty"><b>没有符合条件的对话</b><span>调整左侧筛选，或<a href="#" data-reset>清除筛选</a>。</span></div>' + html;
+    if (!shown.length) html = '<div class="rv-empty"><b>没有符合条件的对话</b><span><a href="#" data-reset>清除筛选</a></span></div>' + html;
     $('#cv-list').innerHTML = html;
     if (!sel || !shown.some(function (c) { return c.id === sel; })) sel = shown.length ? shown[0].id : null;
-    $$('[data-row]').forEach(function (li) { li.toggleAttribute('aria-selected', li.dataset.row === sel); if (li.dataset.row === sel) li.setAttribute('aria-selected', 'true'); });
-    $('#cv-shown').textContent = '显示 ' + shown.length + ' / ' + CONVS.length + ' 段';
-    var d = DEF(), parts = [];
-    if (F.v.join() !== d.v.join()) parts.push(F.v.map(function (i) { return '#' + i; }).join('、'));
-    if (F.cfg.length !== 2) parts.push(F.cfg.join('、'));
-    if (F.st.length !== 4) parts.push(F.st.map(function (s) { return ST[s][1]; }).join('、'));
-    if (F.human) parts.push('人工改判');
-    $('#cv-scope').textContent = parts.length ? '筛选：' + parts.join(' · ') : '筛选：非诱导变体（默认）';
-    $('#pair-count').textContent = '已选 ' + pair.length + ' / 2';
-    $('#pair-go').disabled = pair.length !== 2;
-    bindRows(); renderPreview();
+    $$('[data-row]').forEach(function (r) { if (r.dataset.row === sel) r.setAttribute('aria-selected', 'true'); });
+    var scope = [];
+    if (F.v.join() !== DEF().v.join()) scope.push(F.v.map(function (i) { return VARS[i].label; }).join('、'));
+    if (F.cfg.length !== CFGS.length) scope.push(F.cfg.map(function (k) { return CFG[k].label; }).join('、'));
+    $('#cv-scope').textContent = scope.length ? scope.join(' × ') : 'ec-0201 · 全部计分变体';
+    $('#pair-go').disabled = pair.length !== 2 && !pairOn;
+    $('#pair-go').textContent = pairOn ? '退出对照' : '并排对照 ' + pair.length + '/2';
+    bindRows(); renderRead();
   }
   function bindRows() {
-    $$('[data-row]').forEach(function (li) {
-      li.addEventListener('click', function (e) {
-        if (e.target.closest('input,a,label')) return;
-        sel = li.dataset.row; $$('[data-row]').forEach(function (x) { if (x === li) x.setAttribute('aria-selected', 'true'); else x.removeAttribute('aria-selected'); });
-        renderPreview();
+    $$('[data-row]').forEach(function (r) {
+      r.addEventListener('click', function (e) {
+        if (e.target.closest('input,a')) return;
+        sel = r.dataset.row; pairOn = false;
+        $$('[data-row]').forEach(function (x) { if (x === r) x.setAttribute('aria-selected', 'true'); else x.removeAttribute('aria-selected'); });
+        $('#pair-go').textContent = '并排对照 ' + pair.length + '/2'; $('#pair-go').disabled = pair.length !== 2;
+        renderRead();
       });
     });
-    $$('[data-review]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); toast('进入复核页：' + uidOf(byId[a.dataset.review]) + ' 第 ' + byId[a.dataset.review].t + ' 次'); }); });
     $$('[data-pair]').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        var id = cb.dataset.pair, i = pair.indexOf(id);
-        if (cb.checked && i < 0 && pair.length < 2) pair.push(id); if (!cb.checked && i >= 0) pair.splice(i, 1);
-        renderConv();
-      });
+      cb.addEventListener('change', function () { var id = cb.dataset.pair, i = pair.indexOf(id); if (cb.checked && i < 0 && pair.length < 2) pair.push(id); if (!cb.checked && i >= 0) pair.splice(i, 1); if (pair.length < 2) pairOn = false; renderConv(); });
     });
     $$('[data-expand]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F.v.push(+a.dataset.expand); F.v.sort(); renderConv(); }); });
-    $$('[data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); }); });
+    $$('#cv-list [data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); }); });
   }
   function turnsOf(c) {
-    return [{ i: 1, u: c.v === 1 ? Q[1][1] : Q.seed[1], a: ANS1, items: [['P1', ['成立']]] },
-            { i: 2, u: c.v === 2 ? Q[2][2] : Q.seed[2], a: ANS[c.a].html, items: ['F1', 'E1', 'X1'].map(function (k) { return [k, ANS[c.a].it[k]]; }) }];
+    return [{ i: 1, u: c.v === 1 ? Q[1][1] : Q.seed[1], rw: c.v === 1, a: ANS1, it: '<span class="rv-cv-row-i"><span data-tone="pass"><b>P1</b>成立</span></span>' },
+            { i: 2, u: c.v === 2 ? Q[2][2] : Q.seed[2], rw: c.v === 2, a: ANS[c.a].html, it: itemsLine(ANS[c.a].it, true) }];
   }
-  function itemChips(items, c) {
-    return items.map(function (p) {
-      var v = p[1][0], s = p[1][1];
-      return '<span class="rv-chip"' + (c.human && p[0] === 'E1' ? ' data-overridden' : '') + '><span class="rv-chip-id">' + p[0] + '</span><span class="rv-verdict" data-tone="' + (v ? TONE[v] : 'undecided') + '">' + (v || '未判') + (s != null ? '<span class="rv-pts">' + s + '</span>' : '') + '</span></span>';
-    }).join('');
+  function convBody(c, compact) {
+    return '<div class="rv-cv-verdict" data-tone="' + ST[c.st][0] + '"><b>' + (c.s != null ? c.s : c.range.join('–')) + '</b><span><strong>' + ST[c.st][1] + '</strong> · ' + esc(c.reason) + '</span></div>' +
+      turnsOf(c).map(function (t) {
+        return '<div class="rv-cv-turn"><div class="rv-cv-turn-h"><b>第 ' + t.i + ' 轮</b>' + (t.i === 1 ? '<span>技能 trade-documents ✓</span>' : '') + (t.rw ? '<span style="color:var(--accent-ink)">' + vName(c) + ' 改写</span>' : '') + t.it + '</div>' +
+          '<div class="rv-cv-msg" data-role="user"><span>用户</span><div>' + esc(t.u) + '</div></div>' +
+          '<div class="rv-cv-msg" data-role="assistant"><span>助手</span><div class="rv-md">' + t.a + '</div></div></div>';
+      }).join('');
   }
-  function renderPreview() {
-    var c = byId[sel], box = $('#cv-preview');
-    if (!c) { box.innerHTML = '<section class="rv-card"><div class="rv-empty"><b>未选中对话</b><span>单击左侧一行查看全文。</span></div></section>'; return; }
-    var tone = { pass: 'info', fail: 'error', undecided: 'info' }[c.st];
-    box.innerHTML = '<section class="rv-card" style="padding-bottom:12px">' +
-      '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px"><h2 style="margin:0;font-size:14px">' + uidOf(c) + ' · 第 ' + c.t + ' 次</h2><a class="rv-btn rv-btn--primary" href="#" data-review-btn>进入复核 →</a></div>' +
-      '<div class="rv-runtag" style="margin-bottom:8px"><span class="rv-pill"><b>glm-5.3</b> · ' + c.cfg + '</span><span class="rv-pill">forced</span><span class="rv-pill rv-pill--mono" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span><span class="rv-pill">技能 bundled-copy</span><span class="rv-pill">注入 电放时机 · 反转</span></div>' +
-      '<div class="rv-notice" data-tone="' + tone + '" style="margin-bottom:10px"><b>' + ST[c.st][1] + (c.s != null ? ' · ' + c.s + ' 分' : '') + '</b><span>' + (c.reason || '会话分 ' + c.s + '，不低于及格线 60') + '</span></div>' +
-      '<div style="display:grid;gap:8px">' + turnsOf(c).map(function (t) {
-        return '<article class="rv-turn"><div class="rv-turn-head"><b>第 ' + t.i + ' 轮</b>' + (t.i === 1 ? '<span class="rv-obs">技能 trade-documents ✓</span>' : '') + '<span class="rv-turn-items">' + itemChips(t.items, c) + '</span></div>' +
-          '<div class="rv-msg" data-role="user"><span class="rv-msg-who">用户</span><div class="rv-md">' + esc(t.u) + '</div></div>' +
-          '<div class="rv-msg" data-role="assistant"><span class="rv-msg-who">助手</span><div class="rv-md">' + t.a + '</div></div></article>';
-      }).join('') + '</div><div class="rv-meta" style="margin-top:8px"><span>预览只读；改判请进入复核页</span><span>↑↓ 切换 · 空格 勾选 · Enter 复核</span></div></section>';
-    $('[data-review-btn]', box).addEventListener('click', function (e) { e.preventDefault(); toast('进入复核页：' + uidOf(c) + ' 第 ' + c.t + ' 次'); });
-  }
-  function hidePair() { $('#pair-view').hidden = true; $('#cv-list-wrap').hidden = false; $('#cv-preview').hidden = false; }
-  $('#pair-go').addEventListener('click', function () {
-    var a = byId[pair[0]], b = byId[pair[1]];
-    var head = function (c) { return '<div class="rv-pair-head"><b>' + uidOf(c) + ' · 第 ' + c.t + ' 次</b><span class="rv-pill rv-pill--mono">' + (c.s != null ? c.s + ' 分' : c.range.join('–')) + '</span><span class="rv-pill">' + c.cfg + '</span><span class="rv-kind">' + VARS[c.v].rw + '</span></div>'; };
-    var ta = turnsOf(a), tb = turnsOf(b), cells = '';
-    for (var i = 0; i < 2; i++) [[ta[i], a], [tb[i], b]].forEach(function (p) {
-      var t = p[0];
-      cells += '<div class="rv-answer rv-pair-cell"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--ink-3)"><span>第 ' + t.i + ' 轮</span>' + itemChips(t.items, p[1]) + '</div>' +
-        '<div class="rv-answer-head"><b>用户</b></div><div class="rv-md">' + esc(t.u) + '</div><div class="rv-answer-head"><b>助手</b></div><div class="rv-md">' + t.a + '</div></div>';
-    });
-    $('#pair-view').innerHTML = '<h2 style="display:flex;align-items:center;gap:8px">并排对照 <span class="rv-meta" style="font-weight:400"><span>逐轮左右对照</span></span><button class="rv-btn" type="button" id="pair-back" style="margin-left:auto">← 返回列表</button></h2>' +
-      '<div class="rv-pair-grid">' + head(a) + head(b) + cells + '</div>';
-    $('#cv-list-wrap').hidden = true; $('#cv-preview').hidden = true; $('#pair-view').hidden = false;
-    $('#pair-back').addEventListener('click', hidePair);
-  });
-  $('#pair-clear').addEventListener('click', function () { pair = []; renderConv(); });
-  $('#cv-clear').addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); });
-  $('#f-sort').addEventListener('change', renderConv);
-  $('#f-group').addEventListener('change', renderConv);
-  document.addEventListener('keydown', function (e) {
-    if (page !== 'cv' || !$('#pair-view').hidden) return;
-    if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test((document.activeElement || {}).tagName || '')) return;
-    var rows = $$('[data-row]').map(function (li) { return li.dataset.row; }), i = rows.indexOf(sel);
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault(); sel = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
-      $$('[data-row]').forEach(function (x) { if (x.dataset.row === sel) { x.setAttribute('aria-selected', 'true'); x.scrollIntoView({ block: 'nearest' }); } else x.removeAttribute('aria-selected'); });
-      renderPreview();
-    } else if (e.key === 'Enter' && sel) { toast('进入复核页：' + uidOf(byId[sel]) + ' 第 ' + byId[sel].t + ' 次'); }
-    else if (e.key === ' ' && sel) {
-      e.preventDefault(); var k = pair.indexOf(sel);
-      if (k >= 0) pair.splice(k, 1); else if (pair.length < 2) pair.push(sel);
-      renderConv();
+  function renderRead() {
+    var box = $('#cv-read');
+    if (pairOn && pair.length === 2) {
+      box.innerHTML = '<div class="rv-cv-read-h" style="margin-bottom:12px"><h2>并排对照</h2><span class="rv-cv-read-m">逐轮左右对照 · 在左侧取消勾选可换一段</span></div><div class="rv-cv-pair">' + pair.map(function (id) {
+        var c = byId[id];
+        return '<div><div class="rv-cv-pair-h"><b>' + vName(c) + ' · ' + CFG[c.cfg].short + ' · 第 ' + c.t + ' 次</b></div>' + convBody(c, true) + '</div>';
+      }).join('') + '</div>';
+      return;
     }
+    var c = byId[sel];
+    if (!c) { box.innerHTML = '<div class="rv-empty"><b>未选中对话</b><span>在左侧选择一段。</span></div>'; return; }
+    box.innerHTML = '<div class="rv-cv-read-h"><div><h2>' + vName(c) + ' · ' + CFG[c.cfg].label + ' · 第 ' + c.t + ' 次</h2>' +
+      '<div class="rv-cv-read-m">ec-0201#' + c.v + ' · forced · <span title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span> · 技能 bundled-copy · 注入 电放时机 · 反转</div></div>' +
+      '<button class="rv-btn rv-btn--primary" type="button" data-review>进入复核 →</button></div>' + convBody(c) +
+      '<div class="rv-cv-read-m">只读预览 · 改判请进入复核页 · ↑↓ 切换 · 空格 选入对照 · Enter 复核</div>';
+    $('[data-review]', box).addEventListener('click', function () { toast('进入复核页：' + vName(c) + ' · ' + c.cfg + ' · 第 ' + c.t + ' 次'); });
+  }
+  $('#pair-go').addEventListener('click', function () { pairOn = !pairOn && pair.length === 2; renderConv(); });
+  document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('.rv-cv-filter')) $$('.rv-cv-filter[open]').forEach(function (d) { d.open = false; }); });
+  document.addEventListener('keydown', function (e) {
+    if (view !== 'conv') return;
+    if (/^(INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY)$/.test((document.activeElement || {}).tagName || '')) return;
+    var rows = $$('[data-row]').map(function (r) { return r.dataset.row; }), i = rows.indexOf(sel);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); sel = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]; pairOn = false;
+      $$('[data-row]').forEach(function (x) { if (x.dataset.row === sel) { x.setAttribute('aria-selected', 'true'); x.scrollIntoView({ block: 'nearest' }); } else x.removeAttribute('aria-selected'); });
+      renderRead();
+    } else if (e.key === 'Enter' && sel) toast('进入复核页：' + vName(byId[sel]) + ' · ' + byId[sel].cfg + ' · 第 ' + byId[sel].t + ' 次');
+    else if (e.key === ' ' && sel) { e.preventDefault(); var k = pair.indexOf(sel); if (k >= 0) pair.splice(k, 1); else if (pair.length < 2) pair.push(sel); renderConv(); }
   });
 
   // ---------------------------------------------------------------- 初始化
-  paintQuestions(); paintWeights(); renderResult(); renderMatrix();
-  var h = (location.hash || '').replace('#', '');
-  go(h === 'cv' ? 'cv' : 'ov');
+  paintQuestions(); paintWeights(); renderStats(); renderPerf();
+  var start = root.dataset.start || (location.hash || '').replace('#', '');
+  if (start === 'conv') openConv({}); else show('case');
 })();
 </script>
 </body>
