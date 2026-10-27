@@ -212,6 +212,29 @@
       var span = s.pct * 3.6;
       s._start = a;
       if (s.pct > 0) {
+        // 整圆（如唯一条目 0% → 未分配 100%）：起点=终点的弧会被 SVG 丢弃，必须画圆
+        if (span >= 359.99) {
+          var c = document.createElementNS(NS, 'circle');
+          c.setAttribute('cx', CX); c.setAttribute('cy', CY); c.setAttribute('r', R);
+          c.setAttribute('fill', s.color);
+          c.setAttribute('opacity', s === rest ? '0.5' : '0.92');
+          c.setAttribute('stroke', 'var(--bg-surface, #fff)');
+          c.setAttribute('stroke-width', '1');
+          c.dataset.slice = s.id;
+          c.style.cursor = 'pointer';
+          pieSvg.appendChild(c);
+          var tc = document.createElementNS(NS, 'text');
+          tc.setAttribute('x', CX); tc.setAttribute('y', CY + 4);
+          tc.setAttribute('text-anchor', 'middle');
+          tc.setAttribute('font-size', '12');
+          tc.setAttribute('font-weight', '600');
+          tc.setAttribute('fill', s === rest ? 'var(--ink, #fff)' : '#fff');
+          tc.style.pointerEvents = 'none';
+          tc.textContent = s.pct + '%';
+          pieSvg.appendChild(tc);
+          a += span;
+          return;
+        }
         var path = document.createElementNS(NS, 'path');
         path.setAttribute('d', arcPath(a, a + span));
         path.setAttribute('fill', s.color);
@@ -345,9 +368,9 @@
     });
   }
 
-  // 点扇区 = 下钻详情
+  // 点扇区 = 下钻详情（扇区可能是 path 或整圆 circle）
   pieSvg.addEventListener('click', function (e) {
-    var p = e.target.closest('path');
+    var p = e.target.closest('[data-slice]');
     if (!p || !p.dataset.slice || p.dataset.slice === '@rest') return;
     showDetail(p.dataset.slice);
   });
