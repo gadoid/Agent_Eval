@@ -1,24 +1,14 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m with context %}
-{% block title %}用例 · Agent_Eval 复核{% endblock %}
+{% block title %}用例管理 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page" data-page="cases">
-  <div class="rv-page-head"><h1>用例</h1>
+  <div class="rv-page-head"><h1>用例管理</h1>
+    <a class="rv-btn rv-btn--primary" href="/case/new" style="height:32px">＋ 新建用例</a>
     <span class="rv-meta"><span>{{ table|length }} 个用例</span>
-      {% if configs %}{% set sel_cfg = (configs | selectattr('key', 'equalto', config_key) | list | first) if config_key else configs[0] %}
-      {% if sel_cfg %}<span>配置 {{ sel_cfg.label }}</span>{% endif %}{% endif %}
+      <span>统计跨全部被测配置；按配置的分数在 <a href="/configs">配置管理</a></span>
       <span>评测库 {{ db_path }}</span></span>
   </div>
-
-  {% if configs %}
-  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
-    <b>被测配置</b>
-    <select class="rv-select" onchange="var u=new URL(location);u.searchParams.set('config',this.value);location=u">
-      {% for c in configs %}<option value="{{ c.key }}" {% if c.key == config_key %}selected{% endif %}>{{ c.label }}（{{ c.n }} 段对话）</option>{% endfor %}
-    </select>
-    <span>分数按配置分别计算；页面其余统计（难度/区分度）跨全部 run。</span>
-  </div>
-  {% endif %}
 
   {% if composite and composite.score is not none %}
   <div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;margin-bottom:16px">
@@ -78,7 +68,7 @@
     </tbody>
   </table>
   </div>
-  {{ m.pager(page, pages, '/?dim=' + (f_dim or '') + '&topic=' + (f_topic or '') + '&sort=' + sort + '&flag_only=' + (flag_only or '') + '&config=' + (config_key or '') + '&') }}
+  {{ m.pager(page, pages, '/?dim=' + (f_dim or '') + '&topic=' + (f_topic or '') + '&sort=' + sort + '&flag_only=' + (flag_only or '') + '&') }}
 </main>
 <script>
 function f(k, v) { var u = new URL(location); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); u.searchParams.delete('page'); location = u; }

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}新建用例 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page" data-page="case-new">
+  <div class="rv-page-head"><h1>新建用例</h1>
+    <span class="rv-meta"><span>结构化填写 → 校验 → 保存为 markdown（唯一数据源）</span>
+      <a href="/">← 返回用例管理</a></span></div>
+
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>落盘产物</b>
+    <span>保存到 evalset/cases/<目标目录>/<id>.md，status 为 structured；之后 check 校验、
+      build 编译进新评测集版本、再由 runner 执行并导入，才会在用例管理页出现。</span>
+  </div>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>基本信息</b><span class="rv-meta">id 前缀必须与维度对应</span></div>
+    <div class="rv-cn-grid">
+      <div class="rv-field"><label>用例 id</label>
+        <input class="rv-input" id="cn-id" maxlength="10" placeholder="如 kr-0211（按维度自动建议）"></div>
+      <div class="rv-field"><label>维度</label>
+        <select class="rv-select" id="cn-dim">
+          {% for d, p in dims.items() %}<option value="{{ d }}">{{ d }}（{{ p }}-xxxx）</option>{% endfor %}
+        </select></div>
+      <div class="rv-field"><label>主题</label>
+        <input class="rv-input" id="cn-topic" maxlength="30" placeholder="如 进单资料审核"></div>
+      <div class="rv-field"><label>粒度</label>
+        <select class="rv-select" id="cn-granularity">
+          <option value="">（不填）</option><option>环节</option><option>细节</option>
+        </select></div>
+      <div class="rv-field"><label>来源</label>
+        <input class="rv-input" id="cn-source" maxlength="60" placeholder="如 进单资料审核规范 ①"></div>
+      <div class="rv-field"><label>负责人</label>
+        <input class="rv-input" id="cn-owner" maxlength="20"></div>
+      <div class="rv-field"><label>历史方式</label>
+        <select class="rv-select" id="cn-history">
+          <option value="live">live（对话真实发生）</option>
+          <option value="prefill">prefill（前几轮预填助手回复）</option>
+        </select></div>
+    </div>
+    <div class="rv-cn-tags">
+      <span class="rv-cn-tag-k">标签</span>
+      {% for ns, vals in tag_vocab.items() %}
+      <span class="rv-cn-tag-group"><span class="rv-meta">{{ ns }}</span>
+        {% for v in vals %}<label class="rv-cn-tag"><input type="checkbox" name="cn-tag" value="{{ ns }}/{{ v }}">{{ v }}</label>{% endfor %}
+      </span>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>问题 / 对话</b><span class="rv-meta" id="cn-dim-hint">单轮填一条；多轮上下文召回至少 2 轮，最多 5 轮</span>
+      <button class="rv-btn" type="button" id="cn-add-turn">＋ 加一轮</button></div>
+    <div class="rv-cn-rows" id="cn-turns"></div>
+    <div class="rv-meta">「助手参考回复」仅 prefill 必填（前面各轮都要有）；live 也可留参考。</div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>关键条件</b><span class="rv-meta">判定答案是否切题的槽位限定（必填）</span>
+      <button class="rv-btn" type="button" id="cn-add-cond">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-conds"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px" id="cn-inj-card" hidden>
+    <div class="rv-cn-head"><b>注入</b><span class="rv-meta">错误知识纠正专用：选注入点与选项（必填）</span>
+      <button class="rv-btn" type="button" id="cn-add-inj">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-injs"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>前提</b><span class="rv-meta">不成立则会话无效；可引用注入（如 J1）</span>
+      <button class="rv-btn" type="button" id="cn-add-pre">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-pres"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>必要事实</b><span class="rv-meta">必须命中才得分；判「错」总分归零（必填 ≥ 1）</span>
+      <button class="rv-btn" type="button" id="cn-add-fact-req">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-facts-req"></div>
+    <div class="rv-cn-head" style="margin-top:10px"><b>期望事实</b><span class="rv-meta">按权重计分</span>
+      <button class="rv-btn" type="button" id="cn-add-fact-exp">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-facts-exp"></div>
+    <div class="rv-cn-head" style="margin-top:10px"><b>禁止事实</b><span class="rv-meta">被采信总分归零；不写关键词</span>
+      <button class="rv-btn" type="button" id="cn-add-fact-x">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-facts-x"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>路径</b><span class="rv-meta">必须 / 禁止加载某 skill</span>
+      <button class="rv-btn" type="button" id="cn-add-path">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-paths"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>证据</b><span class="rv-meta">R1、R2… 供事实【证据】引用；注入点或 skill 原文</span>
+      <button class="rv-btn" type="button" id="cn-add-ev">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-evs"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>变体</b><span class="rv-meta">替换某一轮用户消息；轮次留空 = 最后一轮</span>
+      <button class="rv-btn" type="button" id="cn-add-var">＋ 加一条</button></div>
+    <div class="rv-cn-rows" id="cn-vars"></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>参考答案 / 备注</b><span class="rv-meta">进入 reviewed 前必须有参考答案</span></div>
+    <div class="rv-field" style="margin-bottom:8px"><label>参考答案</label>
+      <textarea class="rv-input rv-cn-area" id="cn-refanswer" rows="3"></textarea></div>
+    <div class="rv-field"><label>备注</label>
+      <textarea class="rv-input rv-cn-area" id="cn-note" rows="2"></textarea></div>
+  </section>
+
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>保存</b><span class="rv-meta">校验通过才会写入文件</span></div>
+    <div class="rv-cn-saverow">
+      <div class="rv-field"><label>目标目录（evalset/cases/ 下）</label>
+        <select class="rv-select" id="cn-dir">
+          {% for d in dirs %}<option value="{{ d }}" {% if d == default_dir %}selected{% endif %}>{{ d }}</option>{% endfor %}
+          <option value="__new__">＋ 新建目录…</option>
+        </select></div>
+      <div class="rv-field" id="cn-dir-new-row" hidden><label>新目录名</label>
+        <input class="rv-input" id="cn-dir-new" maxlength="30" placeholder="如 order_intake"></div>
+      <button class="rv-btn" type="button" id="cn-preview-btn">预览校验</button>
+      <button class="rv-btn rv-btn--primary" type="button" id="cn-save-btn">保存为 md</button>
+    </div>
+    <div id="cn-result"></div>
+  </section>
+</main>
+<script id="cn-data" type="application/json">{{ cn_data | tojson }}</script>
+<script src="/static/case_new.js"></script>
+{% endblock %}

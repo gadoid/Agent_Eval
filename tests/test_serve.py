@@ -3,6 +3,7 @@ markdown 渲染、页面数字与导出同源、合成大库下全页面响应�
 import json
 import re
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -631,3 +632,111 @@ def test_run_and_chain_rename(served):
     # runtag 徽标显示标题、悬停给完整 run_id（抽检队列的对话行）
     queue = client.get("/review?tab=spot&spot=100&run_id=" + quote(rid))
     assert f'title="{rid}"' in queue.text and "基线-glm53low" in queue.text
+
+
+def test_configs_and_runs_pages(served, tmp_path):
+    """配置管理页只含被测配置（每配置综合分）；执行记录独立成 /runs 页（run 表 + 命名）；
+    用例管理页不再有配置选择器；侧边栏导航两页都有入口。"""
+    client, db, _, ops = served
+    run_f = make_run(tmp_path, "demof", [mk_record(mode="forced")], run_id="demof",
+                     snapshot={"skills_mode": "default-roots", "evalset": {"sha256": "a"}})
+    assert cli.main(["score", str(run_f), "--operators", ops, "--db", db]) == 0
+    page = client.get("/configs")
+    assert page.status_code == 200
+    assert "配置管理" in page.text and "被测配置" in page.text and "综合分" in page.text
+    assert "重命名执行记录" not in page.text           # 执行记录已拆到 /runs
+    runs = client.get("/runs")
+    assert runs.status_code == 200
+    assert "执行记录" in runs.text and "重命名执行记录" in runs.text
+    assert "demof" in runs.text                        # 两次执行各一行（run_id 短码）
+    assert 'href="/runs"' in page.text                 # 两页互相有入口
+    # 首页已拆分：无配置选择器，有新建入口与配置管理链接
+    home = client.get("/").text
+    assert "用例管理" in home and "/case/new" in home and "/configs" in home
+    assert "被测配置</b>" not in home
+    # 执行记录命名在 /runs 页生效
+    ok = client.post("/api/run/rename", json={"run_id": "demof", "title": "forced 对照"})
+    assert ok.status_code == 200
+    assert "forced 对照" in client.get("/runs").text
+
+
+def test_case_new_page(served, tmp_path):
+    """新建用例页：表单骨架 + 词表/注入点/推荐 id 数据块。"""
+    client, db, _, _ = served
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    app2 = create_app(db, cases_dir=str(cases))
+    page = TestClient(app2).get("/case/new")
+    assert page.status_code == 200
+    body = page.text
+    assert "新建用例" in body and "基本信息" in body and "必要事实" in body
+    assert "知识召回" in body and "rewrites" in body       # 维度词表直渲染；改写词表进 JSON
+    assert "cn-data" in body and "kr-0001" in body        # 空 cases 目录 → 推荐 kr-0001
+    assert '<option value="order_intake"' not in body     # 自定义 cases_dir 不读真库目录
+
+
+def _kr_body(**over):
+    body = {"id": "kr-9001", "dim": "知识召回", "topic": "进单资料审核", "granularity": "环节",
+            "source": "t", "tags": ["场景/首轮追问"], "history": "live",
+            "turns": ["我司报关的融资业务，需要客户提供哪些融资单据？"], "assistant_refs": [],
+            "conditions": [{"slot": "业务类型", "value": "融资业务", "keywords": [], "turn": None}],
+            "injections": [], "preconditions": [],
+            "facts": [{"kind": "required", "text": "开船后的提单",
+                       "keywords": ["开船后的提单"], "turn": None, "group": "",
+                       "evidence": "", "weight": None}],
+            "paths": [], "evidences": [], "variants": [],
+            "reference_answer": "", "note": "", "directory": "batch-a"}
+    body.update(over)
+    return body
+
+
+def test_case_create_and_roundtrip(served, tmp_path):
+    """新建用例：preview 出 md 与警告（缺来源提示）；create 落盘 md 且能被
+    md2case 重新解析（md 是唯一数据源）；重复 id / 非法目录 / 校验失败分别拒绝。"""
+    import sys
+    client, db, _, _ = served
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    app2 = create_app(db, cases_dir=str(cases))
+    c2 = TestClient(app2)
+
+    prev = c2.post("/api/case/preview", json=_kr_body())
+    assert prev.status_code == 200
+    data = prev.json()
+    assert data["ok"] and "## 问题" in data["md"] and "## 关键条件" in data["md"]
+    assert data["md"].startswith("---")                    # frontmatter
+    assert any("来源" in w for w in data["warnings"])       # 无证据事实 → 提示
+
+    ok = c2.post("/api/case/create", json=_kr_body())
+    assert ok.status_code == 200, ok.text
+    saved = cases / "batch-a" / "kr-9001.md"
+    assert saved.exists()
+    text = saved.read_text(encoding="utf-8")
+    assert "id: kr-9001" in text and "## 必要事实" in text
+    sys.path.insert(0, str(Path("evalset").resolve()))
+    import md2case  # noqa: E402
+    parsed = md2case.md_to_case(text, str(saved))
+    assert parsed["id"] == "kr-9001" and parsed["facts"][0]["keywords"] == ["开船后的提单"]
+    assert ok.json()["hint"] and "build" in ok.json()["hint"][1]
+
+    # 重复 id / 非法目录 / 校验失败（ec 缺注入与禁止事实）
+    dup = c2.post("/api/case/create", json=_kr_body())
+    assert dup.status_code == 400 and "已存在" in dup.json()["error"]
+    bad_dir = c2.post("/api/case/create", json=_kr_body(id="kr-9002", directory="../evil"))
+    assert bad_dir.status_code == 400 and "目录" in bad_dir.json()["error"]
+    ec = c2.post("/api/case/create", json=_kr_body(id="ec-9001", dim="错误知识纠正"))
+    assert ec.status_code == 400
+    assert any("注入" in e for e in ec.json()["errors"])
+
+
+def test_case_preview_knowledge_check(served):
+    """preview 联动 knowledge 校验：引用不存在的注入点 → 错误（不落盘）。"""
+    client, db, _, _ = served
+    ec_body = _kr_body(id="ec-9002", dim="错误知识纠正",
+                       injections=[{"point": "不存在的注入点", "option": "x"}],
+                       facts=[{"kind": "forbidden", "text": "错", "keywords": [], "turn": None,
+                               "group": "", "evidence": "", "weight": None}])
+    prev = client.post("/api/case/preview", json=ec_body)
+    assert prev.status_code == 200
+    assert not prev.json()["ok"]
+    assert any("不存在的注入点" in e for e in prev.json()["errors"])
