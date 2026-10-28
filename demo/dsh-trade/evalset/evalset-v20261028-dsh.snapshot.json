@@ -1,0 +1,16 @@
+{
+ "version": "v20261028-dsh",
+ "method_sha": "75bdabc44009779e",
+ "method": {
+  "modes": {
+   "default": "natural",
+   "错误知识纠正": "forced"
+  },
+  "run_rewrites": [
+   "口语",
+   "极简",
+   "语序"
+  ],
+  "anchors": []
+ }
+}

@@ -1,0 +1,16 @@
+# 本地 D:\dsh（DeepSeek Harness）+ 自装 trade-documents 技能的演示链路：
+# 账号态同 profile.dsh-local.yaml（deepseek-account），profile 换成带单证人设的
+# evalheadless-trade；routing 把业务主题「尾款放单」指到 trade-documents。
+id: dsh-local-trade
+dsh:
+  bin: '"D:\dsh\DeepSeek Harness.exe" --expose-internals D:\dsh\resources\app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js'
+  profile: evalheadless-trade
+  home: C:/Users/Codfish_PC/.dsh
+  env:
+    ELECTRON_RUN_AS_NODE: "1"
+  timeout_ms: 600000
+skills_mode: bundled-copy
+skills_roots: [D:/Agent_Eval/.eval-skills/base]
+skill_tool: skill
+routing:
+  尾款放单: [trade-documents]
