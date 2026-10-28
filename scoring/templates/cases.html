@@ -70,6 +70,8 @@
   </div>
   {{ m.pager(page, pages, '/?dim=' + (f_dim or '') + '&topic=' + (f_topic or '') + '&sort=' + sort + '&flag_only=' + (flag_only or '') + '&') }}
 </main>
+{% endblock %}
+{% block scripts %}
 <script>
 function f(k, v) { var u = new URL(location); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); u.searchParams.delete('page'); location = u; }
 </script>

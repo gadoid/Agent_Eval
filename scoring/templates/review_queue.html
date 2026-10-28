@@ -20,9 +20,9 @@
   </nav>
 
   <form class="rv-filterbar" style="margin-bottom:12px" onsubmit="return false">
-    <div class="rv-field"><label>run</label><select class="rv-select" id="run-select" onchange="f('run_id',this.value)">
+    <div class="rv-field"><label>run</label><span class="rv-field-row"><select class="rv-select" id="run-select" onchange="f('run_id',this.value)">
       <option value="">全部 run</option>{% for r in run_ids %}<option value="{{ r }}" data-label="{{ run_labels.get(r, '') }}" {% if r == q_run %}selected{% endif %}>{{ run_labels.get(r, r) }} · {{ r[:8] }}</option>{% endfor %}</select>
-      <button class="rv-icon-btn" type="button" id="run-name-btn" title="给选中的 run 命名" aria-label="给 run 命名">✎</button></div>
+      <button class="rv-icon-btn" type="button" id="run-name-btn" title="给选中的 run 命名" aria-label="给 run 命名">✎</button></span></div>
     <div class="rv-field"><label>维度</label><select class="rv-select" onchange="f('dim',this.value)">
       <option value="">全部维度</option>{% for d in dims %}<option value="{{ d }}" {% if d == q_dim %}selected{% endif %}>{{ d }}</option>{% endfor %}</select></div>
     {% if tab == 'spot' %}
@@ -64,6 +64,8 @@
   </ul>
   {{ m.pager(meta.page, pages, pager_base) }}
 </main>
+{% endblock %}
+{% block scripts %}
 <script>
 function f(k, v) { var u = new URL(location); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); u.searchParams.delete('page'); location = u; }
 rvRename({ btn: document.getElementById('run-name-btn'), host: document.getElementById('run-select'),
