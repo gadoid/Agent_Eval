@@ -113,7 +113,7 @@ def test_standard_compare_view(tmp_path):
 
 
 def test_serve_compare_standard_section(tmp_path):
-    """/compare：标准对比块渲染（选择器 + same 提示）；诊断计数提示。"""
+    """/compare：标准修订验证块渲染（选择器 + same 提示）；诊断计数提示。"""
     from fastapi.testclient import TestClient
     from scoring.serve import create_app
     db = str(tmp_path / "svc.db")
@@ -124,5 +124,5 @@ def test_serve_compare_standard_section(tmp_path):
     client = TestClient(create_app(db))
     page = client.get("/compare?std_a=vA&std_b=vA")
     assert page.status_code == 200
-    assert "标准对比" in page.text and "标准完全相同" in page.text
+    assert "标准修订验证" in page.text and "标准完全相同" in page.text
     assert "诊断" not in page.text or "0 段" in page.text or "std-a" in page.text

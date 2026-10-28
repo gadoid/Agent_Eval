@@ -534,6 +534,44 @@ def test_compare_scores_page(served, tmp_path):
     assert "已拒绝比较" in blocked.text and "model" in blocked.text
 
 
+def test_compare_subject_pick(served, tmp_path):
+    """被测配置直选对比（主路径）：选两个指纹，自动展示全部差异；恰好一个组件不同
+    直接出结果；同一配置、跨评测集快照给出明确指引而非护栏报错。"""
+    client, db, tmp_path, ops = served
+    snapA = {"skills_mode": "default-roots", "evalset": {"sha256": "a"},
+             "agent": {"name": "dsh-cli", "version": "9.9.9"}}   # 与 demo 同评测集（版本 ?）
+    run2 = make_run(tmp_path, "demo2", [mk_record(mode="forced")], run_id="demo2",
+                    snapshot=snapA)
+    assert cli.main(["score", str(run2), "--operators", ops, "--db", db]) == 0
+    run3 = make_run(tmp_path, "demo3", [mk_record(mode="forced")], run_id="demo3",
+                    snapshot={"skills_mode": "default-roots", "evalset": {"sha256": "a"}})
+    assert cli.main(["score", str(run3), "--operators", ops, "--db", db]) == 0
+    st = Store(db)
+    by_agent = {str(r["agent"]): r["subject_fp"] for r in st.conn.execute(
+        "SELECT DISTINCT subject_fp, agent FROM answers")}
+    st.close()
+    fp_new = next(fp for ag, fp in by_agent.items() if "9.9.9" in ag)
+    fp_base = next(fp for ag, fp in by_agent.items() if "9.9.9" not in ag)
+
+    page = client.get(f"/compare?base={fp_base}&target={fp_new}")
+    assert page.status_code == 200
+    assert "配置差异" in page.text                    # 全量差异表
+    assert "一个组件不同" in page.text                # 只有 agent 不同 → 归因明确
+    assert "组件贡献" in page.text and "综合分" in page.text
+
+    same = client.get(f"/compare?base={fp_new}&target={fp_new}")
+    assert "同一个被测配置" in same.text
+
+    # 同一被测配置（agent 9.9.9）再跑一个别的评测集快照 → 两侧评测集不同：引导而非拦截
+    run4 = make_run(tmp_path, "demo4", [mk_record(mode="forced")], run_id="demo4",
+                    snapshot={"skills_mode": "default-roots", "evalset": {"version": "vb"},
+                              "agent": {"name": "dsh-cli", "version": "9.9.9"}})
+    assert cli.main(["score", str(run4), "--operators", ops, "--db", db]) == 0
+    cross = client.get(f"/compare?base={fp_base}&target={fp_new}")
+    assert "跑在不同的评测集快照" in cross.text and "标准修订验证" in cross.text
+    assert "已拒绝比较" not in cross.text
+
+
 def test_judging_page(served):
     client, db, _, _ = served
     s = Store(db)
@@ -810,6 +848,53 @@ def test_case_create_and_roundtrip(served, tmp_path):
     ec = c2.post("/api/case/create", json=_kr_body(id="ec-9001", dim="错误知识纠正"))
     assert ec.status_code == 400
     assert any("注入" in e for e in ec.json()["errors"])
+
+
+def test_case_new_nature_and_partial_rule(served, tmp_path):
+    """表单性质/部分判据（doc/16 §3.7）：主观落【性质：主观】、部分判据随行；
+    落盘 md 可重新解析出性质；禁止事实带部分判据 → 服务端校验拒绝。"""
+    import sys
+    client, db, _, _ = served
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    app2 = create_app(db, cases_dir=str(cases))
+    c2 = TestClient(app2)
+    facts = [
+        {"kind": "required", "text": "FOB 报价不含海运费和目的港费用", "keywords": [], "turn": None,
+         "group": "", "evidence": "外部", "weight": None},
+        {"kind": "expected", "text": "报价单应注明付款方式及比例", "keywords": [], "turn": None,
+         "group": "", "evidence": "外部", "weight": None, "nature": "主观"},
+        {"kind": "expected", "text": "报价单应注明报价有效期", "keywords": [], "turn": None,
+         "group": "", "evidence": "外部", "weight": None, "nature": "主观",
+         "partial_rule": "只写短期有效、未给具体期限算部分"},
+        {"kind": "forbidden", "text": "建议不写付款方式留给谈判", "keywords": [], "turn": None,
+         "group": "", "evidence": "外部", "weight": None, "nature": "主观"},
+    ]
+    prev = c2.post("/api/case/preview", json=_kr_body(id="kr-9003", facts=facts))
+    assert prev.status_code == 200 and prev.json()["ok"]
+    md = prev.json()["md"]
+    assert "- F1：FOB 报价不含海运费和目的港费用 【外部】" in md      # 客观条目不带性质
+    assert md.count("【性质：主观】") == 3                            # E1 / E2 / X1
+    assert "【部分判据：只写短期有效、未给具体期限算部分】" in md
+
+    ok = c2.post("/api/case/create", json=_kr_body(id="kr-9003", facts=facts))
+    assert ok.status_code == 200, ok.text
+    saved = cases / "batch-a" / "kr-9003.md"
+    assert saved.exists()
+    sys.path.insert(0, str(Path("evalset").resolve()))
+    import md2case  # noqa: E402
+    parsed = md2case.md_to_case(saved.read_text(encoding="utf-8"), str(saved))
+    by_id = {f["id"]: f for f in parsed["facts"]}
+    assert "nature" not in by_id["F1"]
+    assert by_id["E1"]["nature"] == "subjective" and "partial_rule" not in by_id["E1"]
+    assert by_id["E2"]["partial_rule"].startswith("只写短期")
+    assert by_id["X1"]["nature"] == "subjective"
+
+    # 误用：禁止事实带部分判据 → 预览即报错（doc/16 §3.5）
+    bad = facts + [dict(facts[3], text="另一个错误建议", partial_rule="复述即算部分")]
+    prev2 = c2.post("/api/case/preview", json=_kr_body(id="kr-9004", facts=bad))
+    assert prev2.status_code == 200 and not prev2.json()["ok"]
+    assert any("禁止事实不写【部分判据】" in e for e in prev2.json()["errors"])
 
 
 def test_case_preview_knowledge_check(served):

@@ -15,56 +15,60 @@
     <a href="?">← 返回正式视图</a>
   </div>
   {% endif %}
-  <section class="rv-card" style="margin-bottom:12px">
-    <div class="rv-cn-head"><b>标准对比</b>
-      <span class="rv-meta">同一批答案在两份快照标准下的结论差异（验证标准修订效果，doc/15 §4.7）</span></div>
-    <form class="rv-cn-saverow" onsubmit="return false">
-      <div class="rv-field"><label>快照 A</label>
-        <select class="rv-select" id="std-a">{% for s in snapshot_options %}<option value="{{ s }}" {% if s == std_a %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
-      <div class="rv-field"><label>快照 B</label>
-        <select class="rv-select" id="std-b">{% for s in snapshot_options %}<option value="{{ s }}" {% if s == std_b %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
-      <button class="rv-btn rv-btn--primary" type="button" id="std-go">对比</button>
-    </form>
-    {% if std_rep %}
-      {% if std_rep.same_standard == std_rep.shared %}
-      <div class="rv-meta">两快照共有 {{ std_rep.shared }} 题，标准完全相同——没有可对比的修订。</div>
-      {% else %}
-      <div class="rv-meta" style="margin-bottom:8px">共有 {{ std_rep.shared }} 题；标准相同的 {{ std_rep.same_standard }} 题不列；差异 {{ std_rep.rows|length }} 段、待补判 {{ std_rep.pending|length }} 段。</div>
-      {% if std_rep.rows %}
-      <div class="rv-table-wrap"><table class="rv-table">
-        <thead><tr><th>题目</th><th>执行</th><th>模式</th><th>A 结论/分</th><th>B 结论/分</th><th>分差</th></tr></thead>
-        <tbody>{% for r in std_rep.rows %}
-          <tr><td>{{ r.uid }}</td><td>{{ r.run_label }}</td><td>{{ r.mode }}</td>
-            <td>{{ r.a.status }} / {{ r.a.score|f1 }}</td><td>{{ r.b.status }} / {{ r.b.score|f1 }}</td>
-            <td>{% if r.delta is not none %}{{ r.delta|f1 }}{% else %}—{% endif %}</td></tr>
-        {% endfor %}</tbody></table></div>
-      {% endif %}
-      {% if std_rep.pending %}
-      <div class="rv-meta">待补判（某侧未在该标准下判过，rejudge 后可对比）：{% for p in std_rep.pending %}{{ p.uid }}（缺{{ p.missing }}） {% endfor %}</div>
-      {% endif %}
-      {% endif %}
-    {% endif %}
-  </section>
 
   <div class="rv-page-head"><h1>结果对比</h1>
-    <span class="rv-meta"><span>只在双方共有的题目上比</span><span>放行规则沿用比较轴护栏</span></span></div>
+    <span class="rv-meta"><span>选两个被测配置，自动展示全部差异并给出结果对比</span><span>只在双方共有的题目上比</span></span></div>
 
-  <form method="get" action="/compare" class="rv-filterbar" style="margin-bottom:16px">
-    <div class="rv-field"><label>比较什么</label><select class="rv-select" name="axis">
-      {% for a, label in axis_labels.items() if a != 'trial' and a != 'run' %}
-      <option value="{{ a }}" {% if a == axis %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-    <div class="rv-field"><label>基线</label><input class="rv-input" name="base" value="{{ base }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
-    <span class="rv-arrow" style="align-self:center;margin-top:20px">→</span>
-    <div class="rv-field"><label>对照</label><input class="rv-input" name="target" value="{{ target }}" placeholder="轴上的取值" list="avs" style="width:160px"></div>
-    <datalist id="avs">{% for v in axis_values %}<option value="{{ v }}" label="{{ value_labels.get(v, '') }}"></option>{% endfor %}</datalist>
-    <div class="rv-field"><label>固定条件（属性=取值，逗号分隔）</label><input class="rv-input" name="fix" value="{{ fix }}" placeholder="如 model=glm-5.3" style="width:200px"></div>
-    <div class="rv-field"><label>放开属性（不限）</label><select class="rv-select" name="any" multiple size="3" style="height:auto">
-      {% for a in attrs if a != axis %}<option value="{{ a }}" {% if a in (any or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
-    <div class="rv-field"><label>多组件分摊（选 2–3 个）</label><select class="rv-select" name="factors" multiple size="3" style="height:auto">
-      {% for a in attrs if a != axis %}<option value="{{ a }}" {% if a in (factors or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
-    <button class="rv-btn rv-btn--primary" type="submit" style="align-self:flex-end">对比</button>
+  <form method="get" action="/compare" style="margin-bottom:16px">
+    <div class="rv-filterbar">
+      <div class="rv-field"><label>基线（被测配置）</label><select class="rv-select" name="base" style="max-width:340px">
+        <option value="" {% if not base %}selected{% endif %}>选被测配置</option>
+        {% if base and base not in (subject_options|map(attribute='fp')|list) %}
+        <option value="{{ base }}" selected>{{ base }}（未见过）</option>{% endif %}
+        {% for s in subject_options %}<option value="{{ s.fp }}" {% if s.fp == base %}selected{% endif %}>{{ s.label }} · {{ s.fp[:8] }}</option>{% endfor %}</select></div>
+      <span class="rv-arrow" style="align-self:center;margin-top:20px">→</span>
+      <div class="rv-field"><label>对照（被测配置）</label><select class="rv-select" name="target" style="max-width:340px">
+        <option value="" {% if not target %}selected{% endif %}>选被测配置</option>
+        {% if target and target not in (subject_options|map(attribute='fp')|list) %}
+        <option value="{{ target }}" selected>{{ target }}（未见过）</option>{% endif %}
+        {% for s in subject_options %}<option value="{{ s.fp }}" {% if s.fp == target %}selected{% endif %}>{{ s.label }} · {{ s.fp[:8] }}</option>{% endfor %}</select></div>
+      <button class="rv-btn rv-btn--primary" type="submit" style="align-self:flex-end">对比</button>
+    </div>
+    <details class="rv-fold">
+      <summary>高级条件<span class="rv-meta" style="margin-left:8px">固定条件、放开属性、手动组件分摊——日常对比用不到</span></summary>
+      <div class="rv-fold-body rv-filterbar">
+        <div class="rv-field"><label>固定条件（属性=取值，逗号分隔）</label><input class="rv-input" name="fix" value="{{ fix }}" placeholder="如 mode=natural" style="width:200px"></div>
+        <div class="rv-field"><label>放开属性（不限）</label><select class="rv-select" name="any" multiple size="3" style="height:auto">
+          {% for a in attrs %}<option value="{{ a }}" {% if a in (any or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
+        <div class="rv-field"><label>手动分摊组件（选 2–3 个）</label><select class="rv-select" name="factors" multiple size="3" style="height:auto">
+          {% for a in factor_attrs %}<option value="{{ a }}" {% if a in (factors or '').split(',') %}selected{% endif %}>{{ a }}</option>{% endfor %}</select></div>
+      </div>
+    </details>
   </form>
-  {% if axis_values %}<div class="rv-meta" style="margin-bottom:12px">轴上的取值：{{ axis_values|join('、') }}</div>{% endif %}
+
+  {% if diff %}
+  <section class="rv-card" style="margin-bottom:16px">
+    <div class="rv-cn-head"><b>配置差异</b>
+      <span class="rv-meta">两个被测配置的全部区别（指纹拆字段，doc/15 §3.1）</span></div>
+    <div class="rv-table-wrap"><table class="rv-table">
+      <thead><tr><th>配置项</th><th>基线</th><th>对照</th><th>差异</th></tr></thead>
+      <tbody>
+        {% for r in diff.rows %}
+        <tr><td>{{ field_labels[r.field] }}</td><td>{{ r.a }}</td><td>{{ r.b }}</td>
+          <td>{% if r.changed %}<b>不同</b>{% else %}<span class="rv-meta">相同</span>{% endif %}</td></tr>
+        {% endfor %}
+        <tr><td>{{ field_labels['evalset_version'] }}</td>
+          <td>{{ diff.evalsets_a|join('、') or '—' }}</td><td>{{ diff.evalsets_b|join('、') or '—' }}</td>
+          <td>{% if diff.same_evalsets %}<span class="rv-meta">相同</span>{% else %}<b>不同</b>{% endif %}</td></tr>
+      </tbody></table></div>
+    {% if diff.changed|length == 1 %}
+    <div class="rv-meta">只有 {{ field_labels[diff.changed[0]] }} 一个组件不同，结果差异直接归因于它。</div>
+    {% elif diff.changed|length > 1 %}
+    <div class="rv-meta">{{ diff.changed|length }} 个组件同时不同（{% for f in diff.changed %}{{ field_labels[f] }}{% if not loop.last %}、{% endif %}{% endfor %}）：下方单组件贡献按各自维度给出，总差异的分摊见「多组件分摊」。</div>
+    {% if shap_note %}<div class="rv-meta">{{ shap_note }}</div>{% endif %}
+    {% endif %}
+  </section>
+  {% endif %}
 
   {% if error %}<div class="rv-notice" data-tone="error" style="margin-bottom:12px"><b>已拒绝</b><span>{{ error }}</span></div>{% endif %}
 
@@ -87,7 +91,7 @@
     {% for side, label in [(rep.base, '基线'), (rep.target, '对照')] %}
     {% set comp = rep.metrics[side].composite %}
     <section class="rv-card rv-comp"><div class="rv-comp-head"><span class="rv-comp-n">{{ comp.score|f1 }}</span>
-      <span class="rv-meta"><span>{{ label }} · {{ value_labels.get(side, side) }}</span>{% if comp.provisional %}<span>临时</span>{% endif %}</span></div>
+      <span class="rv-meta"><span>{{ label }} · {{ side }}</span>{% if comp.provisional %}<span>临时</span>{% endif %}</span></div>
       {% for d, p in comp.parts.items() %}
       <div class="rv-comp-row"><span>{{ d }}</span><span class="rv-comp-w">×{{ p.weight|f1 }}</span>
         <div class="rv-scorebar"><span class="rv-scorebar-fill" style="width:{{ p.score }}%"></span><span class="rv-scorebar-mark" style="left:{{ pass_mark }}%;top:-3px;bottom:-3px"></span></div>
@@ -97,7 +101,7 @@
   </div>
 
   <section class="rv-card rv-contrib" style="margin-bottom:16px">
-    <h2>组件贡献：{{ value_labels.get(rep.base, rep.base) }} → {{ value_labels.get(rep.target, rep.target) }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
+    <h2>组件贡献：{{ rep.base }} → {{ rep.target }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
     {% set width = (rep.contributions | map(attribute='delta') | select | map('abs') | max) or 1 %}
     {% for ctb in rep.contributions %}
     <div class="rv-contrib-row" title="{{ ctb.name }}：{{ ctb.delta|f1 }} 分（{{ ctb.base|f1 }} → {{ ctb.target|f1 }}）">
@@ -139,7 +143,7 @@
       <div class="rv-notice"><b>缺组合，不能分摊</b><span>需补跑：{{ shap.missing|join('；') }}</span></div></section>
     {% else %}
     <section class="rv-card rv-contrib" style="margin-bottom:16px">
-      <h2>多组件分摊：{{ shap.cells.keys()|join('；') }} <span class="rv-meta" style="font-weight:400"><span>Shapley</span></span></h2>
+      <h2>多组件分摊：{{ shap_names }} <span class="rv-meta" style="font-weight:400"><span>Shapley</span></span></h2>
       {% set width2 = shap.phi.values()|map('abs')|max or 1 %}
       {% for f, val in shap.phi.items() %}
       <div class="rv-contrib-row"><span>{{ f }}</span><span class="rv-contrib-track">
@@ -153,12 +157,45 @@
     </section>
     {% endif %}
   {% endif %}
+
+  <section class="rv-card" style="margin-top:8px">
+    <div class="rv-cn-head"><b>标准修订验证</b>
+      <span class="rv-meta">同一批答案在两份快照标准下的结论差异——验证标准修订效果（doc/15 §4.7）</span></div>
+    <form class="rv-cn-saverow" onsubmit="return false">
+      <div class="rv-field"><label>快照 A</label>
+        <select class="rv-select" id="std-a">{% for s in snapshot_options %}<option value="{{ s }}" {% if s == std_a %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div class="rv-field"><label>快照 B</label>
+        <select class="rv-select" id="std-b">{% for s in snapshot_options %}<option value="{{ s }}" {% if s == std_b %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <button class="rv-btn rv-btn--primary" type="button" id="std-go">对比</button>
+    </form>
+    {% if std_rep %}
+      {% if std_rep.same_standard == std_rep.shared %}
+      <div class="rv-meta">两快照共有 {{ std_rep.shared }} 题，标准完全相同——没有可对比的修订。</div>
+      {% else %}
+      <div class="rv-meta" style="margin-bottom:8px">共有 {{ std_rep.shared }} 题；标准相同的 {{ std_rep.same_standard }} 题不列；差异 {{ std_rep.rows|length }} 段、待补判 {{ std_rep.pending|length }} 段。</div>
+      {% if std_rep.rows %}
+      <div class="rv-table-wrap"><table class="rv-table">
+        <thead><tr><th>题目</th><th>执行</th><th>模式</th><th>A 结论/分</th><th>B 结论/分</th><th>分差</th></tr></thead>
+        <tbody>{% for r in std_rep.rows %}
+          <tr><td>{{ r.uid }}</td><td>{{ r.run_label }}</td><td>{{ r.mode }}</td>
+            <td>{{ r.a.status }} / {{ r.a.score|f1 }}</td><td>{{ r.b.status }} / {{ r.b.score|f1 }}</td>
+            <td>{% if r.delta is not none %}{{ r.delta|f1 }}{% else %}—{% endif %}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% endif %}
+      {% if std_rep.pending %}
+      <div class="rv-meta">待补判（某侧未在该标准下判过，rejudge 后可对比）：{% for p in std_rep.pending %}{{ p.uid }}（缺{{ p.missing }}） {% endfor %}</div>
+      {% endif %}
+      {% endif %}
+    {% endif %}
+  </section>
 </main>
 {% endblock %}
 
+{% block scripts %}
 <script>
 document.getElementById('std-go').addEventListener('click', function () {
   var a = document.getElementById('std-a').value, b = document.getElementById('std-b').value;
   var u = new URL(location); u.searchParams.set('std_a', a); u.searchParams.set('std_b', b); location = u;
 });
 </script>
+{% endblock %}

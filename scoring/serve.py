@@ -41,6 +41,28 @@ AXIS_LABELS = {"subject": "被测配置（subject）", "profile": "被测配置�
                "mode": "干预模式（mode）", "skills_base": "知识库（skills_base）",
                "evalset_version": "快照（评测集版本）",
                "trial": "采样次数（trial）", "run": "run"}
+FIELD_LABELS = {"model": "模型（model）", "effort": "努力程度（effort）",
+                "reasoning_effort": "努力程度（effort）", "agent": "agent 版本",
+                "skills_base": "知识库（skills_base）", "skills_mode": "技能模式（skills_mode）",
+                "evalset_version": "评测集快照", "mode": "干预模式（mode）",
+                "model_provider": "模型提供方（model_provider）", "skill_tool": "技能工具（skill_tool）",
+                "dsh_profile": "dsh 配置（dsh_profile）", "eline_profile_sha": "eline 配置指纹",
+                "routing": "路由（routing）", "subject": "被测配置（subject）"}
+# 指纹字段表的展示序（subject_of_manifest 的键）；FP_ATTR_NAME 把指纹键映射到比较属性名
+FP_FIELD_ORDER = ("model", "reasoning_effort", "agent", "skills_base", "skills_mode",
+                  "model_provider", "skill_tool", "dsh_profile", "eline_profile_sha", "routing")
+FP_ATTR_NAME = {"reasoning_effort": "effort"}
+
+
+def _fmt_val(v) -> str:
+    """指纹字段值的显示形式：agent 显示 name@version，嵌套结构串化，None → —。"""
+    if v is None:
+        return "—"
+    if isinstance(v, dict):
+        if set(v) <= {"name", "version"} and v.get("name"):
+            return f"{v['name']}@{v.get('version') or '?'}"
+        return json.dumps(v, ensure_ascii=False, sort_keys=True)
+    return str(v)
 KIND_LABELS = {"precond": "前提", "path": "路径", "forbidden": "禁止", "required": "必要",
                "expected": "期望", "refusal": "拒答"}
 
@@ -163,6 +185,8 @@ class CaseNewFact(BaseModel):
     group: str = ""
     evidence: str = ""              # 空 / 外部 / R1…
     weight: float | None = None
+    nature: str = ""                # 空 / 主观（客观与不写等价，doc/16 §3.3）
+    partial_rule: str = ""          # 部分判据，仅必要/期望的主观条目（md 侧校验）
 
 
 class CaseNewPath(BaseModel):
@@ -313,6 +337,10 @@ def _case_from_form(b: CaseNewIn) -> dict:
             item["evidence"] = "external" if f.evidence.strip() == "外部" else f.evidence.strip()
         if f.weight is not None:
             item["weight"] = f.weight
+        if f.nature.strip() == "主观":
+            item["nature"] = "subjective"
+        if f.partial_rule.strip():
+            item["partial_rule"] = f.partial_rule.strip()   # 写错位置由 md_to_case 校验报错
         facts.append(item)
 
     injections = [{"id": f"J{i}", "point": j.point.strip(), "option": j.option.strip()}
@@ -841,6 +869,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
             item_details.append({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text") or "",
                                  "turn": f.get("turn"), "keywords": f.get("keywords") or [],
                                  "group": f.get("group"),
+                                 "nature": f.get("nature"), "partial_rule": f.get("partial_rule"),
                                  "weight": weight_map.get(f.get("id")) if f.get("kind") in ("required", "expected") else None,
                                  "note": note})
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
@@ -922,48 +951,142 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
 
     # ---------------- 结果对比
     @app.get("/compare")
-    async def compare(request: Request, axis: str = "skills_base", base: str = "", target: str = "",
+    async def compare(request: Request, axis: str = "subject", base: str = "", target: str = "",
                       any: str = "", fix: str = "", factors: str = "", run: str = "",
                       std_a: str = "", std_b: str = ""):
-        rep = error = shap = None
+        rep = error = shap = diff = None
+        shap_note = shap_names = None
         std_rep = None
-        if std_a and std_b:                       # 标准对比（doc/15 §4.7 P2）
+        if std_a and std_b:                       # 标准修订验证（doc/15 §4.7 P2）
             try:
                 std_rep = store.standard_compare(std_a, std_b, chain_of(request), rules_sha)
             except StoreError as e:
                 error = str(e)
         rs = rows(request, with_records=True)
         run_order = {r["run_id"]: i for i, r in enumerate(store.runs())}
-        axis_values = sorted({views.attr_value(r, axis) for r in rs})
         anys = tuple(a.strip() for a in (any or "").split(",") if a.strip())
         fixes: dict[str, str] = {}
         for part in (fix or "").split(","):
             k, sep, v = part.partition("=")
             if sep and k.strip() and v.strip():
                 fixes[k.strip()] = v.strip()
-        if base and target:
+
+        # 被测配置清单：指纹 → 完整字段表（runs.subject_json，旧库缺列时回退拆字段）
+        # + 跑过的评测集——下拉选项与差异表的数据源
+        subj_json: dict[str, dict] = {}
+        for r in store.conn.execute(
+                "SELECT DISTINCT subject_fp, subject_json FROM runs WHERE subject_fp IS NOT NULL"):
+            if r["subject_json"]:
+                try:
+                    subj_json.setdefault(r["subject_fp"], json.loads(r["subject_json"]))
+                except ValueError:
+                    pass
+        subjects: dict[str, dict] = {}
+        for r in rs:
+            fp = views.attr_value(r, "subject")
+            s = subjects.setdefault(fp, {"fields": {}, "evalsets": set()})
+            s["evalsets"].add(views.attr_value(r, "evalset_version"))
+            if fp in subj_json:
+                s["fields"] = subj_json[fp]
+            elif not s["fields"]:
+                s["fields"] = {"model": views.attr_value(r, "model"),
+                               "reasoning_effort": views.attr_value(r, "effort"),
+                               "agent": views.attr_value(r, "agent"),
+                               "skills_base": views.attr_value(r, "skills_base"),
+                               "skills_mode": views.attr_value(r, "skills_mode")}
+
+        if base and target and axis != "subject":
+            # 旧式轴对比（URL 直达）：按轴取值比较，行为与改造前一致
             try:
                 rep = views.compare_scores(rs, axis=axis, base=base, target=target, rules=rules,
                                            method=method_of(snapshot_of(request)),
                                            fixes=fixes, anys=anys, run_order=run_order)
             except ValueError as e:
                 error = str(e)
+        elif base and target:
+            # 主路径：直接选两个被测配置，系统自己找出全部差异，不让用户挑维度
+            if base == target:
+                error = "基线与对照是同一个被测配置，没有可对比的差异。"
+            elif base not in subjects or target not in subjects:
+                error = f"未见过该被测配置：{base if base not in subjects else target}"
+            else:
+                sb, st = subjects[base], subjects[target]
+                fa, fb = sb["fields"], st["fields"]
+                keys = FP_FIELD_ORDER + tuple(sorted((set(fa) | set(fb)) - set(FP_FIELD_ORDER)))
+                diff_rows = [{"field": k, "a": _fmt_val(fa.get(k)), "b": _fmt_val(fb.get(k)),
+                              "changed": fa.get(k) != fb.get(k)}
+                             for k in keys if k in fa or k in fb]
+                changed = [r["field"] for r in diff_rows if r["changed"]]
+                diff = {"rows": diff_rows, "changed": changed,
+                        "evalsets_a": sorted(sb["evalsets"]),
+                        "evalsets_b": sorted(st["evalsets"]),
+                        "same_evalsets": sb["evalsets"] == st["evalsets"]}
+                if not diff["same_evalsets"] and "evalset_version" not in anys:
+                    error = ("两个被测配置跑在不同的评测集快照上"
+                             f"（基线 {'、'.join(diff['evalsets_a']) or '？'} / "
+                             f"对照 {'、'.join(diff['evalsets_b']) or '？'}），"
+                             "题目不同、分数没有可比性。要验证标准修订的效果，"
+                             "请用页面底部「标准修订验证」。")
+                else:
+                    try:
+                        rep = views.compare_scores(rs, axis="subject", base=base, target=target,
+                                                   rules=rules, method=method_of(snapshot_of(request)),
+                                                   fixes=fixes, anys=anys, run_order=run_order)
+                    except ValueError as e:
+                        error = str(e)
         if factors and not error:
             try:
                 facs = [f.strip() for f in factors.split(",") if f.strip()]
                 cells, shared = views.shapley_cells(rs, facs, rules, method_of(snapshot_of(request)))
                 shap = views.shapley(cells, facs)
+                shap_names = "、".join(FIELD_LABELS.get(f, f) for f in facs)
             except ValueError as e:
                 error = str(e)
+        elif diff and not error and len(diff["changed"]) >= 2:
+            # 多个组件同时变且未手动指定：自动按差异组件做 Shapley 分摊（缺组合时列出待补跑）
+            shap_fields = [FP_ATTR_NAME.get(f, f) for f in diff["changed"]]
+            shapable = (2 <= len(shap_fields) <= 3
+                        and all(f in views.ATTRS and f != "skills_mode"
+                                and f not in views.SAMPLING_ATTRS for f in shap_fields))
+            if shapable:
+                try:
+                    cells, shared = views.shapley_cells(rs, shap_fields, rules,
+                                                        method_of(snapshot_of(request)))
+                    shap = views.shapley(cells, shap_fields)
+                    shap_names = "、".join(FIELD_LABELS.get(f, f) for f in diff["changed"])
+                except ValueError as e:
+                    shap_note = f"总差异无法自动分摊：{e}"
+            else:
+                shap_note = "同时变化的组件超出可分摊范围（分摊只支持比较属性里的 2–3 个组件）。"
         diag_n = sum(1 for r in store.answer_view_rows(chain_of(request), rules_sha)
                      if r.get("diagnostic"))
-        return render(request, "compare.html", axis=axis, axis_values=axis_values, std_rep=std_rep,
+        # 放开属性的候选：去掉已自动放行的（含轴本身）、采样标识（默认不限）、
+        # 不可比的 skills_mode——列出来只会诱导无效输入
+        followed = views.follows(axis)
+        # 分摊组件与主对比轴无关，只去掉轴本身、采样标识、skills_mode
+        def _label(s: dict) -> str:
+            f = s["fields"]
+            ag = f.get("agent")
+            ag_s = (f"{ag.get('name')}@{ag.get('version') or '?'}"
+                    if isinstance(ag, dict) else str(ag or "?"))
+            sbx = str(f.get("skills_base") or "—")
+            parts = [str(f.get("model") or "?"), str(f.get("reasoning_effort") or "—"),
+                     ag_s, sbx[:12] + ("…" if len(sbx) > 12 else ""),
+                     str(f.get("skills_mode") or "—")]
+            return " · ".join(parts)
+        return render(request, "compare.html", axis=axis, std_rep=std_rep,
                       std_a=std_a, std_b=std_b, snapshot_options=[s["evalset_version"] for s in store.snapshots()],
                       diagnostic_count=diag_n,
                       base=base, target=target, any=any, fix=fix, factors=factors,
-                      rep=rep, error=error, shap=shap, attrs=[a for a in views.ATTRS if a != "skills_mode"],
-                      axis_labels=AXIS_LABELS,
-                      value_labels=store.run_labels() if axis == "run" else {})
+                      rep=rep, error=error, shap=shap, shap_note=shap_note,
+                      shap_names=shap_names, diff=diff,
+                      subject_options=[{"fp": fp, "label": _label(subjects[fp])}
+                                       for fp in sorted(subjects)],
+                      attrs=[a for a in views.ATTRS if a not in followed
+                             and a not in views.SAMPLING_ATTRS and a != "skills_mode"],
+                      factor_attrs=[a for a in views.ATTRS if a != axis
+                                    and a not in views.SAMPLING_ATTRS and a != "skills_mode"],
+                      field_labels=FIELD_LABELS)
 
     # ---------------- 判定质量
     @app.get("/judging")
