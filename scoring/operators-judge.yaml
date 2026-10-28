@@ -1,0 +1,32 @@
+# 带模型算子的判定链（doc/08 §5.2 第二批 + doc/16 §4 判据契约）：
+# llm-fact / llm-forbid 经 dsh CLI 单发会话调用判定模型（deepseek-flash，账号态同
+# 执行链路）；结论按判据推导表得出。机器路径属本机部署配置，故独立于默认
+# operators.yaml（链 sha 随之不同，复核服务里显示为「规则+模型」）。
+schema: 1
+operators:
+  keyword:    {impl: keyword}
+  skill-path: {impl: skill-path}
+  llm-fact:
+    impl: "scoring.ext.judges:LlmFact"
+    model: deepseek-flash
+    dsh_bin: ['D:/dsh/DeepSeek Harness.exe', --expose-internals, 'D:/dsh/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js']
+    dsh_profile: evalheadless-trade
+    dsh_home: C:/Users/Codfish_PC/.dsh
+    dsh_env: {ELECTRON_RUN_AS_NODE: "1"}
+    timeout: 600
+  llm-forbid:
+    impl: "scoring.ext.judges:LlmForbidden"
+    model: deepseek-flash
+    dsh_bin: ['D:/dsh/DeepSeek Harness.exe', --expose-internals, 'D:/dsh/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js']
+    dsh_profile: evalheadless-trade
+    dsh_home: C:/Users/Codfish_PC/.dsh
+    dsh_env: {ELECTRON_RUN_AS_NODE: "1"}
+    timeout: 600
+
+chains:                          # 条目类型 → 依次尝试，前一个弃权才往后走
+  required:  [keyword, llm-fact]
+  expected:  [keyword, llm-fact]
+  forbidden: [llm-forbid]
+  precond:   []                  # llm-precond 就绪前只能人工判
+  path:      [skill-path]
+  refusal:   []                  # llm-refusal 就绪前只能人工判

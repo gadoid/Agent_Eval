@@ -80,7 +80,9 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
       cases: { type: 'string', multiple: true },
       profile: { type: 'string' },
       out: { type: 'string' },
-      modes: { type: 'string', default: 'natural' },
+      // --modes 不给默认值：给了才算显式诊断执行（doc/15 §3.10）；带默认会让
+      // values.modes 永不为 undefined → 所有 run 被标诊断、快照测法永不生效
+      modes: { type: 'string' },
       trials: { type: 'string', default: '3' },
       concurrency: { type: 'string', default: '1' },
       dims: { type: 'string' },

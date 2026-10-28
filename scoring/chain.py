@@ -38,7 +38,7 @@ def _resolve_impl(impl: str, params: dict) -> Operator:
 
 
 _ATTRS_PREFIX = "item.attrs."
-_KNOWN_INPUTS = ("item.text", "item.kind", "item.turn", "item.attrs", "answer")
+_KNOWN_INPUTS = ("item.text", "item.kind", "item.turn", "item.attrs", "answer", "dialog")
 
 
 def _validate_inputs(op: Operator, instance_id: str) -> None:
@@ -145,6 +145,11 @@ def _resolve_input(name: str, item: Item, ctx: EpisodeContext) -> str:
         return str(item.turn)
     if name == "answer":
         return ctx.answer_for(item)
+    if name == "dialog":
+        return "\n".join(
+            f"[第{t.get('index') or i}轮·用户] {t.get('input') or ''}\n"
+            f"[第{t.get('index') or i}轮·助手] {t.get('output') or ''}"
+            for i, t in enumerate(ctx.record.get("turns") or []))
     if name == "item.attrs":
         return json.dumps(item.attrs, sort_keys=True, ensure_ascii=False)
     if name.startswith(_ATTRS_PREFIX):

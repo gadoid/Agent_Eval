@@ -282,6 +282,23 @@ def cmd_score(args) -> int:
     return 0
 
 
+def cmd_judge(args) -> int:
+    """模型批量评审：按会话聚合待判条目调用判定模型（dsh 单发），预填 verdict_cache。"""
+    from .ext import judges
+    store = open_store(args.db)
+    cfg = load_operator_config(args.operators or default_operators_path())
+    if not any(op.source == "judge" for chain in cfg.chains.values() for op in chain):
+        print("当前链上没有模型算子（operators 配置 llm-fact/llm-forbid），无需批量评审")
+        return 1
+    records, _manifest = load_run(args.run)
+    stats = judges.batch_judge(records, cfg, DbCache(store))
+    print(f"模型评审 {args.run}：{stats['episodes']} 段会话 / {stats['items']} 条待判条目，"
+          f"预填 {stats['filled']} 条（规则已判跳过 {stats['skipped']} 条）")
+    print(f"  下一步：python -m scoring score {args.run} --operators {args.operators} --db {args.db}"
+          if args.operators else "  下一步：python -m scoring score <run> --db <db>")
+    return 0
+
+
 def cmd_rejudge(args) -> int:
     store = open_store(args.db)
     cfg = load_operator_config(args.operators or default_operators_path())
@@ -814,6 +831,11 @@ def main(argv=None) -> int:
     p = sub.add_parser("migrate-verify", help="v8 迁移对拍（conclusions_legacy vs 新表）")
     p.add_argument("--policy")
     add_db(p); p.set_defaults(func=cmd_migrate_verify)
+
+    p = sub.add_parser("judge", help="模型批量评审：按会话聚条目调用判定模型，预填 verdict_cache")
+    p.add_argument("run", help="run 目录（含 results.jsonl）")
+    p.add_argument("--operators")
+    add_db(p); p.set_defaults(func=cmd_judge)
 
     p = sub.add_parser("rejudge", help="补判缺当前期望+链配置判定的答案（只调算子，不跑 agent）")
     p.add_argument("--question", help="限定题目 qkey")

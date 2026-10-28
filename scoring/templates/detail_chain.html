@@ -26,7 +26,7 @@
 
   {% if mapping %}
   <div class="rv-table-wrap" style="margin-bottom:16px">
-    <div class="rv-pair-head" style="padding:8px 12px">逐条目类型链组成（当前 operators.yaml）</div>
+    <div class="rv-sec-head" style="padding:8px 12px">逐条目类型链组成（当前 operators.yaml）</div>
   <table class="rv-table">
     <thead><tr><th>条目类型</th><th>链（依次尝试）</th><th>语义</th></tr></thead>
     <tbody>
@@ -34,7 +34,7 @@
       <tr><th scope="row">{{ m.kind|kind_label }}</th>
         <td>{% if m.ops %}<span class="rv-mono">{{ m.ops|join(' → ') }}</span>{% else %}<span class="rv-meta">空链 → 全部人工判</span>{% endif %}</td>
         <td class="rv-meta">{{ {'required': '必要事实（关键词可判）', 'expected': '期望事实（关键词可判）',
-             'forbidden': '禁止事实（否决项，模型算子未接 → 人工）',
+             'forbidden': '禁止事实（否决项；链为空时全部人工判）',
              'precond': '前提门槛（不成立则会话无效）',
              'path': '技能路径（否决项）', 'refusal': '拒答行为'}.get(m.kind, '') }}</td></tr>
       {% endfor %}
@@ -51,7 +51,7 @@
 
   {% if instance_specs %}
   <div class="rv-table-wrap">
-    <div class="rv-pair-head" style="padding:8px 12px">算子实例参数</div>
+    <div class="rv-sec-head" style="padding:8px 12px">算子实例参数</div>
   <table class="rv-table">
     <thead><tr><th>实例</th><th>impl</th><th>参数</th></tr></thead>
     <tbody>
