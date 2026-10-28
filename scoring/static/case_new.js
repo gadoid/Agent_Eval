@@ -72,7 +72,17 @@
       '<input class="rv-input" data-f="turn" type="number" min="1" style="width:64px" placeholder="轮次">' +
       '<input class="rv-input" data-f="group" style="width:64px" placeholder="组">' +
       '<select class="rv-select" data-f="evidence" style="width:80px">' + evOptions() + '</select>' +
-      '<input class="rv-input" data-f="weight" type="number" min="0" step="0.5" style="width:70px" placeholder="权重">' + rmBtn());
+      '<input class="rv-input" data-f="weight" type="number" min="0" step="0.5" style="width:70px" placeholder="权重">' +
+      // 性质（doc/16 §3.7）：勾「主观」→ md 落【性质：主观】；部分判据输入框仅必要/期望提供
+      '<label class="rv-cn-check" title="合理表述不唯一的做法/建议（【性质：主观】，判「部分」以部分判据为准）">' +
+      '<input type="checkbox" data-f="subj">主观</label>' +
+      (kind === 'forbidden' ? '' :
+        '<input class="rv-input" data-f="prule" style="width:240px;display:none" placeholder="部分判据：如 只写甲未写乙算部分">') +
+      rmBtn());
+    var subj = f('[data-f=subj]', r), prule = f('[data-f=prule]', r);
+    subj.addEventListener('change', function () {
+      if (prule) { prule.style.display = subj.checked ? '' : 'none'; }
+    });
     list.appendChild(r); wireRm(list); renumber();
   }
   function addPath() {
@@ -167,7 +177,9 @@
         facts.push({ kind: cfg[1], text: val(f('[data-f=text]', r)),
           keywords: kwSplit(val(f('[data-f=kw]', r))), turn: num(f('[data-f=turn]', r)),
           group: val(f('[data-f=group]', r)), evidence: val(f('[data-f=evidence]', r)),
-          weight: flt(f('[data-f=weight]', r)) });
+          weight: flt(f('[data-f=weight]', r)),
+          nature: f('[data-f=subj]', r) && f('[data-f=subj]', r).checked ? '主观' : '',
+          partial_rule: val(f('[data-f=prule]', r)) });
       });
     });
     var evs = [];

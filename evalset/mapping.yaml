@@ -16,11 +16,11 @@ sections:
   前提:
     {field: preconditions, type: preconditions, prefix: P, attrs: [轮次, 注入]}
   必要事实:
-    {field: facts, type: facts, kind: required, prefix: F, attrs: [关键词, 轮次, 组, 证据, 外部, 权重], append: true}
+    {field: facts, type: facts, kind: required, prefix: F, attrs: [关键词, 轮次, 组, 证据, 外部, 权重, 性质, 部分判据], append: true}
   期望事实:
-    {field: facts, type: facts, kind: expected, prefix: E, attrs: [关键词, 轮次, 组, 证据, 外部, 权重], append: true}
+    {field: facts, type: facts, kind: expected, prefix: E, attrs: [关键词, 轮次, 组, 证据, 外部, 权重, 性质, 部分判据], append: true}
   禁止事实:
-    {field: facts, type: facts, kind: forbidden, prefix: X, attrs: [轮次, 证据, 外部, 权重], append: true}
+    {field: facts, type: facts, kind: forbidden, prefix: X, attrs: [轮次, 证据, 外部, 权重, 性质], append: true}
   路径:
     {field: path, type: path, attrs: [轮次, 权重]}
   证据:

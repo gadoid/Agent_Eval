@@ -6,11 +6,15 @@
 
 题目指纹（评测结果管理改造方案 §4.1）也在本模块计算：
 - 输入指纹 input_fp：history + 用户消息序列 + 注入（point/option/rev/file/key/value）
-- 标准指纹 standard_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group）+ 路径约束
-- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组、权重不进入）
+- 标准指纹 standard_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group/nature/partial_rule）+ 路径约束
+- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组、权重不进入；性质与部分判据
+  仅在主观条目上写键——doc/16 §3.6，保证存量指纹与人工改判零变化）
 参考答案、备注、证据、标签、状态、关键条件的改动不影响任何指纹。
 权重自 v8 起移出标准（doc/15 §3.2）：md 的【权重】导入时换算落 item_weights，
 改权重只改计分（rescore），不再改变标准、不再触发重判。
+
+判据表 CRITERIA 与推导 verdict_from_criteria（doc/16 §4）是判定契约的一部分：
+P1 的模型算子/复核导读只产出判据结果，结论一律由推导函数得出，不在 prompt 里复述逻辑。
 """
 from __future__ import annotations
 
@@ -28,6 +32,72 @@ SCALES: dict[str, tuple[str, ...]] = {
     "path": ("满足", "违反", "不适用"),
     "refusal": ("拒答", "未拒答"),
 }
+
+# ---------------------------------------------------------------- 判据表（doc/16 §4）
+# 判定契约：按 类型 × 性质 固定要看的几个角度，与 SCALES 一样随代码版本走，不做配置文件。
+# 改动判据（措辞或结构）必须升 CRITERIA_VER（criteria@N），模型算子随之升版本、缓存失效。
+CRITERIA_VER = "criteria@1"
+
+_FACT_CRITERIA_OBJECTIVE = (
+    {"id": "C1", "name": "值一致", "rule": "关键值、对象、条件与条目一致"},
+    {"id": "C2", "name": "完整", "rule": "条目要求的内容都覆盖到了"},
+    {"id": "C3", "name": "无误导", "rule": "没有改变含义的限定、混淆或附加错误"},
+)
+_FACT_CRITERIA_SUBJECTIVE = (
+    {"id": "C1", "name": "覆盖", "rule": "回答提出了该做法或等价做法"},
+    {"id": "C2", "name": "充分", "rule": "给出理由、适用条件或执行要点（有部分判据时以它为准）"},
+    {"id": "C3", "name": "不相悖", "rule": "没有给出与该做法相反的建议"},
+)
+CRITERIA: dict[tuple[str, str], tuple[dict[str, str], ...]] = {
+    ("required", "objective"): _FACT_CRITERIA_OBJECTIVE,
+    ("expected", "objective"): _FACT_CRITERIA_OBJECTIVE,
+    ("required", "subjective"): _FACT_CRITERIA_SUBJECTIVE,
+    ("expected", "subjective"): _FACT_CRITERIA_SUBJECTIVE,
+    ("forbidden", "objective"): (
+        {"id": "C1", "name": "陈述", "rule": "回答中出现了该错误内容"},
+        {"id": "C2", "name": "采信", "rule": "作为结论或依据使用，而不是在纠正时复述"},
+    ),
+    ("forbidden", "subjective"): (
+        {"id": "C1", "name": "提及", "rule": "回答中出现了该做法"},
+        {"id": "C2", "name": "推荐", "rule": "作为建议提出，而不是作为反例提及"},
+    ),
+}
+
+CRIT_SAT, CRIT_UNSAT, CRIT_UNDECIDABLE = "满足", "不满足", "无法判断"
+
+
+def _crit_result(criteria: dict[str, dict], cid: str) -> str:
+    """单个判据结果；缺失或取值非法按「无法判断」（P1 自洽校验据此送人工）。"""
+    r = (criteria.get(cid) or {}).get("result")
+    return r if r in (CRIT_SAT, CRIT_UNSAT, CRIT_UNDECIDABLE) else CRIT_UNDECIDABLE
+
+
+def verdict_from_criteria(kind: str, nature: str | None, criteria: dict[str, dict]) -> str:
+    """§4.2 推导：结论由判据结果按规则推出（从上往下命中即止），不由模型自由给出。
+
+    criteria 形如 {"C1": {"result": "不满足", "contra": true}, ...}；客观条目 C1 的
+    「不满足」需带 contra 子标记区分「给了矛盾值」（错）与「未涉及」（未提及）。
+    返回 SCALES 内的结论词，或 "undecided"（任一判据无法判断 → 送人工）。
+    """
+    nature = nature or "objective"
+    ids = [c["id"] for c in CRITERIA[(kind, nature)]]
+    if any(_crit_result(criteria, c) == CRIT_UNDECIDABLE for c in ids):
+        return "undecided"
+    if kind in ("required", "expected"):
+        if nature == "objective":
+            if _crit_result(criteria, "C1") == CRIT_UNSAT:
+                return "错" if (criteria.get("C1") or {}).get("contra") else "未提及"
+            if any(_crit_result(criteria, c) == CRIT_UNSAT for c in ("C2", "C3")):
+                return "部分"
+            return "对"
+        if _crit_result(criteria, "C3") == CRIT_UNSAT:      # 主观：给出相反建议 → 错
+            return "错"
+        if _crit_result(criteria, "C1") == CRIT_UNSAT:
+            return "未提及"
+        if _crit_result(criteria, "C2") == CRIT_UNSAT:
+            return "部分"
+        return "对"
+    return "采信" if all(_crit_result(criteria, c) == CRIT_SAT for c in ids) else "未采信"
 
 
 @dataclass(frozen=True)
@@ -127,6 +197,19 @@ def input_fp_of(case: dict) -> str:
     })
 
 
+def _fact_fp(f: dict) -> dict:
+    """事实进标准指纹的载荷（doc/16 §3.6）：性质/部分判据仅在主观条目上写键，
+    客观条目载荷与旧版逐字节相同 → 存量 standard_fp、item_sha 零变化。
+    "objective" 与缺省等价（外部结构化输入可能显式写客观），同样不落键。"""
+    row = {"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text"),
+           "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group")}
+    if f.get("nature") and f.get("nature") != "objective":
+        row["nature"] = f["nature"]
+    if f.get("partial_rule"):
+        row["partial_rule"] = f["partial_rule"]
+    return row
+
+
 def standard_fp_of(case: dict) -> str:
     """标准指纹：结论能否直接比较。改事实/前提/路径约束 → 变；改输入/权重 → 不变。
     （v8 前名 judge_fp 且计入权重；权重移出后改权重不再产生新标准，doc/15 §3.2）"""
@@ -134,9 +217,7 @@ def standard_fp_of(case: dict) -> str:
         "answerable": case.get("answerable", True),
         "preconditions": [{"id": p.get("id"), "text": p.get("text"), "turn": p.get("turn")}
                           for p in (case.get("preconditions") or [])],
-        "facts": [{"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text"),
-                   "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group")}
-                  for f in (case.get("facts") or [])],
+        "facts": [_fact_fp(f) for f in (case.get("facts") or [])],
         "path": case.get("path") or [],
     })
 
@@ -244,13 +325,19 @@ def qkey_of(case: dict) -> str:
 
 def item_sha_of(item: Item) -> str:
     """条目指纹：人工改判是否仍然有效的判据。关键词与组影响规则判定，
-    但不影响人对"这条事实是否成立"的判断，不进入指纹。"""
+    但不影响人对"这条事实是否成立"的判断，不进入指纹。性质与部分判据计入
+    （doc/16 D1）：客观「部分 = 不精确」、主观「部分 = 不充分」，尺度变了旧改判作废；
+    同样仅在主观条目上写键，客观条目 sha 与旧版一致。"""
     if item.kind == "path":
         payload = {"type": item.attrs.get("type"), "action": item.attrs.get("action"), "turn": item.attrs.get("turn")}
     elif item.kind == "refusal":
         payload = {"kind": "refusal"}
     else:
         payload = {"kind": item.kind, "text": item.attrs.get("text"), "turn": item.attrs.get("turn")}
+        if item.attrs.get("nature") and item.attrs.get("nature") != "objective":
+            payload["nature"] = item.attrs["nature"]
+        if item.attrs.get("partial_rule"):
+            payload["partial_rule"] = item.attrs["partial_rule"]
     return _sha16(payload)
 
 

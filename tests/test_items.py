@@ -126,6 +126,40 @@ def test_weight_changes_judge_fp_not_item_sha():
     assert weight_of(a, 1) == 1 and weight_of(b, 1) == 2 and weight_of(Item("expected", "E1", "", None, fact("E1", weight=0)), 1) == 0
 
 
+# ---------------------------------------------------------------- 性质与部分判据（doc/16 §3.6）
+
+def test_nature_and_partial_rule_enter_fingerprints_only_when_subjective():
+    from scoring.items import Item, item_sha_of
+    base = {"id": "E1", "kind": "expected", "text": "报价单应注明付款方式",
+            "keywords": [], "turn": None, "group": None}
+    unset = dict(base)                                          # 不写（缺省客观）
+    explicit_obj = dict(base, nature="objective")               # 写「客观」：外部结构化输入可能出现
+    subjective = dict(base, nature="subjective")
+    subjective_pr = dict(subjective, partial_rule="只写短期有效算部分")
+    fp = lambda fs: standard_fp_of({"facts": fs})
+    sha = lambda f: item_sha_of(Item(f["kind"], f["id"], f["text"], f["turn"], f))
+    assert fp([unset]) == fp([explicit_obj])            # 客观（显式/缺省）与不写等价
+    assert sha(unset) == sha(explicit_obj)
+    assert fp([unset]) != fp([subjective])              # 改性质 → 新标准（重判）
+    assert sha(unset) != sha(subjective)                # D1：改性质 → 旧人工改判作废
+    assert fp([subjective]) != fp([subjective_pr])      # 改部分判据 → 新标准
+    assert sha(subjective) != sha(subjective_pr)
+    # 性质不动输入指纹
+    assert input_fp_of({"facts": [unset]}) == input_fp_of({"facts": [subjective]})
+
+
+def test_fingerprint_golden_values_for_nature_free_facts():
+    """金丝雀（doc/16 §6 验收）：无性质事实的指纹载荷逐字节稳定。
+    金手指取自 v20261028-1 基线（改动前代码计算，26 uid 已全量比对一致）；此断言
+    失败 = 指纹算法被改动，存量结论与人工改判会整体作废，必须先停下复核再动。"""
+    from scoring.items import Item, item_sha_of
+    fact = {"id": "F1", "kind": "required", "text": "2025 年 10 月出运的这单，保单号后三位应填 400",
+            "keywords": [], "turn": 2, "group": None}
+    case = {"answerable": True, "preconditions": [], "facts": [fact], "path": []}
+    assert standard_fp_of(case) == "c32adec781272de7"
+    assert item_sha_of(Item("required", "F1", fact["text"], 2, fact)) == "e2e07d96cc66ba78"
+
+
 def test_version_label_shortens_paths():
     """评测集版本短名（比较轴/配置分组不再出现文件全路径）。"""
     from scoring.items import version_label

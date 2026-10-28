@@ -93,6 +93,7 @@
             {% for f in spec.facts or [] %}
             <li class="rv-fact rv-item" data-id="{{ f.id }}">
               <span class="rv-kind" {% if f.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ f.kind|kind_label }} {{ f.id }}</span>
+              {% if f.nature %}<span class="rv-pill rv-pill--nature" title="合理表述不唯一；「部分」按充分性判">主观</span>{% endif %}
               <span class="rv-fact-text">{{ (f.text or '')[:36] }}{% if (f.text or '')|length > 36 %}…{% endif %}</span>
               {% if f.id in weight_map %}<span class="rv-weight rv-wpct-chip" data-wchip="{{ f.id }}">{{ weight_map[f.id] }}%</span>{% endif %}
               <button class="rv-btn rv-detail-btn" type="button" data-id="{{ f.id }}">详情</button>
@@ -111,6 +112,8 @@
               </div>
               <div class="rv-row-text">{{ d.text }}</div>
               {% if d.keywords %}<div class="rv-fact-meta" style="margin-top:4px">关键词：{{ d.keywords|join('、') }}</div>{% endif %}
+              {% if d.nature %}<div class="rv-fact-meta" style="margin-top:4px">性质：主观——合理表述不唯一，判「部分」看是否充分</div>{% endif %}
+              {% if d.partial_rule %}<div class="rv-fact-meta" style="margin-top:4px">部分判据：{{ d.partial_rule }}</div>{% endif %}
             </div>
             {% endfor %}
           </div>

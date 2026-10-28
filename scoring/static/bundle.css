@@ -95,6 +95,7 @@
 
 /* ---------------------------------------------------------------- Field */
 .rv-field { display: inline-flex; flex-direction: column; gap: var(--space-1); }
+.rv-field-row { display: inline-flex; align-items: center; gap: var(--space-1); }
 .rv-field > label, .rv-field-label { font-size: 13px; line-height: 20px; font-weight: 600; color: var(--ink-2); }
 .rv-input, .rv-select {
   height: var(--control-h); padding: 0 var(--space-2);
@@ -316,6 +317,8 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 }
 .rv-pill b { color: var(--ink); font-weight: 600; }
 .rv-pill--mono { font-family: var(--font-mono); font-size: 11.5px; }
+/* 主观标签（doc/16 §3.7）：中性色虚线边，与「错 / 禁止」的红色语义区分（doc/10 G5） */
+.rv-pill--nature { border-style: dashed; font-weight: 400; }
 
 /* ---------------------------------------------------------------- JudgeSwitch：判定配置 */
 .rv-judge { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); font-size: 12px; color: var(--ink-2); }
@@ -684,6 +687,17 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-pair-cell { max-width: none; }
 .rv-pair-cell .rv-md { font-size: 14px; line-height: 23px; }
 
+/* 详情页区块标题（配置详情/快照/计分规则，doc/15 §4）：静态标题条。
+ * 不得复用 .rv-pair-head——那是并排对照的 sticky 悬浮工具条，用作区块标题
+ * 会在滚动时钉在视口顶部、并和表格的 sticky 表头互相压盖（重叠修复 2026-10-28）。 */
+.rv-sec-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-page);
+  font-size: 13px; font-weight: 600; color: var(--ink);
+}
+
 /* ---------------------------------------------------------------- 窄屏 */
 @media (max-width: 860px) {
   .rv-case-hero { padding: var(--space-3); }
@@ -759,6 +773,8 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
   font-size: 12px; font-family: ui-monospace, monospace; display: inline-flex; align-items: center;
   justify-content: center; background: var(--bg-page); color: var(--ink-2); align-self: center; }
 .rv-cn-row .rv-cn-user { font-weight: 500; }
+.rv-cn-check { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 30px;
+  font-size: 12.5px; color: var(--ink-2); cursor: pointer; user-select: none; }
 
 .rv-cn-area { min-height: 56px; font-family: inherit; }
 .rv-cn-md { margin: 8px 0 0; padding: 12px; background: var(--bg-page); border: 1px solid var(--border);

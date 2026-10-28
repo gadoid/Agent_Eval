@@ -407,3 +407,87 @@ def test_error_bad_weight(env):
                               f"- F1：太保的倒签保函在开船时提供 【证据：R1】【权重：{bad_w}】")
         e = parse_err(env, bad, "kr-0001")
         assert any("权重" in x for x in e.errors), bad_w
+
+
+# ---------------------------------------------------------------- 性质与部分判据（doc/16 §3）
+
+KR_WITH_NATURE = KR_CASE.replace(
+    "- F1：太保的倒签保函在开船时提供 【证据：R1】",
+    "- F1：太保的倒签保函在开船时提供 【证据：R1】\n\n## 期望事实\n"
+    "- E1：建议注明保函费用 【外部】【性质：主观】\n"
+    "- E2：建议注明有效期 【外部】【性质：主观】【部分判据：只写\u201c短期\u201d、未给具体期限算部分】")
+
+
+def test_nature_parses_compiles_and_round_trips(env):
+    case = parse_ok(env, KR_WITH_NATURE, "kr-0001")
+    by_id = {f["id"]: f for f in case["facts"]}
+    assert "nature" not in by_id["F1"]                          # 客观缺省不落键
+    assert by_id["E1"]["nature"] == "subjective" and "partial_rule" not in by_id["E1"]
+    assert by_id["E2"]["nature"] == "subjective"
+    assert by_id["E2"]["partial_rule"].startswith("只写")
+    rows = md2case.compile_case(case, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")
+    by_id = {f["id"]: f for f in rows[0]["facts"]}
+    assert "nature" not in by_id["F1"] and "partial_rule" not in by_id["F1"]   # 客观编译行与旧版逐字节一致
+    assert by_id["E1"]["nature"] == "subjective"
+    assert by_id["E2"]["partial_rule"].startswith("只写")
+    again = md2case.md_to_case(md2case.case_to_md(case), "<rt>")
+    assert again["facts"] == case["facts"]                      # 回写往返
+
+
+def test_nature_objective_explicit_is_equivalent(env):
+    """【性质：客观】与不写等价：解析后不落键、编译行相同。"""
+    plain = parse_ok(env, KR_CASE, "kr-0001")
+    explicit = parse_ok(env, KR_CASE.replace("【证据：R1】", "【证据：R1】【性质：客观】"), "kr-0001")
+    assert explicit["facts"] == plain["facts"]
+
+
+def test_error_bad_nature_value(env):
+    for bad_v in ("中立", ""):
+        attr = "【性质】" if bad_v == "" else f"【性质：{bad_v}】"
+        e = parse_err(env, KR_CASE.replace("【证据：R1】", f"【证据：R1】{attr}"), "kr-0001")
+        assert any("性质只能是" in x for x in e.errors), bad_v
+
+
+def test_error_partial_rule_placement(env):
+    # 客观条目（未标性质）上写部分判据 → 错误
+    e = parse_err(env, KR_CASE.replace("【证据：R1】", "【证据：R1】【部分判据：写一半算部分】"), "kr-0001")
+    assert any("【性质：主观】" in x for x in e.errors)
+    # 禁止条目上写部分判据 → 错误（结论刻度没有「部分」）
+    bad = EC_CASE.replace("后三位应填 500 【轮次：2】【证据：R1】",
+                          "后三位应填 500 【轮次：2】【证据：R1】【性质：主观】【部分判据：复述即算部分】")
+    e = parse_err(env, bad, "ec-0102")
+    assert any("禁止事实不写【部分判据】" in x for x in e.errors)
+    # 标了主观但部分判据为空 → 错误
+    e = parse_err(env, KR_CASE.replace("【证据：R1】", "【证据：R1】【性质：主观】【部分判据】"), "kr-0001")
+    assert any("部分判据为空" in x for x in e.errors)
+
+
+def test_error_bracket_in_fact_body(env):
+    """长【部分判据】踩线（值内含【】）时定界被破坏 → 正文含「【」报错。"""
+    bad = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
+                          "- F1：太保的倒签保函在开船时提供，见【规范】第 3 条 【证据：R1】")
+    e = parse_err(env, bad, "kr-0001")
+    assert any("正文中不得出现" in x for x in e.errors)
+
+
+def test_error_group_nature_mismatch(env):
+    both = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
+                           "- F1：太保的倒签保函在开船时提供 【组：G1】【证据：R1】\n\n"
+                           "## 期望事实\n- E1：另一说法 【组：G1】【轮次：1】【外部】【性质：主观】")
+    e = parse_err(env, both, "kr-0001")
+    assert any("性质必须一致" in x for x in e.errors)
+    same = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
+                           "- F1：太保的倒签保函在开船时提供 【组：G1】【轮次：1】【证据：R1】【性质：主观】\n\n"
+                           "## 期望事实\n- E1：另一说法 【组：G1】【轮次：1】【外部】【性质：主观】\n"
+                           "- E2：再一说法 【组：G1】【轮次：1】【外部】【性质：主观】")
+    parse_ok(env, same, "kr-0001")                              # 组内全主观且轮次一致 → 通过
+
+
+def test_warn_required_subjective_and_subjective_with_keywords(env):
+    text = KR_CASE.replace(
+        "- F1：太保的倒签保函在开船时提供 【证据：R1】",
+        "- F1：倒签保函建议在开船时提供 【证据：R1】【性质：主观】【关键词：开船】\n\n"
+        "## 期望事实\n- E1：注明费用 【外部】【性质：主观】【关键词：费用】")
+    case = parse_ok(env, text, "kr-0001")
+    assert any("必要事实 F1 标为主观" in w for w in case["_warnings"])
+    assert any("写了关键词" in w for w in case["_warnings"])

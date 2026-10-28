@@ -43,7 +43,7 @@
 
   {% if others %}
   <div class="rv-sheet" style="margin-bottom:12px">
-    <div class="rv-pair-head">与库内其他规则对比</div>
+    <div class="rv-sec-head">与库内其他规则对比</div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">
       <select class="rv-select" id="diff-pick">
         {% for o in others %}<option value="{{ o.rules_sha }}" {% if o.rules_sha == diff_sha %}selected{% endif %}>

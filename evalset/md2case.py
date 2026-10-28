@@ -356,6 +356,9 @@ def p_facts(lines, rule, errors):
     out, seen = [], set()
     for no, _, t in bullets(lines, errors):
         t, attrs = split_attrs(t)
+        if kind == "forbidden" and "部分判据" in attrs:       # doc/16 §3.5：报具体原因，先于通用属性校验
+            errors.append(f"第 {no} 行：禁止事实不写【部分判据】——结论刻度只有「采信 / 未采信」，没有「部分」")
+            continue
         bad = [k for k in attrs if k not in allowed]
         if bad:
             errors.append(f"第 {no} 行：不支持的属性「{'、'.join(bad)}」，可用：{'、'.join(allowed) or '无'}")
@@ -368,7 +371,26 @@ def p_facts(lines, rule, errors):
             errors.append(f"第 {no} 行：编号 {kv[0]} 重复")
             continue
         seen.add(kv[0])
+        if "【" in kv[1]:
+            # 行尾属性已剥离后正文仍有「【」＝定界被破坏（长【部分判据】文本最易触发），doc/16 §3.5
+            errors.append(f"第 {no} 行：{kv[0]} 正文中不得出现「【」（属性值内也不得写「【」「】」）")
+            continue
         item: dict = {"id": kv[0], "kind": kind, "text": kv[1]}
+        if "性质" in attrs:                     # doc/16 §3.3：客观与不写等价，不落键
+            nv = attrs["性质"]
+            if nv == "主观":
+                item["nature"] = "subjective"
+            elif nv != "客观":
+                errors.append(f"第 {no} 行：{kv[0]} 性质只能是「客观 / 主观」，当前为「{nv or '（空）'}」")
+                continue
+        if "部分判据" in attrs:                  # doc/16 §3.3：仅必要/期望的主观条目（禁止已在段首拦截）
+            if item.get("nature") != "subjective":
+                errors.append(f"第 {no} 行：{kv[0]} 【部分判据】只允许写在标了【性质：主观】的必要/期望条目上")
+                continue
+            if not attrs["部分判据"]:
+                errors.append(f"第 {no} 行：{kv[0]} 部分判据为空，应写成「【部分判据：只写甲、未写乙算部分】」")
+                continue
+            item["partial_rule"] = attrs["部分判据"]
         if "关键词" in attrs:
             if kind == "forbidden":
                 errors.append(f"第 {no} 行：{kv[0]} 禁止事实不写关键词——纠错时的复述会被误判为采信")
@@ -735,6 +757,8 @@ def check_cross(case, mapping, errors, warns):
         turns_in_g = {m.get("turn") for m in members}
         if len(turns_in_g) > 1:
             errors.append(f"组 {g} 内事实的轮次必须相同，当前为 {'、'.join(str(t) for t in sorted(turns_in_g, key=str))}")
+        if len({m.get("nature") for m in members}) > 1:      # doc/16 §3.5：组内性质必须一致
+            errors.append(f"组 {g} 成员的性质必须一致（客观/主观的尺度不能混在一个计分单位里）")
 
     # prefill：需要各轮参考回复；只考最后一轮
     if case.get("history") == "prefill":
@@ -782,6 +806,12 @@ def check_warnings(case, warns):
             if f["kind"] == "required" and not f.get("evidence"):
                 warns.append(f"必要事实 {f['id']} 未标注来源（【证据：Rn】或【外部】）")
                 break
+    for f in facts:                                          # doc/16 §3.5：性质相关提示
+        if f.get("nature") == "subjective":
+            if f["kind"] == "required":
+                warns.append(f"必要事实 {f['id']} 标为主观——缺了它业务上判错，请确认不是期望事实")
+            if f.get("keywords"):
+                warns.append(f"主观事实 {f['id']} 写了关键词——合理表述不唯一，关键词命中容易漏判（P1 起主观条目不走 keyword）")
     for t in (case.get("turns") or []) + [v.get("text", "") for v in case.get("variants") or []]:
         if RELATIVE_DATE.search(t):
             warns.append(f"问题或变体出现相对日期（{RELATIVE_DATE.search(t).group(0)}），一律写绝对日期")
@@ -887,6 +917,10 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
             row["turn"] = f.get("turn")
             row["group"] = f.get("group")
             row["evidence"] = f.get("evidence")
+            if f.get("nature"):                              # doc/16 §3.4：缺省（客观）不落键，存量编译行逐字节不变
+                row["nature"] = f["nature"]
+            if f.get("partial_rule"):
+                row["partial_rule"] = f["partial_rule"]
             out.append(row)          # v8 起权重不进标准（doc/15 §3.9）：行顶层 weights 带 md 原值
         return out
 
@@ -1239,7 +1273,9 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
                                          "轮次": f.get("turn"), "组": f.get("group"),
                                          "证据": f.get("evidence") if f.get("evidence") not in ("external", None) else None,
                                          "外部": True if f.get("evidence") == "external" else None,
-                                         "权重": f.get("weight")})
+                                         "权重": f.get("weight"),
+                                         "性质": "主观" if f.get("nature") == "subjective" else None,
+                                         "部分判据": f.get("partial_rule")})
                             for f in v],
         "path": lambda v: [f"- {'必须' if p['type'] == 'must' else '禁止'}：加载 skill {p['action']['skill']}"
                            + attrs_str({"轮次": p.get("turn"), "权重": p.get("weight")}) for p in v],
