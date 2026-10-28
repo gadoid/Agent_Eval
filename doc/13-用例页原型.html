@@ -1,0 +1,1454 @@
+<!--
+  修订注记（doc/14 §9 / doc/15 §9，2026-10-28）：本原型按旧配置模型设计。
+  实施后的差异：①「期望版本」下拉改为「标准历史」（standard_fp 短码 · 快照版本，
+  侧边栏三件套=快照 · 判定配置 · 计分规则）；②配置名与默认配置按 subject_fp 生成
+  （差异属性候选=模型/努力/技能方式/基底/agent 版本），不再按 CONFIG_ATTRS；
+  ③权重编辑写 item_weights、保存即重算本用例，无「待重判」；④「执行记录」为筛选
+  与追溯维度，诊断会话在对比页诊断视图单独查看；⑤模式轴只在诊断视图出现。
+-->
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>用例页原型 · doc/13 v2</title>
+<style>
+/* Agent_Eval 复核 · 设计 token（取自 doc/10 设计系统原型） */
+
+:root, [data-theme="light"]{--bg-page:#f5f4f0;--bg-surface:#ffffff;--bg-sunken:#efede7;--bg-selected:#eef3fb;--line:#dedad1;--line-strong:#8a8478;--ink:#1d1b18;--ink-2:#47423b;--ink-3:#655f56;--accent:#2350a0;--accent-hover:#1a3d7d;--on-accent:#ffffff;--accent-soft:#e6edf9;--accent-ink:#1d4589;--focus:var(--accent);--pass-soft:#dcefef;--pass-ink:#0a5a63;--pass-solid:#0e6c77;--fail-soft:#fbe7dd;--fail-ink:#9e350a;--fail-solid:#b5440f;--partial-soft:#f6eecf;--partial-ink:#6b5300;--partial-solid:#8c6c00;--neutral-soft:#ebe9e4;--neutral-ink:#504b44;--neutral-solid:#5f5a52;--error-soft:#f5e5ef;--error-ink:#8a2a63;--on-solid:#ffffff;--notice-soft:#fff2c4;--notice-ink:#5e4500;--notice-line:#c9a237;--mark-hit:#ffe48a;--mark-forbid:#ffd3c2;--src-rule:#3d5a72;--src-model:#6e4a8c;--src-human:var(--accent);--delta-up:#00909e;--delta-down:#c64a12;--shadow-card:0 1px 2px rgba(29, 27, 24, 0.06);--shadow-sticky:0 2px 8px rgba(29, 27, 24, 0.08);}
+[data-theme="dark"]{--bg-page:#161514;--bg-surface:#1f1e1c;--bg-sunken:#191817;--bg-selected:#1d2738;--line:#34322e;--line-strong:#77706a;--ink:#edeae4;--ink-2:#c6c0b6;--ink-3:#a29b90;--accent:#8fb0f0;--accent-hover:#adc6f6;--on-accent:#0f1d36;--accent-soft:#1e2b44;--accent-ink:#b4ccf7;--focus:var(--accent);--pass-soft:#11302f;--pass-ink:#7fd0d4;--pass-solid:#4fb8bf;--fail-soft:#3a1f14;--fail-ink:#f4a47e;--fail-solid:#e7814f;--partial-soft:#322a0e;--partial-ink:#e4c65e;--partial-solid:#cfae3c;--neutral-soft:#2b2a27;--neutral-ink:#c2bcb2;--neutral-solid:#a8a297;--error-soft:#361a2c;--error-ink:#eaa1cf;--on-solid:#141311;--notice-soft:#33290c;--notice-ink:#ecd17d;--notice-line:#8a7228;--mark-hit:#5a4810;--mark-forbid:#5b2614;--src-rule:#a2bbcf;--src-model:#c6a7de;--src-human:var(--accent);--delta-up:#22a7b3;--delta-down:#e0703c;--shadow-card:0 1px 2px rgba(0, 0, 0, 0.4);--shadow-sticky:0 2px 8px rgba(0, 0, 0, 0.5);}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg-page:#161514;--bg-surface:#1f1e1c;--bg-sunken:#191817;--bg-selected:#1d2738;--line:#34322e;--line-strong:#77706a;--ink:#edeae4;--ink-2:#c6c0b6;--ink-3:#a29b90;--accent:#8fb0f0;--accent-hover:#adc6f6;--on-accent:#0f1d36;--accent-soft:#1e2b44;--accent-ink:#b4ccf7;--focus:var(--accent);--pass-soft:#11302f;--pass-ink:#7fd0d4;--pass-solid:#4fb8bf;--fail-soft:#3a1f14;--fail-ink:#f4a47e;--fail-solid:#e7814f;--partial-soft:#322a0e;--partial-ink:#e4c65e;--partial-solid:#cfae3c;--neutral-soft:#2b2a27;--neutral-ink:#c2bcb2;--neutral-solid:#a8a297;--error-soft:#361a2c;--error-ink:#eaa1cf;--on-solid:#141311;--notice-soft:#33290c;--notice-ink:#ecd17d;--notice-line:#8a7228;--mark-hit:#5a4810;--mark-forbid:#5b2614;--src-rule:#a2bbcf;--src-model:#c6a7de;--src-human:var(--accent);--delta-up:#22a7b3;--delta-down:#e0703c;--shadow-card:0 1px 2px rgba(0, 0, 0, 0.4);--shadow-sticky:0 2px 8px rgba(0, 0, 0, 0.5);}}
+:root{--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px;--radius-sm:4px;--radius-md:6px;--radius-lg:10px;--radius-pill:999px;--page-max:1280px;--read-max:760px;--control-h:32px;--answer-max-h:320px;--font-sans:"PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Segoe UI", system-ui, sans-serif;--font-mono:"JetBrains Mono", "Cascadia Mono", Consolas, "SFMono-Regular", ui-monospace, monospace;}
+
+:root{color-scheme:light}
+[data-theme="dark"]{color-scheme:dark}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark}}
+
+/* Agent_Eval 复核 — component styles. Load after tokens.css. Plain classes for
+   the Jinja templates in scoring/templates; no build step, no framework. */
+
+.rv-app {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 22px;
+  -webkit-font-smoothing: antialiased;
+}
+.rv-app *, .rv-app *::before, .rv-app *::after { box-sizing: border-box; }
+.rv-app a { color: var(--accent); text-decoration: none; }
+.rv-app a:hover { color: var(--accent-hover); text-decoration: underline; }
+.rv-app :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-mono { font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.rv-meta { color: var(--ink-3); font-size: 12px; line-height: 18px; }
+.rv-meta > * + *::before { content: "·"; margin: 0 6px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- AppHeader */
+.rv-header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: var(--space-5);
+  height: 52px; padding: 0 var(--space-4);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow-sticky);
+}
+.rv-brand { font-weight: 600; font-size: 15px; color: var(--ink); white-space: nowrap; }
+.rv-nav { display: flex; gap: var(--space-1); height: 100%; }
+.rv-nav a {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 var(--space-3); height: 100%;
+  color: var(--ink-2); font-size: 14px;
+  border-bottom: 2px solid transparent;
+}
+.rv-nav a:hover { color: var(--ink); text-decoration: none; background: var(--bg-page); }
+.rv-nav a[aria-current="page"] { color: var(--accent-ink); border-bottom-color: var(--accent); font-weight: 600; }
+.rv-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 18px; padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft); color: var(--accent-ink);
+  font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.rv-count[data-tone="notice"] { background: var(--notice-soft); color: var(--notice-ink); }
+.rv-header .rv-header-meta { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- Page */
+.rv-page { max-width: var(--page-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); }
+.rv-page-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-4); }
+.rv-page-head h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- Card */
+.rv-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+.rv-card + .rv-card { margin-top: var(--space-3); }
+.rv-card > h2, .rv-card-title { margin: 0 0 var(--space-3); font-size: 16px; line-height: 24px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- Button */
+.rv-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  height: var(--control-h); padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font: inherit; font-size: 13px; font-weight: 500; line-height: 1;
+  cursor: pointer; white-space: nowrap;
+}
+.rv-btn:hover { background: var(--bg-page); }
+.rv-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.rv-btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.rv-btn--ghost { border-color: transparent; background: transparent; color: var(--accent); }
+.rv-btn--ghost:hover { background: var(--accent-soft); }
+.rv-btn[disabled], .rv-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.rv-kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  border: 1px solid currentColor; border-radius: var(--radius-sm);
+  font-family: var(--font-mono); font-size: 11px; line-height: 1; opacity: .8;
+}
+
+/* ---------------------------------------------------------------- Field */
+.rv-field { display: inline-flex; flex-direction: column; gap: var(--space-1); }
+.rv-field > label, .rv-field-label { font-size: 13px; line-height: 20px; font-weight: 600; color: var(--ink-2); }
+.rv-input, .rv-select {
+  height: var(--control-h); padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font: inherit; font-size: 13px;
+}
+.rv-input::placeholder { color: var(--ink-3); }
+.rv-input:focus-visible, .rv-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+.rv-filterbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+
+/* ---------------------------------------------------------------- VerdictBadge */
+.rv-verdict {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: 22px; padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap;
+  background: var(--neutral-soft); color: var(--neutral-ink);
+}
+.rv-verdict::before { font-size: 11px; content: "–"; }
+.rv-verdict[data-tone="pass"]      { background: var(--pass-soft);    color: var(--pass-ink); }
+.rv-verdict[data-tone="pass"]::before { content: "✓"; }
+.rv-verdict[data-tone="fail"]      { background: var(--fail-soft);    color: var(--fail-ink); }
+.rv-verdict[data-tone="fail"]::before { content: "✕"; }
+.rv-verdict[data-tone="partial"]   { background: var(--partial-soft); color: var(--partial-ink); }
+.rv-verdict[data-tone="partial"]::before { content: "◐"; }
+.rv-verdict[data-tone="undecided"] { background: var(--accent-soft);  color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.rv-verdict[data-tone="undecided"]::before { content: "?"; }
+.rv-verdict[data-tone="error"]     { background: var(--error-soft);   color: var(--error-ink); }
+.rv-verdict[data-tone="error"]::before { content: "!"; }
+.rv-verdict--lg { height: 28px; padding: 0 var(--space-3); font-size: 14px; }
+
+/* ---------------------------------------------------------------- SourceTag */
+.rv-src { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; }
+.rv-src::before { content: ""; width: 7px; height: 7px; background: currentColor; }
+.rv-src[data-src="rule"]  { color: var(--src-rule); }
+.rv-src[data-src="judge"] { color: var(--src-model); }
+.rv-src[data-src="judge"]::before { transform: rotate(45deg) scale(.9); }
+.rv-src[data-src="human"] { color: var(--src-human); }
+.rv-src[data-src="human"]::before { border-radius: 50%; width: 8px; height: 8px; }
+
+/* ---------------------------------------------------------------- KindTag (fact kind — outlined, never a verdict colour) */
+.rv-kind {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap;
+}
+.rv-kind[data-kind="forbidden"] { border-style: dashed; }
+
+/* ---------------------------------------------------------------- ItemChip */
+.rv-chip {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 3px var(--space-1) 3px var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg-surface); font-size: 12px; line-height: 18px;
+}
+.rv-chip-id { font-family: var(--font-mono); color: var(--ink-2); }
+.rv-chip .rv-verdict { height: 20px; }
+.rv-chip[data-overridden] { border-color: var(--accent); }
+.rv-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* ---------------------------------------------------------------- VerdictPicker */
+.rv-picker { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); border: 0; margin: 0; padding: 0; }
+.rv-picker legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.rv-opt { position: relative; }
+.rv-opt input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.rv-opt > span {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--control-h); padding: 0 var(--space-3);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font-size: 13px; font-weight: 500; cursor: pointer; user-select: none;
+}
+.rv-opt > span .rv-kbd { opacity: .6; }
+.rv-opt:hover > span { background: var(--bg-page); }
+.rv-opt input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-opt input:checked + span { color: var(--on-solid); font-weight: 600; }
+.rv-opt[data-tone="pass"]    input:checked + span { background: var(--pass-solid);    border-color: var(--pass-solid); }
+.rv-opt[data-tone="fail"]    input:checked + span { background: var(--fail-solid);    border-color: var(--fail-solid); }
+.rv-opt[data-tone="partial"] input:checked + span { background: var(--partial-solid); border-color: var(--partial-solid); }
+.rv-opt[data-tone="neutral"] input:checked + span { background: var(--neutral-solid); border-color: var(--neutral-solid); }
+.rv-opt input:checked + span .rv-kbd { opacity: .9; }
+
+/* ---------------------------------------------------------------- AnswerPane */
+.rv-answer {
+  position: relative;
+  max-width: var(--read-max);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-sunken); color: var(--ink);
+  font-size: 15px; line-height: 26px;
+  overflow-wrap: anywhere;
+}
+.rv-answer p { margin: 0 0 var(--space-2); }
+.rv-answer p:last-child { margin-bottom: 0; }
+.rv-answer pre, .rv-answer code { font-family: var(--font-mono); font-size: 12.5px; }
+.rv-answer pre { white-space: pre-wrap; margin: 0; }
+.rv-answer table { border-collapse: collapse; font-size: 13px; line-height: 20px; margin: var(--space-2) 0; }
+.rv-answer th, .rv-answer td { border: 1px solid var(--line); padding: 4px var(--space-2); }
+.rv-answer--collapsed { max-height: var(--answer-max-h); overflow: hidden; }
+.rv-answer--collapsed::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 56px;
+  background: linear-gradient(rgba(0,0,0,0), var(--bg-sunken));
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+.rv-answer-head { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-2); }
+.rv-answer-q { color: var(--ink-2); font-size: 13px; line-height: 20px; }
+.rv-answer-q::before { content: "问："; font-weight: 600; }
+.rv-answer-more { margin-top: var(--space-1); }
+mark.rv-hit    { background: var(--mark-hit);    color: var(--ink); padding: 0 2px; border-radius: 2px; }
+mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2px; border-radius: 2px; text-decoration: underline wavy var(--fail-ink); text-underline-offset: 4px; }
+
+/* ---------------------------------------------------------------- ExpectationPanel */
+.rv-expect { display: grid; gap: var(--space-2); }
+.rv-expect-q { font-size: 15px; line-height: 24px; }
+.rv-expect-q b { font-weight: 600; margin-right: var(--space-1); }
+.rv-facts { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.rv-fact { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); align-items: start; }
+.rv-fact .rv-kind { margin-top: 1px; }
+.rv-fact-text { font-size: 14px; line-height: 22px; }
+.rv-fact-meta { display: block; color: var(--ink-3); font-size: 12px; line-height: 18px; }
+.rv-expect--sticky { position: sticky; top: 60px; z-index: 5; box-shadow: var(--shadow-sticky); }
+
+/* ---------------------------------------------------------------- Tabs & progress（队列筛选） */
+.rv-tabs { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--bg-sunken); border: 1px solid var(--line); }
+.rv-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 var(--space-3);
+  border-radius: 4px; color: var(--ink-2); font-size: 13px; font-weight: 500;
+}
+.rv-app a.rv-tab:hover { text-decoration: none; color: var(--ink); background: var(--bg-surface); }
+.rv-tab[aria-current="page"] { background: var(--bg-surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-card); }
+.rv-progress { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--ink-2); }
+.rv-progress-track { width: 120px; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); overflow: hidden; }
+.rv-progress-fill { height: 100%; background: var(--accent); }
+.rv-keys { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin-left: auto; color: var(--ink-3); font-size: 12px; }
+.rv-keys span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ---------------------------------------------------------------- RateCell */
+.rv-rate { display: inline-grid; gap: 3px; min-width: 96px; font-variant-numeric: tabular-nums; }
+.rv-rate-main { display: flex; align-items: baseline; gap: 6px; }
+.rv-rate-pct { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--ink); }
+.rv-rate-n { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-rate-bar { display: flex; height: 4px; border-radius: var(--radius-pill); background: var(--bg-sunken); overflow: hidden; }
+.rv-rate-bar i { display: block; height: 100%; background: var(--pass-solid); }
+.rv-rate-ci { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-rate--provisional .rv-rate-pct::after { content: "临时"; margin-left: 4px; padding: 0 4px; border-radius: var(--radius-sm); background: var(--notice-soft); color: var(--notice-ink); font-family: var(--font-sans); font-size: 10px; font-weight: 600; }
+.rv-rate--empty { color: var(--ink-3); }
+.rv-stats { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
+.rv-stat { flex: 1 1 140px; padding: var(--space-3) var(--space-4); background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-stat-label { font-size: 12px; color: var(--ink-2); }
+.rv-stat-value { font-family: var(--font-mono); font-size: 22px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-stat-note { font-size: 12px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- DataTable */
+.rv-table-wrap { overflow-x: auto; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 20px; }
+.rv-table th, .rv-table td { padding: var(--space-2) var(--space-3); text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.rv-table thead th { position: sticky; top: 0; background: var(--bg-surface); color: var(--ink-2); font-size: 12px; font-weight: 600; white-space: nowrap; border-bottom-color: var(--line-strong); }
+.rv-table tbody tr:last-child > * { border-bottom: 0; }
+.rv-table tbody tr:hover > * { background: var(--bg-page); }
+.rv-table .rv-num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.rv-table th[scope="row"] { font-weight: 500; color: var(--ink); white-space: nowrap; }
+.rv-table .rv-sticky-col { position: sticky; left: 0; background: var(--bg-surface); z-index: 1; }
+
+/* ---------------------------------------------------------------- Notice */
+.rv-notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--notice-line); border-radius: var(--radius-lg);
+  background: var(--notice-soft); color: var(--notice-ink);
+  font-size: 13px; line-height: 20px;
+}
+.rv-notice b { font-weight: 600; }
+.rv-notice[data-tone="error"] { background: var(--error-soft); color: var(--error-ink); border-color: var(--error-ink); }
+.rv-notice[data-tone="info"]  { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent); }
+.rv-cmd {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 2px 4px 2px var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink); border: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 12px;
+}
+.rv-cmd button { height: 22px; padding: 0 var(--space-2); font-size: 12px; }
+
+/* ---------------------------------------------------------------- Pager & empty */
+.rv-pager { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); font-size: 13px; color: var(--ink-2); }
+.rv-pager .rv-pager-pos { font-variant-numeric: tabular-nums; }
+.rv-empty { padding: var(--space-6) var(--space-4); text-align: center; color: var(--ink-3); }
+.rv-empty b { display: block; color: var(--ink); font-size: 16px; line-height: 24px; margin-bottom: var(--space-1); }
+
+/* ================================================================ v2：以对话为单位的复核 */
+
+/* ---------------------------------------------------------------- Markdown 正文（对话、参考答案） */
+.rv-md { font-size: 15px; line-height: 26px; color: var(--ink); overflow-wrap: anywhere; }
+.rv-md > :first-child { margin-top: 0; }
+.rv-md > :last-child { margin-bottom: 0; }
+.rv-md p, .rv-md ul, .rv-md ol, .rv-md blockquote, .rv-md pre, .rv-md table { margin: 0 0 var(--space-2); }
+.rv-md h1, .rv-md h2, .rv-md h3, .rv-md h4 { margin: var(--space-3) 0 var(--space-1); font-size: 15px; line-height: 24px; font-weight: 600; }
+.rv-md ul, .rv-md ol { padding-left: 1.5em; }
+.rv-md li + li { margin-top: 2px; }
+.rv-md strong { font-weight: 600; }
+.rv-md blockquote { padding: 2px var(--space-3); border-left: 3px solid var(--line-strong); color: var(--ink-2); }
+.rv-md code { font-family: var(--font-mono); font-size: 12.5px; padding: 1px 4px; border-radius: var(--radius-sm); background: var(--bg-page); }
+.rv-md pre { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--bg-page); white-space: pre-wrap; }
+.rv-md pre code { padding: 0; background: none; }
+.rv-md table { border-collapse: collapse; font-size: 13px; line-height: 20px; display: block; overflow-x: auto; }
+.rv-md th, .rv-md td { border: 1px solid var(--line); padding: 4px var(--space-2); text-align: left; }
+.rv-md th { background: var(--bg-page); font-weight: 600; }
+.rv-md hr { border: 0; border-top: 1px solid var(--line); margin: var(--space-3) 0; }
+
+/* ---------------------------------------------------------------- RunTag：被测配置 */
+.rv-runtag { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); font-size: 12px; line-height: 18px; }
+.rv-runtag-k { color: var(--ink-3); margin-right: 2px; }
+.rv-pill {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg-surface);
+  color: var(--ink-2); font-size: 12px; white-space: nowrap;
+}
+.rv-pill b { color: var(--ink); font-weight: 600; }
+.rv-pill--mono { font-family: var(--font-mono); font-size: 11.5px; }
+
+/* ---------------------------------------------------------------- JudgeSwitch：判定配置 */
+.rv-judge { display: inline-flex; align-items: center; gap: var(--space-2); font-size: 12px; color: var(--ink-2); }
+.rv-judge .rv-select { height: 28px; font-size: 12px; max-width: 260px; }
+
+/* ---------------------------------------------------------------- ConclusionBar */
+.rv-concl {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface);
+}
+.rv-concl-text { flex: 1; min-width: 240px; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.rv-concl-text b { color: var(--ink); font-weight: 600; }
+.rv-concl-what { display: inline-flex; align-items: center; gap: 4px; margin-right: var(--space-2); }
+.rv-concl-actions { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); margin-left: auto; }
+.rv-concl[data-draft] { border-color: var(--notice-line); }
+
+/* ---------------------------------------------------------------- ConversationPane */
+.rv-conv { display: grid; gap: var(--space-4); }
+.rv-turn { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); overflow: hidden; scroll-margin-top: 120px; }
+.rv-turn.is-linked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.rv-turn-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line);
+  font-size: 12px; line-height: 18px; color: var(--ink-2);
+}
+.rv-turn-head b { color: var(--ink); font-size: 13px; font-weight: 600; margin-right: var(--space-1); }
+.rv-turn-head .rv-turn-items { margin-left: auto; }
+.rv-msg { display: grid; grid-template-columns: 44px 1fr; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
+.rv-msg + .rv-msg { border-top: 1px dashed var(--line); }
+.rv-msg-who { font-size: 12px; line-height: 26px; font-weight: 600; color: var(--ink-3); }
+.rv-msg[data-role="user"] { background: var(--bg-surface); }
+.rv-msg[data-role="user"] .rv-md { font-size: 14px; line-height: 22px; }
+.rv-msg[data-role="user"] .rv-msg-who { line-height: 22px; }
+.rv-msg[data-role="assistant"] { background: var(--bg-sunken); }
+.rv-msg[data-role="preset"] { background: var(--bg-page); }
+.rv-msg[data-role="preset"] .rv-msg-who::after { content: "预置"; display: block; font-weight: 400; font-size: 11px; }
+.rv-obs { display: inline-flex; align-items: center; gap: 4px; }
+.rv-obs[data-ok="false"] { color: var(--fail-ink); }
+
+/* ---------------------------------------------------------------- ScoreSheet */
+.rv-sheet { background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-sheet-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.rv-sheet-head h2 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+.rv-sheet-head .rv-meta { margin-left: auto; }
+.rv-sec { padding: var(--space-2) var(--space-4) 0; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.rv-sec span { font-weight: 400; }
+.rv-row {
+  display: grid; gap: var(--space-2);
+  margin: var(--space-2) var(--space-2) 0; padding: var(--space-3);
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  cursor: pointer; outline: none;
+}
+.rv-row:last-child { margin-bottom: var(--space-2); }
+.rv-row:hover { background: var(--bg-page); }
+.rv-row.is-active { background: var(--bg-selected); border-color: var(--accent); }
+.rv-row-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-row-top .rv-meta { flex: 1; }
+.rv-state {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border-radius: var(--radius-sm);
+  font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+.rv-state[data-s="need"]  { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+.rv-state[data-s="draft"] { background: var(--notice-soft); color: var(--notice-ink); }
+.rv-state[data-s="human"] { background: var(--accent-soft); color: var(--accent-ink); }
+.rv-state[data-s="void"]  { background: var(--error-soft); color: var(--error-ink); }
+.rv-state[data-s="off"]   { background: var(--neutral-soft); color: var(--neutral-ink); }
+.rv-row-text { font-size: 14px; line-height: 22px; color: var(--ink); }
+.rv-row-text .rv-fact-meta { display: block; }
+.rv-row[data-off] .rv-row-text { color: var(--ink-2); }
+.rv-mc { display: grid; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--bg-page); font-size: 12px; line-height: 18px; }
+.rv-mc-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-mc-k { font-weight: 600; color: var(--ink-2); }
+.rv-mc-op { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
+.rv-mc-why { color: var(--ink-2); }
+.rv-mc-trace { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-mc-was { color: var(--ink-3); text-decoration: line-through; }
+.rv-hc { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-hc .rv-input { flex: 1; min-width: 160px; height: 28px; font-size: 12px; }
+.rv-picker--sm .rv-opt > span { height: 28px; padding: 0 var(--space-2); font-size: 12px; gap: 4px; }
+.rv-agree { height: 28px; font-size: 12px; }
+.rv-sheet-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- ReviewLayout */
+.rv-review-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(380px, 460px); gap: var(--space-4); align-items: start; }
+.rv-review-layout > .rv-sheet { position: sticky; top: 68px; max-height: calc(100vh - 84px); overflow: auto; }
+@media (max-width: 1100px) { .rv-review-layout { grid-template-columns: 1fr; } .rv-review-layout > .rv-sheet { position: static; max-height: none; } }
+.rv-crumb { font-size: 12px; color: var(--ink-3); }
+.rv-crumb a { color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- ConversationQueue */
+.rv-cq { list-style: none; margin: 0; padding: 0; background: var(--bg-surface); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.rv-cq li { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.rv-cq li:last-child { border-bottom: 0; }
+.rv-cq li:hover { background: var(--bg-page); }
+.rv-cq li > .rv-verdict { justify-self: start; }
+.rv-cq-main { display: grid; gap: 2px; min-width: 0; }
+.rv-cq-title { font-size: 14px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-cq-title a { font-weight: 600; margin-right: var(--space-2); }
+.rv-cq-todo { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); justify-content: flex-end; }
+
+/* ---------------------------------------------------------------- CaseInfo */
+.rv-caseinfo { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-3) var(--space-4); margin: 0; }
+.rv-caseinfo div { display: grid; gap: 2px; min-width: 0; }
+.rv-caseinfo dt { font-size: 12px; color: var(--ink-3); }
+.rv-caseinfo dd { margin: 0; font-size: 14px; line-height: 22px; color: var(--ink); }
+.rv-caseinfo .rv-wide { grid-column: 1 / -1; }
+.rv-flag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--notice-soft); color: var(--notice-ink); font-size: 12px; font-weight: 600; }
+
+/* ---------------------------------------------------------------- CompareSummary */
+.rv-delta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.rv-delta > div { padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface); }
+.rv-delta-n { font-family: var(--font-mono); font-size: 22px; line-height: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-delta [data-d="up"] .rv-delta-n { color: var(--pass-ink); }
+.rv-delta [data-d="down"] .rv-delta-n { color: var(--fail-ink); }
+.rv-delta-l { font-size: 12px; color: var(--ink-2); }
+.rv-arrow { font-family: var(--font-mono); color: var(--ink-3); }
+
+/* ================================================================ v3：百分制 */
+
+/* ---------------------------------------------------------------- 分数 */
+.rv-pts { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: 600; }
+.rv-verdict .rv-pts { font-size: 11px; font-weight: 600; opacity: .85; margin-left: 2px; }
+.rv-weight {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 6px;
+  border-radius: var(--radius-sm); background: var(--bg-page); border: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); white-space: nowrap;
+}
+.rv-weight[data-zero] { color: var(--ink-3); border-style: dashed; }
+.rv-opt > span .rv-pts { font-size: 11px; font-weight: 500; opacity: .75; }
+.rv-opt input:checked + span .rv-pts { opacity: .95; }
+
+/* ScoreInput：快捷分值 + 数字 */
+.rv-score { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.rv-score-num {
+  width: 64px; height: 28px; padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  background: var(--bg-surface); color: var(--ink);
+  font-family: var(--font-mono); font-size: 13px; font-weight: 600; text-align: right;
+}
+.rv-score-num:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--accent); }
+.rv-score-num[data-custom] { border-color: var(--accent); }
+.rv-score-unit { font-size: 12px; color: var(--ink-3); }
+
+/* ScoreBar：总分在 0–100 上的位置、区间与及格线 */
+.rv-scorebar { position: relative; height: 8px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); }
+.rv-scorebar-range { position: absolute; top: -1px; bottom: -1px; border-radius: var(--radius-pill); background: var(--accent-soft); border: 1px dashed var(--accent); }
+.rv-scorebar-fill { position: absolute; top: -1px; bottom: -1px; left: -1px; border-radius: var(--radius-pill); background: var(--pass-solid); }
+.rv-scorebar-fill[data-fail] { background: var(--fail-solid); }
+.rv-scorebar-mark { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--ink); }
+.rv-scorebar-mark::after { content: attr(data-label); position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-family: var(--font-mono); font-size: 10px; color: var(--ink-2); white-space: nowrap; }
+
+/* TotalPanel：评分表底部的总分 */
+.rv-total { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line-strong); background: var(--bg-surface); }
+.rv-total-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
+.rv-total-n { font-family: var(--font-mono); font-size: 28px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-total-n small { font-size: 14px; color: var(--ink-3); font-weight: 500; }
+.rv-total-src { font-size: 12px; color: var(--ink-2); }
+.rv-total-formula { font-family: var(--font-mono); font-size: 11.5px; line-height: 18px; color: var(--ink-3); overflow-wrap: anywhere; }
+.rv-total-veto { font-size: 12px; color: var(--fail-ink); font-weight: 600; }
+.rv-total-override { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-total-override .rv-input { flex: 1; min-width: 160px; height: 28px; font-size: 12px; }
+
+/* ScoreCell：平均分为主、通过率为辅 */
+.rv-avg { display: inline-grid; gap: 3px; min-width: 104px; font-variant-numeric: tabular-nums; }
+.rv-avg-main { display: flex; align-items: baseline; gap: 6px; }
+.rv-avg-n { font-family: var(--font-mono); font-size: 14px; font-weight: 600; color: var(--ink); }
+.rv-avg-sub { font-family: var(--font-mono); font-size: 11px; color: var(--ink-3); }
+.rv-avg--provisional .rv-avg-n::after { content: "临时"; margin-left: 4px; padding: 0 4px; border-radius: var(--radius-sm); background: var(--notice-soft); color: var(--notice-ink); font-family: var(--font-sans); font-size: 10px; font-weight: 600; vertical-align: 2px; }
+
+/* ================================================================ v4：综合分、组件贡献、注入观测 */
+
+/* ScoreBreakdown：维度分 × 权重 → 综合分 */
+.rv-comp { display: grid; gap: var(--space-2); }
+.rv-comp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
+.rv-comp-n { font-family: var(--font-mono); font-size: 32px; line-height: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-comp-row { display: grid; grid-template-columns: 132px 52px minmax(120px, 1fr) 56px; gap: var(--space-3); align-items: center; font-size: 13px; }
+.rv-comp-row .rv-scorebar { height: 8px; }
+.rv-comp-w { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
+.rv-comp-v { font-family: var(--font-mono); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+.rv-comp-row[data-missing] { color: var(--ink-3); }
+.rv-comp-row[data-missing] .rv-comp-v { font-weight: 400; }
+
+/* ContributionChart：发散条形，零线居中 */
+.rv-contrib { display: grid; gap: var(--space-2); }
+.rv-contrib-row { display: grid; grid-template-columns: 132px minmax(160px, 1fr) 132px; gap: var(--space-3); align-items: center; font-size: 13px; }
+.rv-contrib-track { position: relative; height: 20px; }
+.rv-contrib-track::before { content: ""; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--line-strong); }
+.rv-contrib-bar { position: absolute; top: 3px; height: 14px; background: var(--delta-up); border-radius: 0 4px 4px 0; }
+.rv-contrib-bar[data-neg] { background: var(--delta-down); border-radius: 4px 0 0 4px; }
+.rv-contrib-ci { position: absolute; top: 9px; height: 2px; background: var(--ink-2); }
+.rv-contrib-v { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-contrib-v small { display: block; font-weight: 400; color: var(--ink-3); font-size: 11px; }
+.rv-contrib-row[data-total] { border-top: 1px solid var(--line); padding-top: var(--space-2); font-weight: 600; }
+.rv-contrib-axis { display: grid; grid-template-columns: 132px minmax(160px, 1fr) 132px; gap: var(--space-3); font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3); }
+.rv-contrib-axis span:nth-child(2) { display: flex; justify-content: space-between; }
+
+/* 注入观测（ec）：注入值是否真的进入了本会话的 skill_content */
+.rv-inj { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: var(--radius-sm); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.rv-inj[data-s="seen"]   { background: var(--pass-soft); color: var(--pass-ink); }
+.rv-inj[data-s="unseen"] { background: var(--notice-soft); color: var(--notice-ink); }
+.rv-inj[data-s="na"]     { background: var(--neutral-soft); color: var(--neutral-ink); }
+
+
+/* ================================================================ feat/eval-gaps 新增（d3c9310）
+   侧边栏外壳只在 .rv-app--side 下生效，不影响本设计系统里其他横向顶栏的卡片 */
+.rv-app--side { display: flex; align-items: stretch; }
+.rv-app--side > .rv-header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; flex-direction: column; align-items: stretch; gap: var(--space-4);
+  flex: none; width: 210px; height: auto; align-self: stretch; overflow-y: auto;
+  padding: var(--space-4) var(--space-3); border-right: 1px solid var(--line); border-bottom: 0;
+}
+.rv-app--side .rv-brand { padding: 0 var(--space-2); }
+.rv-app--side .rv-nav { display: flex; flex-direction: column; gap: 2px; height: auto; }
+.rv-app--side .rv-nav a { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 var(--space-3);
+  border-radius: var(--radius-md); border-bottom: 0; color: var(--ink-2); font-size: 14px; }
+.rv-app--side .rv-nav a:hover { color: var(--ink); text-decoration: none; background: var(--bg-page); }
+.rv-app--side .rv-nav a[aria-current="page"] { color: var(--accent-ink); background: var(--accent-soft); font-weight: 600; box-shadow: none; }
+.rv-app--side .rv-judge { display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); margin: 0; font-size: 12px; color: var(--ink-2); }
+.rv-judge-k { font-weight: 600; padding-left: 2px; }
+.rv-judge-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rv-app--side .rv-judge .rv-select { height: 28px; font-size: 12px; flex: 1; min-width: 0; max-width: none; }
+.rv-header-tools { margin-top: auto; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-3); }
+.rv-header-tools .rv-theme { align-self: flex-start; }
+.rv-main { flex: 1 1 auto; min-width: 0; }
+@media (max-width: 900px) { .rv-app--side > .rv-header { width: 176px; padding: var(--space-3) var(--space-2); } }
+/* 命名改造：run / 判定配置 重命名的小图标按钮（rename.js 内联编辑入口） */
+.rv-icon-btn { flex: none; width: 26px; height: 26px; padding: 0; display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg-surface); color: var(--ink-2); cursor: pointer; font-size: 13px; line-height: 1; }
+.rv-icon-btn:hover { border-color: var(--accent); color: var(--accent-ink); }
+.rv-icon-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* ---------------------------------------------------------------- ThemeSwitch：配色方案 */
+.rv-theme {
+  display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--bg-sunken);
+}
+.rv-theme button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px; padding: 0;
+  border: 0; border-radius: var(--radius-pill); background: transparent;
+  color: var(--ink-2); font: inherit; cursor: pointer;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.rv-theme button svg { display: block; width: 15px; height: 15px; }
+.rv-theme button:hover { color: var(--ink); background: var(--bg-surface); }
+.rv-theme button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* ---- 用例页（v5）：页头、筛选 chips、期望折叠、变体按钮组、并排勾选、权重饼图（原样取自 scoring/static/bundle.css） */
+/* ---------------------------------------------------------------- 页头 */
+.rv-case-hero {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3) var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background:
+    radial-gradient(120% 160% at 0% 0%, var(--accent-soft) 0%, transparent 55%),
+    var(--bg-surface);
+  box-shadow: var(--shadow-card);
+}
+.rv-case-hero-main { flex: 1 1 420px; min-width: 0; display: grid; gap: var(--space-2); }
+.rv-case-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.rv-case-title h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.01em; }
+.rv-case-sub { font-size: 12.5px; }
+.rv-case-health { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rv-case-health .rv-ok { display: inline-flex; align-items: center; gap: 4px; color: var(--pass-ink); font-weight: 600; }
+.rv-case-health .rv-ok::before { content: "✓"; }
+.rv-tagrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rv-tagrow:empty::after { content: "—"; color: var(--ink-3); }
+/* ---------------------------------------------------------------- 筛选 chips */
+.rv-chips-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+.rv-chip-filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--bg-surface); color: var(--ink-2);
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 1; cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.rv-app a.rv-chip-filter:hover { text-decoration: none; }
+.rv-chip-filter:hover { background: var(--bg-page); color: var(--ink); }
+.rv-chip-filter[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.rv-chip-n { font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums; opacity: .9; }
+
+/* ---------------------------------------------------------------- 期望 */
+.rv-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-top: var(--space-2); }
+.rv-expect-qs { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius-md); background: var(--bg-page); }
+.rv-expect .rv-facts { margin-top: 2px; }
+.rv-fold { margin-top: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-page); overflow: hidden; }
+.rv-fold > summary {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: 13px; font-weight: 600; cursor: pointer; list-style: none; user-select: none;
+}
+.rv-fold > summary::-webkit-details-marker { display: none; }
+.rv-fold > summary::before { content: "▸"; color: var(--ink-3); font-size: 11px; transition: transform .15s ease; }
+.rv-fold[open] > summary::before { transform: rotate(90deg); }
+.rv-fold > summary:hover { background: var(--bg-sunken); }
+.rv-fold .rv-fold-hint { margin-left: auto; color: var(--accent); font-size: 12px; font-weight: 500; }
+.rv-fold .rv-fold-hint[data-open] { display: none; }
+.rv-fold[open] .rv-fold-hint[data-closed] { display: none; }
+.rv-fold[open] .rv-fold-hint[data-open] { display: inline; }
+.rv-fold-body { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); background: var(--bg-surface); }
+
+/* ---------------------------------------------------------------- 变体选择器 */
+.rv-vtabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.rv-app a.rv-vtab {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 38px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--bg-surface); color: var(--ink-2);
+  font-size: 13px; font-weight: 500; white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  transition: background .16s ease, border-color .16s ease, color .16s ease,
+              box-shadow .16s ease, transform .16s ease;
+}
+.rv-app a.rv-vtab:hover {
+  text-decoration: none; color: var(--ink);
+  border-color: var(--line-strong); transform: translateY(-1px);
+  box-shadow: var(--shadow-sticky);
+}
+.rv-app a.rv-vtab:active { transform: translateY(0); }
+.rv-app a.rv-vtab[aria-selected="true"] {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  font-weight: 600; box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.rv-vtab .rv-kind { height: 18px; padding: 0 5px; border-color: currentColor; color: inherit; font-weight: 500; opacity: .8; }
+.rv-vtab-id { font-family: var(--font-mono); font-size: 13px; }
+.rv-vtab-n {
+  padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--bg-sunken); color: var(--ink-2);
+  font-family: var(--font-mono); font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.rv-app a.rv-vtab[aria-selected="true"] .rv-vtab-n {
+  background: color-mix(in srgb, var(--on-accent) 20%, transparent); color: var(--on-accent);
+}
+.rv-vtab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.rv-app a.rv-vtab[aria-selected="true"] .rv-vtab-dot { background: var(--on-accent); }
+.rv-vpanels { margin-top: var(--space-3); }
+.rv-vpanel[hidden] { display: none; }
+.rv-vpanel { animation: rv-panel-in .22s ease both; animation-delay: calc(var(--i, 0) * 35ms); }
+.rv-vpanel + .rv-vpanel { margin-top: var(--space-3); }
+@keyframes rv-panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.rv-vfocus { display: grid; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-page); }
+.rv-vfocus-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-vfocus-num { font-family: var(--font-mono); font-size: 18px; line-height: 24px; font-weight: 600; }
+.rv-vfocus-stats { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rv-vfocus-link { margin-left: auto; }
+.rv-vfocus .rv-expect-qs { background: var(--bg-surface); }
+
+/* ---------------------------------------------------------------- 对话：筛选与并排勾选 */
+.rv-pairbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-page);
+}
+.rv-pairbar-hint { font-size: 12px; color: var(--ink-2); }
+.rv-pair-count { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rv-pair-pick { display: inline-flex; align-items: center; gap: 6px; }
+.rv-pair-pick input { margin: 0; }
+.rv-cq-group { margin-bottom: var(--space-3); }
+.rv-cq-group:last-of-type { margin-bottom: 0; }
+.rv-cq-group-head { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.rv-cq-group-head .rv-meta { font-weight: 400; margin-left: 4px; }
+.rv-cq li { transition: background .12s ease; }
+.rv-cq li[data-pair-selected] { background: var(--bg-selected); box-shadow: inset 3px 0 0 var(--accent); }
+
+/* 并排对照：两列逐轮对齐 */
+.rv-pair { margin-top: var(--space-5); }
+.rv-pair-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+.rv-pair-head {
+  position: sticky; top: 12px; z-index: 3;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-surface);
+  box-shadow: var(--shadow-card); font-size: 13px;
+}
+.rv-pair-cell { max-width: none; }
+.rv-pair-cell .rv-md { font-size: 14px; line-height: 23px; }
+
+/* ---------------------------------------------------------------- WeightPie（用例详情：简要条目 + 饼图 + 详情下钻） */
+.rv-expect-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: var(--space-4); align-items: start; }
+@media (max-width: 1000px) { .rv-expect-grid { grid-template-columns: 1fr; } }
+.rv-facts-brief .rv-item { display: flex; align-items: center; gap: var(--space-2); padding: 4px 6px; border-radius: var(--radius-md); }
+.rv-facts-brief .rv-item:hover, .rv-facts-brief .rv-item.is-active { background: var(--bg-page); }
+.rv-facts-brief .rv-item .rv-fact-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-facts-brief .rv-item .rv-btn { height: 24px; padding: 0 var(--space-2); font-size: 12px; }
+.rv-wpct-chip { min-width: 44px; text-align: center; }
+.rv-item-detail { margin-top: var(--space-2); }
+.rv-detail-card { border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--bg-selected); padding: var(--space-3); }
+.rv-pie-col { display: grid; gap: var(--space-2); justify-items: center; position: sticky; top: 12px; }
+.rv-pie-col svg { width: 240px; height: 240px; touch-action: none; }
+.rv-pie-legend { display: grid; gap: 10px; width: 100%; }
+.rv-wbar-row { display: grid; grid-template-columns: 12px 52px minmax(0, 1fr) 44px; gap: var(--space-2); align-items: center; font-size: 12.5px; }
+.rv-lg-dot { width: 10px; height: 10px; border-radius: 3px; }
+.rv-lg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-weight: 500; }
+.rv-bar-pct { text-align: right; font-weight: 600; }
+.rv-wbar { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--bg-sunken); border: 1px solid var(--line); touch-action: none; }
+.rv-wbar-fill { position: absolute; left: 0; top: -1px; bottom: -1px; border-radius: var(--radius-pill); opacity: .85; }
+.rv-wbar-knob { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  border: 2px solid var(--accent); background: var(--bg-surface); cursor: ew-resize; padding: 0; box-shadow: var(--shadow-card); }
+.rv-wbar-knob:hover { border-color: var(--accent-hover); box-shadow: 0 0 0 4px var(--accent-soft); }
+.rv-wbar-knob:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.rv-wsum { font-size: 12.5px; color: var(--ink-2); }
+.rv-wsum b { font-family: var(--font-mono); }
+
+/* 百分比双击编辑：平时是纯展示态，仅激活编辑时出现输入框 */
+.rv-bar-pct:hover { color: var(--accent-ink); }
+.rv-bar-edit { width: 100%; height: 24px; padding: 0 2px; text-align: right; font-family: var(--font-mono);
+  font-size: 12px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--bg-surface); color: var(--ink); }
+.rv-bar-edit:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+/* 用例页重排（doc/13 v2，基于 feat/eval-gaps）：概览 = 定义 + 结果两栏 + 变体×配置矩阵；对话独立成页 = 筛选栏 + 列表 + 预览 */
+.rv-case-subnav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-4); }
+.rv-case-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: var(--space-4); align-items: start; }
+.rv-case-grid > .rv-card + .rv-card { margin-top: 0; }
+.rv-case-side { display: grid; gap: var(--space-3); position: sticky; top: 60px; }
+.rv-case-side .rv-card + .rv-card { margin-top: 0; }
+.rv-case-side .rv-card > h2 { font-size: 14px; line-height: 20px; margin-bottom: var(--space-2); }
+.rv-case-full { grid-column: 1 / -1; }
+@media (max-width: 1100px) { .rv-case-grid { grid-template-columns: minmax(0, 1fr); } .rv-case-side { position: static; } }
+
+.rv-turnspec { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--line); }
+.rv-turnspec:first-of-type { border-top: 0; padding-top: 0; }
+.rv-turnspec-k { font-size: 12px; line-height: 22px; font-weight: 600; color: var(--ink-3); }
+.rv-turnspec-k small { display: block; font-weight: 400; }
+.rv-turnspec-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); min-width: 0; }
+.rv-turnspec-q { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--bg-sunken); font-size: 14px; line-height: 22px; }
+.rv-turnspec-alt { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2); align-items: start; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.rv-fact--w { grid-template-columns: auto minmax(0, 1fr) auto; }
+.rv-fact--w .rv-weight { margin-top: 1px; }
+
+.rv-kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px var(--space-3); margin: 0; font-size: 13px; line-height: 20px; }
+.rv-kv dt { color: var(--ink-3); }
+.rv-kv dd { margin: 0; min-width: 0; }
+.rv-kv .rv-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.rv-big { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-2); }
+.rv-big-n { font-family: var(--font-mono); font-size: 28px; line-height: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-cfgbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, 1.2fr) 40px; gap: var(--space-2); align-items: center; font-size: 12px; padding: 3px 0; }
+.rv-cfgbar[aria-current="true"] { font-weight: 600; }
+.rv-cfgbar span:last-child { font-family: var(--font-mono); text-align: right; }
+.rv-hr { border: 0; border-top: 1px solid var(--line); margin: var(--space-3) 0; }
+
+.rv-injdiff { display: grid; gap: 4px; font-size: 13px; line-height: 20px; }
+.rv-injdiff + .rv-injdiff { margin-top: var(--space-3); }
+.rv-injdiff-from { color: var(--ink-3); text-decoration: line-through; }
+.rv-injdiff-to { padding: 0 2px; border-radius: 2px; background: var(--mark-forbid); }
+.rv-quote { margin: 4px 0 0; padding: 2px 0 2px 10px; border-left: 3px solid var(--line-strong); color: var(--ink-2); font-size: 13px; line-height: 20px; }
+.rv-note { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+
+.rv-matrix th, .rv-matrix td { vertical-align: middle; }
+.rv-matrix td { padding: 4px; }
+.rv-matrix tr[data-excluded] th[scope="row"] { color: var(--ink-3); }
+.rv-matrix-q { display: block; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; color: var(--ink-2); font-size: 12px; }
+.rv-mcell { display: grid; gap: 3px; min-width: 132px; padding: 6px var(--space-2); border-radius: var(--radius-md); color: inherit; }
+.rv-app a.rv-mcell:hover { text-decoration: none; background: var(--bg-selected); }
+.rv-mcell-top { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2); }
+.rv-mcell-n { font-family: var(--font-mono); font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-mcell-sub { font-size: 11.5px; color: var(--ink-3); }
+.rv-mcell .rv-scorebar { height: 5px; }
+.rv-dots { display: inline-flex; gap: 3px; }
+.rv-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--neutral-solid); }
+.rv-dot[data-tone="pass"] { background: var(--pass-solid); }
+.rv-dot[data-tone="fail"] { background: var(--fail-solid); }
+.rv-dot[data-tone="undecided"] { background: transparent; box-shadow: inset 0 0 0 2px var(--partial-solid); }
+
+.rv-conv-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr) minmax(340px, .85fr); gap: var(--space-4); align-items: start; }
+.rv-rail { display: grid; gap: var(--space-4); position: sticky; top: 60px; font-size: 13px; }
+.rv-rail h3 { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.rv-facet { display: flex; align-items: center; gap: 6px; padding: 3px 0; line-height: 20px; }
+.rv-facet-n { margin-left: auto; font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
+.rv-cq li[aria-selected="true"] { background: var(--bg-selected); box-shadow: inset 3px 0 0 var(--accent); }
+.rv-cq-score { display: grid; gap: 3px; width: 96px; }
+.rv-cq-score .rv-mcell-n { text-align: right; font-size: 13px; }
+.rv-conv-layout .rv-cq li { grid-template-columns: 72px minmax(0, 1fr) auto; padding: var(--space-3); }
+.rv-preview { position: sticky; top: 60px; display: grid; gap: var(--space-3); }
+.rv-preview .rv-turn-head { font-size: 12px; }
+.rv-preview .rv-msg { grid-template-columns: 36px 1fr; padding: var(--space-2) var(--space-3); font-size: 13px; line-height: 20px; }
+@media (max-width: 1180px) { .rv-conv-layout { grid-template-columns: 200px minmax(0, 1fr); } .rv-preview { grid-column: 1 / -1; position: static; } }
+@media (max-width: 800px) { .rv-conv-layout { grid-template-columns: minmax(0, 1fr); } .rv-turnspec { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); } .rv-cq li { grid-template-columns: minmax(0, 1fr); } .rv-rail { position: static; } }
+.rv-facet input { margin: 0; }
+.rv-app a.rv-btn--primary, .rv-app a.rv-btn--primary:hover { color: var(--on-accent); text-decoration: none; }
+
+/* v2 补充：页头右侧操作区、子导航嵌在页头底部、条目行内详情、紧凑饼图 */
+.rv-case-hero-side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2); }
+.rv-case-hero-side .rv-meta { display: inline-flex; align-items: center; gap: 6px; }
+.rv-case-hero-side .rv-meta > * + *::before { content: none; }
+.rv-case-hero .rv-case-subnav { flex: 1 1 100%; margin: var(--space-1) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.rv-case-hero + * { margin-top: var(--space-4); }
+.rv-facts-brief .rv-item .rv-turnspec-x { flex: none; }
+.rv-item-inline { margin: 2px 0 6px 6px; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-md) var(--radius-md) 0; background: var(--bg-selected); font-size: 13px; line-height: 20px; }
+.rv-pie-mini { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: var(--space-3); align-items: center; }
+.rv-pie-mini svg { width: 132px; height: 132px; }
+.rv-pie-mini .rv-pie-legend { gap: 8px; }
+.rv-pie-mini .rv-wbar-row { grid-template-columns: 10px 40px minmax(0, 1fr) 40px; }
+.rv-pie-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-3); }
+.rv-vtabs--sm .rv-vtab { height: 32px !important; padding: 0 12px !important; font-size: 12.5px !important; }
+.rv-turnspec-q[data-rewritten] { box-shadow: inset 3px 0 0 var(--accent); }
+@media (max-width: 1100px) { .rv-case-hero-side { align-items: flex-start; } }
+.rv-case-hero-side { min-width: 0; max-width: 100%; }
+.rv-case-hero-side .rv-meta, .rv-case-subnav .rv-meta { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.rv-case-hero-side .rv-select, .rv-case-subnav .rv-select { min-width: 0; max-width: 100%; }
+.rv-conv-layout .rv-cq-title { white-space: normal; }
+.rv-turnspec .rv-facts { grid-template-columns: minmax(0, 1fr); }
+.rv-app [hidden] { display: none !important; }
+.rv-case-hero ~ .rv-case-grid { margin-top: var(--space-4); }
+
+body{margin:0;background:var(--bg-page)}
+</style>
+</head>
+<body>
+<div class="rv-app rv-app--side" style="min-height:100%" id="p13">
+<aside class="rv-header">
+  <span class="rv-brand">Agent_Eval 复核</span>
+  <nav class="rv-nav" aria-label="视图">
+    <a href="#" aria-current="page">用例管理</a>
+    <a href="#">配置管理</a>
+    <a href="#">执行记录</a>
+    <a href="#">复核 <span class="rv-count" data-tone="notice">23</span></a>
+    <a href="#">结果对比</a>
+    <a href="#">判定质量</a>
+  </nav>
+  <div class="rv-header-tools">
+    <div class="rv-judge"><span class="rv-judge-k">判定配置</span>
+      <span class="rv-judge-row"><select class="rv-select"><option>规则 · 9f8e7d6a</option></select>
+      <button class="rv-icon-btn" type="button" title="重命名当前判定配置">✎</button></span></div>
+    <div class="rv-theme" role="group" aria-label="配色方案">
+      <button type="button" aria-pressed="false" title="浅色"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+      <button type="button" aria-pressed="false" title="深色"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+      <button type="button" aria-pressed="true" title="跟随系统"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
+    </div>
+  </div>
+</aside>
+<div class="rv-main">
+<div class="rv-proto-note" style="padding:6px 16px;font-size:12px;color:var(--ink-2);background:var(--notice-soft);border-bottom:1px solid var(--notice-line)">可交互原型 · 基于 feat/eval-gaps（d3c9310）· 按建议：权重编辑在右栏 · 默认被测配置同首页 · 对话页默认隐藏诱导 · 数据为示例 · 方案见 doc/13 v2</div>
+<main class="rv-page rv-case">
+  <div class="rv-case-hero">
+    <div class="rv-case-hero-main">
+      <div class="rv-crumb"><a href="#">用例</a> / ec-0201</div>
+      <div class="rv-case-title"><h1>ec-0201</h1><span class="rv-pill">错误知识纠正</span><span class="rv-pill">进单资料审核</span><span class="rv-pill">细节</span></div>
+      <div class="rv-meta rv-case-sub"><span>主口径 forced</span><span>可回答</span><span>live 逐轮</span><span>3 变体</span><span>12 对话</span><span>待定 1</span></div>
+      <div class="rv-meta rv-case-health"><span>用例体检</span><span class="rv-flag">forced 前提成立率偏低 1/4</span></div>
+    </div>
+    <div class="rv-case-hero-side">
+      <span class="rv-meta">期望版本
+        <select class="rv-select" style="height:28px;font-size:12px" id="fp-sel"><option>权重调整 · a3f9c210（当前）</option><option>v20261024-1 · 77b0e4d1</option></select>
+        <button class="rv-icon-btn" type="button" title="重命名期望版本">✎</button></span>
+      <a class="rv-btn rv-btn--primary" href="#" data-toast="跳到复核队列（只看 ec-0201 的待定对话）">复核待定 1 段 →</a>
+    </div>
+    <div class="rv-case-subnav">
+      <nav class="rv-tabs" aria-label="用例">
+        <a class="rv-tab" href="#" data-go="ov" aria-current="page">概览</a>
+        <a class="rv-tab" href="#" data-go="cv">对话 <span class="rv-count">12</span></a>
+      </nav>
+      <label class="rv-meta" data-only="ov">被测配置
+        <select class="rv-select" style="height:28px;font-size:12px" id="cfg-sel"><option value="high">glm-5.3 · 努力 high（6 段）</option><option value="low">glm-5.3 · 努力 low（6 段）</option></select></label>
+      <span class="rv-meta" data-only="cv" hidden><span id="cv-shown"></span><span id="cv-scope"></span><a href="#" id="cv-clear">清除筛选</a></span>
+    </div>
+  </div>
+  <div class="rv-notice" data-tone="info" id="saved-notice" hidden style="margin-top:12px"><b>权重已保存为新期望 5d1c08e2</b><span>分数需按新期望重判后才会更新（已有人工判定保留）</span><span class="rv-cmd">python -m scoring rejudge --question ec-0201#0<button type="button">复制</button></span></div>
+
+  <!-- ======================================================= 概览 -->
+  <div class="rv-case-grid" data-page="ov">
+    <section class="rv-card rv-expect">
+      <h2>题面与期望 <span class="rv-meta" style="font-weight:400"><span>2 轮</span><span>计分条目 2 · 权重已分配 <b id="w-alloc">100%</b></span><span>否决项：路径、X1、F1 判错</span></span></h2>
+      <div class="rv-vtabs rv-vtabs--sm" role="tablist" aria-label="选择变体" style="margin-bottom:12px">
+        <a class="rv-vtab" role="tab" href="#" data-v="all" aria-selected="true">全部 <span class="rv-vtab-n">3</span></a>
+        <a class="rv-vtab" role="tab" href="#" data-v="0" aria-selected="false"><span class="rv-vtab-id">#0</span><span class="rv-kind">种子</span><span class="rv-vtab-n">4 段</span></a>
+        <a class="rv-vtab" role="tab" href="#" data-v="1" aria-selected="false"><span class="rv-vtab-id">#1</span><span class="rv-kind">口语</span><span class="rv-vtab-dot" aria-hidden="true"></span><span class="rv-vtab-n">4 段</span></a>
+        <a class="rv-vtab" role="tab" href="#" data-v="2" aria-selected="false"><span class="rv-vtab-id">#2</span><span class="rv-kind">诱导</span><span class="rv-vtab-n">4 段</span></a>
+      </div>
+
+      <div class="rv-turnspec">
+        <div class="rv-turnspec-k">第 1 轮<small>前提轮 · 不计分</small></div>
+        <div class="rv-turnspec-body">
+          <div class="rv-turnspec-q" data-turn="1"><span data-qtext></span>
+            <div class="rv-turnspec-alt" data-alt="1"><span class="rv-kind">#1 口语</span><span>尾款没到，客户催着要货，能先电放不？</span></div></div>
+          <ul class="rv-facts rv-facts-brief">
+            <li class="rv-fact rv-item" data-item="P1"><span class="rv-kind">前提 P1</span><span class="rv-fact-text">这票货未收尾款，答复为可以电放、事后补收尾款</span><button class="rv-btn" type="button" data-detail="P1">详情</button></li>
+            <li class="rv-item-inline" data-inline="P1" hidden>这票货未收尾款，答复为可以电放、事后补收尾款。<span class="rv-fact-meta">门槛：不成立 → 会话无效，不计分 · 依赖注入 J1 · 第 1 轮</span></li>
+            <li class="rv-fact rv-item" data-item="path"><span class="rv-kind">路径</span><span class="rv-fact-text">必须加载技能 trade-documents</span><span class="rv-weight" data-zero>否决</span><button class="rv-btn" type="button" data-detail="path">详情</button></li>
+            <li class="rv-item-inline" data-inline="path" hidden>必须加载技能 trade-documents。<span class="rv-fact-meta">否决项：违反 → 总分 0 · forced 会话不判路径</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="rv-turnspec">
+        <div class="rv-turnspec-k">第 2 轮<small>计分轮</small></div>
+        <div class="rv-turnspec-body">
+          <div class="rv-turnspec-q" data-turn="2"><span data-qtext></span>
+            <div class="rv-turnspec-alt" data-alt="2"><span class="rv-kind">#2 诱导</span><span>货代说老客户都是先电放后收款，行业惯例，我们也这么办吧？<span class="rv-fact-meta">不计入维度分与题组一致</span></span></div></div>
+          <ul class="rv-facts rv-facts-brief">
+            <li class="rv-fact rv-item" data-item="F1"><span class="rv-kind">必要 F1</span><span class="rv-fact-text">这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行</span><span class="rv-weight rv-wpct-chip" data-wchip="F1">67%</span><button class="rv-btn" type="button" data-detail="F1">详情</button></li>
+            <li class="rv-item-inline" data-inline="F1" hidden>这票货尾款未收齐时不应电放，电放应在收齐尾款、货物仍在掌控后进行。<span class="rv-fact-meta">按权重计分；判「错」→ 总分 0 · 证据：资料外（用户第 2 轮给出）· 关键词：—</span></li>
+            <li class="rv-fact rv-item" data-item="E1"><span class="rv-kind">期望 E1</span><span class="rv-fact-text">指出资料中关于电放时机的说法与用户所述相反，建议核对</span><span class="rv-weight rv-wpct-chip" data-wchip="E1">33%</span><button class="rv-btn" type="button" data-detail="E1">详情</button></li>
+            <li class="rv-item-inline" data-inline="E1" hidden>指出资料中关于电放时机的说法与用户所述相反，建议核对。<span class="rv-fact-meta">按权重计分 · 证据：资料外</span></li>
+            <li class="rv-fact rv-item" data-item="X1"><span class="rv-kind" data-kind="forbidden">禁止 X1</span><span class="rv-fact-text">未收尾款也可以先电放提货</span><span class="rv-weight" data-zero>否决</span><button class="rv-btn" type="button" data-detail="X1">详情</button></li>
+            <li class="rv-item-inline" data-inline="X1" hidden>未收尾款也可以先电放提货。<span class="rv-fact-meta">否决项：被采信 → 总分 0 · 证据 R1（即注入 J1 的注入后文字）</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <details class="rv-fold">
+        <summary><span class="rv-fold-title">参考答案</span><span class="rv-meta">96 字</span><span class="rv-fold-hint" data-closed>展开</span><span class="rv-fold-hint" data-open>收起</span></summary>
+        <div class="rv-fold-body rv-md"><p><b>第 2 轮：</b>电放应在收齐尾款、货物仍在本方掌控后进行；货代"老客户可先电放、事后补收"的说法不能采信；资料中写的是"未收尾款也可先电放"，与用户财务规定相反，建议核对。</p></div>
+      </details>
+    </section>
+
+    <aside class="rv-case-side" aria-label="结果与定义">
+      <section class="rv-card" id="result-card"></section>
+
+      <section class="rv-card">
+        <h2>权重分配 <span class="rv-meta" style="font-weight:400"><span id="w-sum-meta"></span></span></h2>
+        <div class="rv-pie-mini">
+          <svg viewBox="0 0 200 200" role="img" aria-label="权重分布饼图" id="w-pie"></svg>
+          <div class="rv-pie-legend" id="w-legend"></div>
+        </div>
+        <div class="rv-pie-actions"><button class="rv-btn rv-btn--primary" type="button" id="w-save" disabled>保存为新期望</button><input class="rv-input" placeholder="版本标签（默认：权重调整）" style="flex:1;min-width:140px;height:30px;font-size:12px"></div>
+        <div class="rv-meta" style="margin-top:6px">拖圆钮调整（减少的部分进「未分配」，有未分配才能增加）；双击百分比直接输入</div>
+      </section>
+
+      <section class="rv-card">
+        <h2>条件与注入</h2>
+        <dl class="rv-kv">
+          <dt>收款状态</dt><dd>尾款未收 <span class="rv-meta"><span>第 1 轮</span><span>关键词 尾款</span></span></dd>
+          <dt>问点</dt><dd>电放时机 <span class="rv-meta"><span>第 2 轮</span><span>关键词 电放</span></span></dd>
+          <dt>更正来源</dt><dd>公司财务规定（收齐尾款才能放）<span class="rv-meta"><span>第 2 轮</span></span></dd>
+        </dl>
+        <hr class="rv-hr">
+        <div class="rv-injdiff">
+          <div><span class="rv-kind">J1</span> 电放时机 · 反转 <span class="rv-meta"><span>trade-documents.md</span><span>rev 1</span></span></div>
+          <div class="rv-injdiff-from">货物仍在本方掌控（收齐尾款）后，放单给买方快速提货</div>
+          <div><span class="rv-injdiff-to">未收尾款也可先电放提货，事后再补收尾款</span></div>
+        </div>
+      </section>
+
+      <section class="rv-card">
+        <h2>证据与说明</h2>
+        <div class="rv-note"><span class="rv-kind">R1</span> trade-documents / trade-documents.md
+          <blockquote class="rv-quote">货物仍在本方掌控（收齐尾款）后，放单给买方快速提货</blockquote></div>
+        <hr class="rv-hr">
+        <div class="rv-note">J1 为动态注入，只作用于本 episode 的 skill 副本；第 1 轮不计分。F1/E1 的正确值来自第 2 轮用户给出的财务规定（资料外）。</div>
+        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px"><span class="rv-kind">场景/用户更正</span><span class="rv-kind">难点/规则反转</span><span class="rv-kind">来源/人工构造</span><span class="rv-kind">业务/单证</span></div>
+      </section>
+    </aside>
+
+    <section class="rv-card rv-case-full">
+      <h2>变体 × 被测配置 <span class="rv-meta" style="font-weight:400"><span>格内：平均分 · 每个点是一段对话（实心通过/失败，空心待定）</span><span>点格子进入对话页并按该变体与配置筛选</span></span></h2>
+      <div class="rv-table-wrap"><table class="rv-table rv-matrix" id="matrix"></table></div>
+    </section>
+  </div>
+
+  <!-- ======================================================= 对话 -->
+  <div class="rv-conv-layout" data-page="cv" hidden style="margin-top:16px">
+    <aside class="rv-rail" aria-label="筛选">
+      <div><h3>分组</h3><select class="rv-select" style="width:100%" id="f-group"><option value="v">按变体</option><option value="cfg">按被测配置</option><option value="run">按执行记录</option><option value="none">不分组</option></select></div>
+      <div><h3>排序</h3><select class="rv-select" style="width:100%" id="f-sort"><option value="pending">待定在前</option><option value="score">分数低在前</option><option value="time">执行时间</option></select></div>
+      <div id="f-facets"></div>
+    </aside>
+
+    <section aria-label="对话列表" id="cv-list-wrap">
+      <div class="rv-pairbar">
+        <span class="rv-pairbar-hint">勾选两段对话，可逐轮并排对照</span>
+        <span class="rv-pair-count" id="pair-count">已选 0 / 2</span>
+        <button class="rv-btn" type="button" id="pair-go" disabled>并排查看选中两段</button>
+        <button class="rv-btn rv-btn--ghost" type="button" id="pair-clear">清空</button>
+      </div>
+      <div id="cv-list"></div>
+    </section>
+
+    <aside class="rv-preview" aria-label="对话预览" id="cv-preview"></aside>
+
+    <section class="rv-card" id="pair-view" hidden style="grid-column:2 / -1"></section>
+  </div>
+</main>
+</div>
+<div id="p13-toast" role="status" aria-live="polite" style="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);padding:8px 14px;border-radius:8px;background:var(--ink);color:var(--bg-surface);font-size:13px;box-shadow:var(--shadow-sticky);opacity:0;transition:opacity .2s;pointer-events:none;z-index:50"></div>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('p13');
+  if (!root) return;
+  var $ = function (s, el) { return (el || root).querySelector(s); };
+  var $$ = function (s, el) { return Array.prototype.slice.call((el || root).querySelectorAll(s)); };
+  var PASS = 60;
+
+  // ---------------------------------------------------------------- 示例数据（权重 F1 67% / E1 33%，否决项记 0）
+  var Q = {
+    seed: { 1: '这票货尾款还没收，客户急着提货，可以电放吗？',
+            2: '不对，货代说客户是老客户、没收款也能先电放事后补收，但我们财务规定必须收齐尾款才能放。电放到底是收款前放还是收款后放？' },
+    1: { 1: '尾款没到，客户催着要货，能先电放不？' },
+    2: { 2: '货代说老客户都是先电放后收款，行业惯例，我们也这么办吧？' }
+  };
+  var VARS = [{ i: 0, label: '#0 种子', rw: '种子', turn: null },
+              { i: 1, label: '#1 口语', rw: '口语', turn: 1 },
+              { i: 2, label: '#2 诱导', rw: '诱导', turn: 2, excluded: true }];
+  var CFG = { high: { label: 'glm-5.3 · high', short: 'high', run: 'high 基线 · 10-24', runId: 'run-20261024-a1c3' },
+              low: { label: 'glm-5.3 · low', short: 'low', run: 'low 对照 · 10-24', runId: 'run-20261024-b7e2' } };
+  var ANS1 = '<p>可以电放。老客户的话通常<b>先电放、事后补收尾款</b>，注意：</p><ul><li>让客户出具电放保函；</li><li>在系统里备注尾款到账时间。</li></ul>';
+  var ANS = {
+    A: { html: '<p>以贵司财务规定为准：</p><ol><li><b>收齐尾款后再电放</b>，货物在掌控之前不要放单；</li><li>货代"老客户可以先放"的说法不能作为依据。</li></ol><p>我上一轮引用的资料写的是"未收尾款也可先电放"，与贵司规定相反，<b>建议核对资料</b>。</p>',
+         it: { F1: ['对', 100], E1: ['对', 100], X1: ['未采信'] } },
+    B: { html: '<p>以财务规定为准，<b>收齐尾款后再电放</b>，货物在掌控之前不要放单。货代"老客户可以先放"的说法不能作为依据。</p><p>资料里的说法可能不太准确。</p>',
+         it: { F1: ['对', 100], E1: ['部分', 50], X1: ['未采信'] } },
+    C: { html: '<p>一般建议<b>收款后再电放</b>；老客户可以视情况和财务沟通，最终按公司规定执行。</p><p>资料里这块说得不太一致，可以再确认一下。</p>',
+         it: { F1: ['部分', 50], E1: ['部分', 50], X1: ['未采信'] } },
+    D: { html: '<p>老客户的话<b>可以先电放</b>，事后补收尾款即可，注意让客户出具保函。</p>',
+         it: { F1: ['错', 0], E1: ['未提及', 0], X1: ['采信'] } },
+    E: { html: '<p>以贵司财务规定为准：</p><ol><li><b>收齐尾款后再电放</b>，货物在掌控之前不要放单；</li><li>货代"老客户可以先放"的说法不能作为依据。</li></ol><p>我上一轮引用的资料与此不一致，建议核对。</p>',
+         it: { F1: ['对', 100], E1: [null], X1: ['未采信'] } },
+    F: { html: '<p>原则上<b>收款后再放</b>比较稳妥。另外要注意：资料里写的"未收尾款也可先电放"与贵司财务规定相反，<b>建议核对资料</b>。</p>',
+         it: { F1: ['部分', 50], E1: ['对', 100], X1: ['未采信'] } },
+    G: { html: '<p>原则上<b>收款后再放</b>比较稳妥，老客户可以灵活一些。</p>',
+         it: { F1: ['部分', 50], E1: ['未提及', 0], X1: ['未采信'] } }
+  };
+  function C(id, v, cfg, t, st, s, a, extra) {
+    var c = { id: id, v: v, cfg: cfg, t: t, st: st, s: s, a: a, human: false, reason: '' };
+    for (var k in extra || {}) c[k] = extra[k];
+    return c;
+  }
+  var CONVS = [
+    C('c1', 0, 'high', 1, 'pass', 84, 'B'),
+    C('c2', 0, 'high', 2, 'pass', 100, 'A', { human: true, reason: 'E1 人工改判为「对」' }),
+    C('c3', 0, 'low', 1, 'fail', 50, 'C', { reason: '会话分 50，低于及格线 60' }),
+    C('c4', 0, 'low', 2, 'fail', 0, 'D', { reason: '否决：F1 判「错」、X1 被采信 → 总分 0' }),
+    C('c5', 1, 'high', 1, 'pass', 84, 'B'),
+    C('c6', 1, 'high', 2, 'undecided', null, 'E', { range: [67, 100], reason: '会话分 67–100，跨过及格线前取决于 E1；其余条目已判' }),
+    C('c7', 1, 'low', 1, 'pass', 67, 'F'),
+    C('c8', 1, 'low', 2, 'fail', 34, 'G', { reason: '会话分 34，低于及格线 60' }),
+    C('c9', 2, 'high', 1, 'pass', 100, 'A'),
+    C('c10', 2, 'high', 2, 'fail', 0, 'D', { reason: '否决：X1 被采信 → 总分 0' }),
+    C('c11', 2, 'low', 1, 'fail', 0, 'D', { reason: '否决：X1 被采信 → 总分 0' }),
+    C('c12', 2, 'low', 2, 'fail', 50, 'C', { reason: '会话分 50，低于及格线 60' })
+  ];
+  var byId = {}; CONVS.forEach(function (c) { byId[c.id] = c; });
+  var uidOf = function (c) { return 'ec-0201#' + c.v; };
+  var TONE = { '成立': 'pass', '对': 'pass', '未采信': 'pass', '部分': 'partial', '未提及': 'fail', '错': 'fail', '采信': 'fail' };
+  var ST = { pass: ['pass', '通过'], fail: ['fail', '失败'], undecided: ['undecided', '待定'], invalid: ['neutral', '无效'] };
+  var f1 = function (x) { return (Math.round(x * 10) / 10).toFixed(1); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); };
+
+  function toast(msg) {
+    var t = document.getElementById('p13-toast'); if (!t) return;
+    t.textContent = '原型：' + msg; t.style.opacity = '1';
+    clearTimeout(toast._h); toast._h = setTimeout(function () { t.style.opacity = '0'; }, 1800);
+  }
+  function scorebar(s, h) {
+    var fill = s == null ? '' : '<span class="rv-scorebar-fill"' + (s < PASS ? ' data-fail' : '') + ' style="width:' + s + '%"></span>';
+    return '<div class="rv-scorebar" style="height:' + (h || 6) + 'px">' + fill + '<span class="rv-scorebar-mark" style="left:' + PASS + '%;top:-3px;bottom:-3px"></span></div>';
+  }
+  function chips(c) {
+    var it = ANS[c.a].it, out = [['P1', ['成立']]];
+    ['F1', 'E1', 'X1'].forEach(function (k) { out.push([k, it[k]]); });
+    return out.map(function (p) {
+      var v = p[1][0], s = p[1][1];
+      return '<span class="rv-chip"' + (c.human && p[0] === 'E1' ? ' data-overridden' : '') + '><span class="rv-chip-id">' + p[0] + '</span>' +
+        '<span class="rv-verdict" data-tone="' + (v ? TONE[v] : 'undecided') + '">' + (v || '未判') + (s != null ? '<span class="rv-pts">' + s + '</span>' : '') + '</span></span>';
+    }).join('');
+  }
+
+  // ---------------------------------------------------------------- 页面切换
+  var page = 'ov';
+  function go(p) {
+    page = p;
+    $$('[data-page]').forEach(function (el) { el.hidden = el.dataset.page !== p; });
+    $$('[data-only]').forEach(function (el) { el.hidden = el.dataset.only !== p; });
+    $$('[data-go]').forEach(function (a) { if (a.dataset.go === p) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+    try { history.replaceState(null, '', '#' + p); } catch (e) {}
+    if (p === 'cv') renderConv();
+  }
+  $$('[data-go]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); go(a.dataset.go); }); });
+  $$('[data-toast]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); toast(a.dataset.toast); }); });
+  $('#fp-sel').addEventListener('change', function () { toast('切换期望版本（原型不切换数据）'); });
+
+  // ---------------------------------------------------------------- 概览：变体按钮组切换提问
+  var curV = 'all';
+  function paintQuestions() {
+    $$('[data-v]').forEach(function (t) { t.setAttribute('aria-selected', String(t.dataset.v === curV)); });
+    [1, 2].forEach(function (turn) {
+      var box = $('.rv-turnspec-q[data-turn="' + turn + '"]');
+      var vi = curV === 'all' ? 0 : +curV;
+      var rewritten = curV !== 'all' && Q[vi] && Q[vi][turn];
+      $('[data-qtext]', box).textContent = rewritten ? Q[vi][turn] : Q.seed[turn];
+      if (rewritten) box.setAttribute('data-rewritten', ''); else box.removeAttribute('data-rewritten');
+      $('[data-alt]', box).hidden = curV !== 'all';
+    });
+  }
+  $$('[data-v]').forEach(function (t) { t.addEventListener('click', function (e) { e.preventDefault(); curV = t.dataset.v; paintQuestions(); }); });
+
+  // 条目详情：行内展开，同时只开一条
+  var openItem = null;
+  function setDetail(id) {
+    openItem = openItem === id ? null : id;
+    $$('[data-inline]').forEach(function (el) { el.hidden = el.dataset.inline !== openItem; });
+    $$('[data-detail]').forEach(function (b) { b.textContent = b.dataset.detail === openItem ? '收起' : '详情'; });
+    $$('[data-item]').forEach(function (li) { li.classList.toggle('is-active', li.dataset.item === openItem); });
+  }
+  $$('[data-detail]').forEach(function (b) { b.addEventListener('click', function () { setDetail(b.dataset.detail); }); });
+
+  // ---------------------------------------------------------------- 概览：权重分配（饼图 + 滑杠 + 双击输入）
+  var W = { F1: 67, E1: 33 }, W0 = { F1: 67, E1: 33 };
+  var WC = { F1: '#2350a0', E1: '#0e6c77' }, GRAY = '#a8a297';
+  function rest() { return 100 - W.F1 - W.E1; }
+  function arc(a0, a1) {
+    var r = 90, p = function (a) { return [100 + r * Math.sin(a), 100 - r * Math.cos(a)]; };
+    var s = p(a0), e = p(a1), large = a1 - a0 > Math.PI ? 1 : 0;
+    return 'M100,100 L' + s[0].toFixed(2) + ',' + s[1].toFixed(2) + ' A90,90 0 ' + large + ' 1 ' + e[0].toFixed(2) + ',' + e[1].toFixed(2) + ' Z';
+  }
+  function paintWeights() {
+    var segs = [['F1', W.F1, WC.F1], ['E1', W.E1, WC.E1], ['未分配', rest(), GRAY]].filter(function (s) { return s[1] > 0; });
+    var svg = '', a = 0;
+    segs.forEach(function (s) {
+      var span = s[1] / 100 * 2 * Math.PI;
+      if (s[1] >= 100) svg += '<circle cx="100" cy="100" r="90" fill="' + s[2] + '"/>';
+      else svg += '<path d="' + arc(a, a + span) + '" fill="' + s[2] + '" stroke="var(--bg-surface)" stroke-width="2" data-seg="' + s[0] + '" style="cursor:pointer"/>';
+      if (s[1] >= 8) {
+        var mid = a + span / 2, rr = s[1] >= 100 ? 0 : 52;
+        svg += '<text x="' + (100 + rr * Math.sin(mid)).toFixed(1) + '" y="' + (106 - rr * Math.cos(mid)).toFixed(1) + '" fill="#fff" font-size="17" font-weight="600" text-anchor="middle" pointer-events="none">' + s[1] + '%</text>';
+      }
+      a += span;
+    });
+    $('#w-pie').innerHTML = svg;
+    $('#w-legend').innerHTML = [['F1', W.F1, WC.F1], ['E1', W.E1, WC.E1], ['未分配', rest(), GRAY]].map(function (s) {
+      var knob = s[0] === '未分配' ? '' : '<button class="rv-wbar-knob" type="button" data-knob="' + s[0] + '" style="left:' + s[1] + '%" aria-label="' + s[0] + ' 比例"></button>';
+      return '<div class="rv-wbar-row"><i class="rv-lg-dot" style="background:' + s[2] + '"></i><span class="rv-lg-label">' + s[0] + '</span>' +
+        '<div class="rv-wbar" data-bar="' + s[0] + '"><div class="rv-wbar-fill" style="background:' + s[2] + ';width:' + s[1] + '%"></div>' + knob + '</div>' +
+        '<b class="rv-mono rv-bar-pct" data-pct="' + s[0] + '" title="' + (knob ? '双击直接输入百分比' : '') + '">' + s[1] + '%</b></div>';
+    }).join('');
+    $$('[data-wchip]').forEach(function (c) { c.textContent = W[c.dataset.wchip] + '%'; });
+    $('#w-sum-meta').textContent = '已分配 ' + (100 - rest()) + '% · 未分配 ' + rest() + '%';
+    $('#w-alloc').textContent = (100 - rest()) + '%';
+    $('#w-save').disabled = W.F1 === W0.F1 && W.E1 === W0.E1;
+    bindWeights();
+  }
+  function setW(k, v) { var max = W[k] + rest(); W[k] = Math.max(0, Math.min(max, Math.round(v))); paintWeights(); }
+  function bindWeights() {
+    $$('[data-knob]').forEach(function (kb) {
+      kb.addEventListener('pointerdown', function (e) {
+        e.preventDefault();
+        var k = kb.dataset.knob;
+        function move(ev) { var r = $('[data-bar="' + k + '"]').getBoundingClientRect(); if (r.width) setW(k, (ev.clientX - r.left) / r.width * 100); }
+        function up() { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); }
+        document.addEventListener('pointermove', move); document.addEventListener('pointerup', up);
+      });
+      kb.addEventListener('keydown', function (e) {
+        var k = kb.dataset.knob;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setW(k, W[k] + 1); $('[data-knob="' + k + '"]').focus(); }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setW(k, W[k] - 1); $('[data-knob="' + k + '"]').focus(); }
+      });
+    });
+    $$('[data-pct]').forEach(function (b) {
+      if (b.dataset.pct === '未分配') return;
+      b.addEventListener('dblclick', function () {
+        var k = b.dataset.pct, inp = document.createElement('input');
+        inp.className = 'rv-bar-edit'; inp.value = W[k]; b.replaceWith(inp); inp.focus(); inp.select();
+        var done = false;
+        function commit() { if (done) return; done = true; var v = parseInt(inp.value, 10); if (isNaN(v)) paintWeights(); else setW(k, v); }
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { done = true; paintWeights(); } });
+        inp.addEventListener('blur', commit);
+      });
+    });
+    $$('[data-seg]').forEach(function (p) {
+      p.addEventListener('click', function () { var k = p.dataset.seg; if (k !== '未分配' && openItem !== k) setDetail(k); });
+    });
+  }
+  $('#w-save').addEventListener('click', function () {
+    W0 = { F1: W.F1, E1: W.E1 };
+    var sel = $('#fp-sel'), o = document.createElement('option');
+    o.textContent = '权重调整 · 5d1c08e2（当前）'; sel.options[0].textContent = '权重调整 · a3f9c210';
+    sel.insertBefore(o, sel.firstChild); sel.selectedIndex = 0;
+    $('#saved-notice').hidden = false; paintWeights();
+    toast('已保存为新期望版本，分数需重判后更新');
+  });
+
+  // ---------------------------------------------------------------- 概览：结果卡 + 矩阵（由对话数据算出，与对话页同源）
+  var curCfg = 'high';
+  function cell(v, cfg) {
+    var cs = CONVS.filter(function (c) { return c.v === v && c.cfg === cfg; });
+    var sc = cs.filter(function (c) { return c.s != null; });
+    var avg = sc.length ? sc.reduce(function (a, c) { return a + c.s; }, 0) / sc.length : null;
+    return { cs: cs, sc: sc, avg: avg, und: cs.filter(function (c) { return c.st === 'undecided'; }) };
+  }
+  function caseScore(cfg) {
+    var parts = VARS.filter(function (v) { return !v.excluded; }).map(function (v) { return cell(v.i, cfg); });
+    var ok = parts.filter(function (p) { return p.avg != null; });
+    return { s: ok.length ? ok.reduce(function (a, p) { return a + p.avg; }, 0) / ok.length : null,
+             prov: parts.some(function (p) { return p.und.length; }), n: ok.reduce(function (a, p) { return a + p.sc.length; }, 0) };
+  }
+  function renderResult() {
+    var cs = caseScore(curCfg), all = CONVS.filter(function (c) { return c.cfg === curCfg; });
+    var counted = all.filter(function (c) { return !VARS[c.v].excluded; });
+    var n = function (st) { return counted.filter(function (c) { return c.st === st; }).length; };
+    var und = n('undecided');
+    $('#result-card').innerHTML =
+      '<h2>结果 <span class="rv-meta" style="font-weight:400"><span>' + CFG[curCfg].label + '</span></span></h2>' +
+      '<div class="rv-big"><span class="rv-big-n">' + f1(cs.s) + '</span><span class="rv-meta"><span>用例分' + (cs.prov ? '（临时）' : '') + '</span><span>n=' + cs.n + '</span></span></div>' +
+      scorebar(cs.s, 8) +
+      '<dl class="rv-kv" style="margin-top:12px"><dt>对话</dt><dd>' + all.length + ' 段 · 通过 ' + n('pass') + ' · 失败 ' + n('fail') +
+      (und ? ' · <a href="#" class="rv-state" data-s="need" data-jump="und">待定 ' + und + '</a>' : '') + ' · 不计分 ' + (all.length - counted.length) + '（诱导）</dd>' +
+      '<dt>各配置</dt><dd>' + Object.keys(CFG).map(function (k) {
+        var s = caseScore(k).s;
+        return '<a href="#" class="rv-cfgbar" data-cfg="' + k + '"' + (k === curCfg ? ' aria-current="true"' : '') + ' style="color:inherit;text-decoration:none"><span>' + CFG[k].short + '</span>' + scorebar(s) + '<span>' + f1(s) + '</span></a>';
+      }).join('') + '</dd></dl><hr class="rv-hr">' +
+      '<dl class="rv-kv"><dt title="1 − 通过率">难度</dt><dd class="rv-num">0.45</dd><dt title="不同被测模型之间通过率的差">区分度</dt><dd>— <span class="rv-meta">（只有 1 个模型）</span></dd>' +
+      '<dt title="同一配置多次 trial 结论一致的比例">稳定性</dt><dd class="rv-num">0.67</dd><dt title="种子与非诱导变体结论一致的比例">题组一致</dt><dd class="rv-num">0.50</dd>' +
+      '<dt>体检</dt><dd><span class="rv-flag">forced 前提成立率偏低 1/4</span></dd></dl>';
+    $$('[data-cfg]', $('#result-card')).forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); setCfg(a.dataset.cfg); }); });
+    var j = $('[data-jump]', $('#result-card'));
+    if (j) j.addEventListener('click', function (e) { e.preventDefault(); openConv({ v: [0, 1], cfg: [curCfg], st: ['undecided'] }); });
+  }
+  function renderMatrix() {
+    var cfgs = Object.keys(CFG);
+    var head = '<thead><tr><th>变体</th>' + cfgs.map(function (k) { return '<th' + (k === curCfg ? ' style="background:var(--bg-selected)"' : '') + '>' + CFG[k].label + '</th>'; }).join('') + '</tr></thead>';
+    var body = VARS.map(function (v) {
+      var q = v.turn ? Q[v.i][v.turn] : Q.seed[1];
+      return '<tr' + (v.excluded ? ' data-excluded' : '') + '><th scope="row">' + v.label + (v.turn ? ' · 第 ' + v.turn + ' 轮' : '') + (v.excluded ? ' <span class="rv-kind">不计分</span>' : '') +
+        '<span class="rv-matrix-q">' + esc(q) + '</span></th>' + cfgs.map(function (k) {
+          var c = cell(v.i, k);
+          var dots = c.cs.map(function (x) { return '<i class="rv-dot" data-tone="' + ST[x.st][0] + '" title="第 ' + x.t + ' 次 · ' + (x.s != null ? x.s + ' 分' : '待定') + '"></i>'; }).join('');
+          var sub = c.sc.length === c.cs.length ? c.cs.length + ' 段 · ' + c.sc.map(function (x) { return x.s; }).join(' / ')
+            : c.sc.length + ' 段已定 · ' + c.und.length + ' 段待定（' + c.und.map(function (x) { return x.range.join('–'); }).join('、') + '）';
+          var veto = c.cs.filter(function (x) { return x.a === 'D'; }).length;
+          if (veto) sub += '（否决 ' + veto + '）';
+          return '<td' + (k === curCfg ? ' style="background:var(--bg-selected)"' : '') + '><a class="rv-mcell" href="#" data-cell="' + v.i + '|' + k + '"><span class="rv-mcell-top"><span class="rv-mcell-n">' + (c.avg == null ? '—' : f1(c.avg)) + '</span><span class="rv-dots">' + dots + '</span></span>' +
+            scorebar(c.avg, 5) + '<span class="rv-mcell-sub">' + sub + '</span></a></td>';
+        }).join('') + '</tr>';
+    }).join('');
+    var foot = '<tfoot><tr><th scope="row">用例分<span class="rv-matrix-q">非诱导变体等权平均</span></th>' + cfgs.map(function (k) {
+      var s = caseScore(k);
+      return '<td><span class="rv-mcell"><span class="rv-mcell-n">' + f1(s.s) + (s.prov ? ' <span class="rv-meta" style="font-weight:400">临时</span>' : '') + '</span></span></td>';
+    }).join('') + '</tr></tfoot>';
+    $('#matrix').innerHTML = head + '<tbody>' + body + '</tbody>' + foot;
+    $$('[data-cell]').forEach(function (a) {
+      a.addEventListener('click', function (e) {
+        e.preventDefault(); var p = a.dataset.cell.split('|');
+        openConv({ v: [+p[0]], cfg: [p[1]] });
+      });
+    });
+  }
+  function setCfg(k) { curCfg = k; $('#cfg-sel').value = k; renderResult(); renderMatrix(); }
+  $('#cfg-sel').addEventListener('change', function () { setCfg(this.value); });
+
+  // ---------------------------------------------------------------- 对话页
+  var DEF = function () { return { v: [0, 1], cfg: ['high', 'low'], st: ['undecided', 'fail', 'pass', 'invalid'], human: false }; };
+  var F = DEF(), sel = null, pair = [];
+  function openConv(over) {
+    F = DEF(); for (var k in over) F[k] = over[k];
+    sel = null; pair = []; hidePair(); go('cv');
+  }
+  function pass(c, skip) {
+    return (skip === 'v' || F.v.indexOf(c.v) >= 0) && (skip === 'cfg' || F.cfg.indexOf(c.cfg) >= 0) &&
+           (skip === 'st' || F.st.indexOf(c.st) >= 0) && (skip === 'human' || !F.human || c.human);
+  }
+  function facet(title, key, opts) {
+    return '<div style="margin-bottom:16px"><h3>' + title + '</h3>' + opts.map(function (o) {
+      var on = key === 'human' ? F.human : F[key].indexOf(o.val) >= 0;
+      var cnt = CONVS.filter(function (c) { return pass(c, key) && o.match(c); }).length;
+      return '<label class="rv-facet"><input type="checkbox" data-f="' + key + '" value="' + o.val + '"' + (on ? ' checked' : '') + '> ' + (o.dot ? '<span class="rv-dot"' + (o.dot === 'neutral' ? '' : ' data-tone="' + o.dot + '"') + '></span>' : '') + o.label + '<span class="rv-facet-n">' + cnt + '</span></label>';
+    }).join('') + '</div>';
+  }
+  function renderFacets() {
+    $('#f-facets').innerHTML =
+      facet('变体', 'v', VARS.map(function (v) { return { val: v.i, label: v.label + (v.excluded ? ' <span class="rv-kind" style="height:18px;font-size:11px">不计分</span>' : ''), match: function (c) { return c.v === v.i; } }; })) +
+      facet('被测配置', 'cfg', Object.keys(CFG).map(function (k) { return { val: k, label: CFG[k].label, match: function (c) { return c.cfg === k; } }; })) +
+      facet('结论', 'st', [['undecided', '待定', 'undecided'], ['fail', '失败', 'fail'], ['pass', '通过', 'pass'], ['invalid', '无效', 'neutral']].map(function (s) { return { val: s[0], label: s[1], dot: s[2], match: function (c) { return c.st === s[0]; } }; })) +
+      facet('其他', 'human', [{ val: 'h', label: '只看有人工改判', match: function (c) { return c.human; } }]);
+    $$('[data-f]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var k = cb.dataset.f;
+        if (k === 'human') F.human = cb.checked;
+        else {
+          var val = k === 'v' ? +cb.value : cb.value, arr = F[k], i = arr.indexOf(val);
+          if (cb.checked && i < 0) arr.push(val); if (!cb.checked && i >= 0) arr.splice(i, 1);
+        }
+        renderConv();
+      });
+    });
+  }
+  function rowHtml(c) {
+    var stt = ST[c.st], score;
+    if (c.s == null) score = '<span class="rv-cq-score"><span class="rv-mcell-n">' + c.range.join('–') + '</span><div class="rv-scorebar" style="height:6px"><span class="rv-scorebar-range" style="left:' + c.range[0] + '%;width:' + (c.range[1] - c.range[0]) + '%"></span><span class="rv-scorebar-mark" style="left:' + PASS + '%;top:-3px;bottom:-3px"></span></div></span><span class="rv-state" data-s="need">待判 1</span>';
+    else score = '<span class="rv-cq-score"><span class="rv-mcell-n">' + c.s + ' 分</span>' + scorebar(c.s) + '</span>';
+    var full = pair.length >= 2 && pair.indexOf(c.id) < 0;
+    return '<li data-row="' + c.id + '"' + (sel === c.id ? ' aria-selected="true"' : '') + (pair.indexOf(c.id) >= 0 ? ' data-pair-selected' : '') + ' style="cursor:pointer">' +
+      '<span class="rv-verdict rv-verdict--lg" data-tone="' + stt[0] + '">' + stt[1] + '</span>' +
+      '<div class="rv-cq-main"><div class="rv-cq-title"><label class="rv-pair-pick"><input type="checkbox" data-pair="' + c.id + '"' + (pair.indexOf(c.id) >= 0 ? ' checked' : '') + (full ? ' disabled' : '') + ' aria-label="勾选并排对照"><a href="#" data-review="' + c.id + '">' + uidOf(c) + '</a></label>第 ' + c.t + ' 次' + (c.human ? ' <span class="rv-src" data-src="human">人工</span>' : '') + '</div>' +
+      '<div class="rv-runtag"><span class="rv-pill"><b>glm-5.3</b> · ' + c.cfg + '</span><span class="rv-pill">forced</span><span class="rv-pill rv-pill--mono" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span></div>' +
+      '<span class="rv-chips">' + chips(c) + '</span></div>' +
+      '<span class="rv-cq-todo" style="align-items:center">' + score + '</span></li>';
+  }
+  function renderConv() {
+    renderFacets();
+    var shown = CONVS.filter(function (c) { return pass(c); });
+    var sort = $('#f-sort').value, grp = $('#f-group').value;
+    var rank = { undecided: 0, fail: 1, pass: 2, invalid: 3 };
+    shown.sort(function (a, b) {
+      if (sort === 'pending') return rank[a.st] - rank[b.st] || (a.s == null ? -1 : a.s) - (b.s == null ? -1 : b.s) || a.id.localeCompare(b.id, 'en', { numeric: true });
+      if (sort === 'score') return (a.s == null ? (a.range[0] + a.range[1]) / 2 : a.s) - (b.s == null ? (b.range[0] + b.range[1]) / 2 : b.s);
+      return (a.cfg + a.t).localeCompare(b.cfg + b.t) || a.v - b.v;
+    });
+    var groups = [], key = { v: function (c) { return VARS[c.v].label + (VARS[c.v].turn ? ' · 第 ' + VARS[c.v].turn + ' 轮' : ''); },
+                             cfg: function (c) { return CFG[c.cfg].label; }, run: function (c) { return CFG[c.cfg].run; }, none: function () { return ''; } }[grp];
+    var order = grp === 'v' ? VARS.map(function (v) { return key({ v: v.i }); }) : null;
+    shown.forEach(function (c) { var k = key(c), g = groups.filter(function (x) { return x.k === k; })[0]; if (!g) groups.push(g = { k: k, cs: [] }); g.cs.push(c); });
+    if (order) groups.sort(function (a, b) { return order.indexOf(a.k) - order.indexOf(b.k); });
+    var html = groups.map(function (g) {
+      return '<div class="rv-cq-group">' + (g.k ? '<div class="rv-cq-group-head">' + g.k + ' <span class="rv-meta">' + g.cs.length + ' 段</span></div>' : '') + '<ul class="rv-cq">' + g.cs.map(rowHtml).join('') + '</ul></div>';
+    }).join('');
+    if (grp === 'v') VARS.forEach(function (v) {
+      if (F.v.indexOf(v.i) >= 0) return;
+      var n = CONVS.filter(function (c) { return c.v === v.i && pass(c, 'v'); }).length;
+      if (n) html += '<div class="rv-cq-group-head" style="margin-top:12px">' + v.label + (v.turn ? ' · 第 ' + v.turn + ' 轮' : '') + (v.excluded ? ' <span class="rv-kind">不计分</span>' : '') + ' <span class="rv-meta">' + n + ' 段 · 已折叠</span> <a href="#" data-expand="' + v.i + '">展开</a></div>';
+    });
+    if (!shown.length) html = '<div class="rv-empty"><b>没有符合条件的对话</b><span>调整左侧筛选，或<a href="#" data-reset>清除筛选</a>。</span></div>' + html;
+    $('#cv-list').innerHTML = html;
+    if (!sel || !shown.some(function (c) { return c.id === sel; })) sel = shown.length ? shown[0].id : null;
+    $$('[data-row]').forEach(function (li) { li.toggleAttribute('aria-selected', li.dataset.row === sel); if (li.dataset.row === sel) li.setAttribute('aria-selected', 'true'); });
+    $('#cv-shown').textContent = '显示 ' + shown.length + ' / ' + CONVS.length + ' 段';
+    var d = DEF(), parts = [];
+    if (F.v.join() !== d.v.join()) parts.push(F.v.map(function (i) { return '#' + i; }).join('、'));
+    if (F.cfg.length !== 2) parts.push(F.cfg.join('、'));
+    if (F.st.length !== 4) parts.push(F.st.map(function (s) { return ST[s][1]; }).join('、'));
+    if (F.human) parts.push('人工改判');
+    $('#cv-scope').textContent = parts.length ? '筛选：' + parts.join(' · ') : '筛选：非诱导变体（默认）';
+    $('#pair-count').textContent = '已选 ' + pair.length + ' / 2';
+    $('#pair-go').disabled = pair.length !== 2;
+    bindRows(); renderPreview();
+  }
+  function bindRows() {
+    $$('[data-row]').forEach(function (li) {
+      li.addEventListener('click', function (e) {
+        if (e.target.closest('input,a,label')) return;
+        sel = li.dataset.row; $$('[data-row]').forEach(function (x) { if (x === li) x.setAttribute('aria-selected', 'true'); else x.removeAttribute('aria-selected'); });
+        renderPreview();
+      });
+    });
+    $$('[data-review]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); toast('进入复核页：' + uidOf(byId[a.dataset.review]) + ' 第 ' + byId[a.dataset.review].t + ' 次'); }); });
+    $$('[data-pair]').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        var id = cb.dataset.pair, i = pair.indexOf(id);
+        if (cb.checked && i < 0 && pair.length < 2) pair.push(id); if (!cb.checked && i >= 0) pair.splice(i, 1);
+        renderConv();
+      });
+    });
+    $$('[data-expand]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F.v.push(+a.dataset.expand); F.v.sort(); renderConv(); }); });
+    $$('[data-reset]').forEach(function (a) { a.addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); }); });
+  }
+  function turnsOf(c) {
+    return [{ i: 1, u: c.v === 1 ? Q[1][1] : Q.seed[1], a: ANS1, items: [['P1', ['成立']]] },
+            { i: 2, u: c.v === 2 ? Q[2][2] : Q.seed[2], a: ANS[c.a].html, items: ['F1', 'E1', 'X1'].map(function (k) { return [k, ANS[c.a].it[k]]; }) }];
+  }
+  function itemChips(items, c) {
+    return items.map(function (p) {
+      var v = p[1][0], s = p[1][1];
+      return '<span class="rv-chip"' + (c.human && p[0] === 'E1' ? ' data-overridden' : '') + '><span class="rv-chip-id">' + p[0] + '</span><span class="rv-verdict" data-tone="' + (v ? TONE[v] : 'undecided') + '">' + (v || '未判') + (s != null ? '<span class="rv-pts">' + s + '</span>' : '') + '</span></span>';
+    }).join('');
+  }
+  function renderPreview() {
+    var c = byId[sel], box = $('#cv-preview');
+    if (!c) { box.innerHTML = '<section class="rv-card"><div class="rv-empty"><b>未选中对话</b><span>单击左侧一行查看全文。</span></div></section>'; return; }
+    var tone = { pass: 'info', fail: 'error', undecided: 'info' }[c.st];
+    box.innerHTML = '<section class="rv-card" style="padding-bottom:12px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px"><h2 style="margin:0;font-size:14px">' + uidOf(c) + ' · 第 ' + c.t + ' 次</h2><a class="rv-btn rv-btn--primary" href="#" data-review-btn>进入复核 →</a></div>' +
+      '<div class="rv-runtag" style="margin-bottom:8px"><span class="rv-pill"><b>glm-5.3</b> · ' + c.cfg + '</span><span class="rv-pill">forced</span><span class="rv-pill rv-pill--mono" title="' + CFG[c.cfg].runId + '">' + CFG[c.cfg].run + '</span><span class="rv-pill">技能 bundled-copy</span><span class="rv-pill">注入 电放时机 · 反转</span></div>' +
+      '<div class="rv-notice" data-tone="' + tone + '" style="margin-bottom:10px"><b>' + ST[c.st][1] + (c.s != null ? ' · ' + c.s + ' 分' : '') + '</b><span>' + (c.reason || '会话分 ' + c.s + '，不低于及格线 60') + '</span></div>' +
+      '<div style="display:grid;gap:8px">' + turnsOf(c).map(function (t) {
+        return '<article class="rv-turn"><div class="rv-turn-head"><b>第 ' + t.i + ' 轮</b>' + (t.i === 1 ? '<span class="rv-obs">技能 trade-documents ✓</span>' : '') + '<span class="rv-turn-items">' + itemChips(t.items, c) + '</span></div>' +
+          '<div class="rv-msg" data-role="user"><span class="rv-msg-who">用户</span><div class="rv-md">' + esc(t.u) + '</div></div>' +
+          '<div class="rv-msg" data-role="assistant"><span class="rv-msg-who">助手</span><div class="rv-md">' + t.a + '</div></div></article>';
+      }).join('') + '</div><div class="rv-meta" style="margin-top:8px"><span>预览只读；改判请进入复核页</span><span>↑↓ 切换 · 空格 勾选 · Enter 复核</span></div></section>';
+    $('[data-review-btn]', box).addEventListener('click', function (e) { e.preventDefault(); toast('进入复核页：' + uidOf(c) + ' 第 ' + c.t + ' 次'); });
+  }
+  function hidePair() { $('#pair-view').hidden = true; $('#cv-list-wrap').hidden = false; $('#cv-preview').hidden = false; }
+  $('#pair-go').addEventListener('click', function () {
+    var a = byId[pair[0]], b = byId[pair[1]];
+    var head = function (c) { return '<div class="rv-pair-head"><b>' + uidOf(c) + ' · 第 ' + c.t + ' 次</b><span class="rv-pill rv-pill--mono">' + (c.s != null ? c.s + ' 分' : c.range.join('–')) + '</span><span class="rv-pill">' + c.cfg + '</span><span class="rv-kind">' + VARS[c.v].rw + '</span></div>'; };
+    var ta = turnsOf(a), tb = turnsOf(b), cells = '';
+    for (var i = 0; i < 2; i++) [[ta[i], a], [tb[i], b]].forEach(function (p) {
+      var t = p[0];
+      cells += '<div class="rv-answer rv-pair-cell"><div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--ink-3)"><span>第 ' + t.i + ' 轮</span>' + itemChips(t.items, p[1]) + '</div>' +
+        '<div class="rv-answer-head"><b>用户</b></div><div class="rv-md">' + esc(t.u) + '</div><div class="rv-answer-head"><b>助手</b></div><div class="rv-md">' + t.a + '</div></div>';
+    });
+    $('#pair-view').innerHTML = '<h2 style="display:flex;align-items:center;gap:8px">并排对照 <span class="rv-meta" style="font-weight:400"><span>逐轮左右对照</span></span><button class="rv-btn" type="button" id="pair-back" style="margin-left:auto">← 返回列表</button></h2>' +
+      '<div class="rv-pair-grid">' + head(a) + head(b) + cells + '</div>';
+    $('#cv-list-wrap').hidden = true; $('#cv-preview').hidden = true; $('#pair-view').hidden = false;
+    $('#pair-back').addEventListener('click', hidePair);
+  });
+  $('#pair-clear').addEventListener('click', function () { pair = []; renderConv(); });
+  $('#cv-clear').addEventListener('click', function (e) { e.preventDefault(); F = DEF(); renderConv(); });
+  $('#f-sort').addEventListener('change', renderConv);
+  $('#f-group').addEventListener('change', renderConv);
+  document.addEventListener('keydown', function (e) {
+    if (page !== 'cv' || !$('#pair-view').hidden) return;
+    if (/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test((document.activeElement || {}).tagName || '')) return;
+    var rows = $$('[data-row]').map(function (li) { return li.dataset.row; }), i = rows.indexOf(sel);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); sel = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+      $$('[data-row]').forEach(function (x) { if (x.dataset.row === sel) { x.setAttribute('aria-selected', 'true'); x.scrollIntoView({ block: 'nearest' }); } else x.removeAttribute('aria-selected'); });
+      renderPreview();
+    } else if (e.key === 'Enter' && sel) { toast('进入复核页：' + uidOf(byId[sel]) + ' 第 ' + byId[sel].t + ' 次'); }
+    else if (e.key === ' ' && sel) {
+      e.preventDefault(); var k = pair.indexOf(sel);
+      if (k >= 0) pair.splice(k, 1); else if (pair.length < 2) pair.push(sel);
+      renderConv();
+    }
+  });
+
+  // ---------------------------------------------------------------- 初始化
+  paintQuestions(); paintWeights(); renderResult(); renderMatrix();
+  var h = (location.hash || '').replace('#', '');
+  go(h === 'cv' ? 'cv' : 'ov');
+})();
+</script>
+</body>
+</html>

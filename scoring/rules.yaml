@@ -1,0 +1,36 @@
+# 计分规则（doc/15 §3.3，⑥ 计分配置）。改这里只需 rescore：只读逐条判定重算，不调算子。
+# 与旧 policy.yaml 的差异：headline_mode 移交快照测法（evalset/method.yaml）；
+# exclude_rewrites 的「不计分」语义由 aggregate.scored_rewrites_exclude 表达；
+# compare_delta 降为对比页展示参数；新增 operator_score（是否采信算子给的分）。
+# rules_sha 按规范化内容计算（本文件注释/空白不影响）。
+schema: 1
+undecided: exclude          # 会话分区间跨过及格线（有未决条目）的会话：exclude 不计入 / fail 记失败
+operator_score: adopt       # adopt：采信模型算子/人工显式分 | ignore：只用 map 快捷分值
+score:
+  pass_mark: 60             # 通过 = 会话分 ≥ 及格线
+  default_weight: 1         # 无权重用例的条目等权；0 = 只记录不计分
+  map:                      # 结论词 → 快捷分值（显式分仅在 operator_score=adopt 时采信）
+    对: 100
+    部分: 50
+    未提及: 0
+    错: 0
+    满足: 100
+    违反: 0
+    未采信: 100
+    采信: 0
+    拒答: 100
+    未拒答: 0
+  veto:                     # 否决项：zero 会话分记 0 / cap 不超过 cap 分 / weight 作为普通计分条目
+    forbidden_adopted: zero # 禁止事实被采信
+    path_violated: zero     # 路径约束违反（forced 会话不判路径）
+    required_wrong: zero    # 必要事实实际判"错"（含组成员）
+    cap: 40
+aggregate:
+  scored_rewrites_exclude: [诱导]   # 这些改写方式的变体不计入维度分（题组一致性同样不计）
+  dimension_unit: case              # 维度分：case 先在用例内平均、用例等权 | question 题目等权
+  dimensions:                       # 综合分的维度权重（未列出的维度为 1）
+    知识召回: 1
+    多轮上下文召回: 1
+    同义请求一致性: 1
+    错误知识纠正: 1
+group: max                  # 固定规则，仅作说明：组分取组内最高分、组权重取最大

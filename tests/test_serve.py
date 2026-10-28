@@ -1,3 +1,5 @@
+from scoring.rules import load_rules as _lr, default_rules_path as _drp
+RULES, RULES_SHA = _lr(_drp())
 """复核服务集成测试（doc/10 §10）：新六页面路由、旧路由 301、批量提交与预览接口、
 markdown 渲染、页面数字与导出同源、合成大库下全页面响应时间。"""
 import json
@@ -45,6 +47,78 @@ def served_plain(tmp_path):
     assert cli.main(["score", str(run_dir), "--db", db]) == 0
     app = create_app(db)
     return TestClient(app), db
+
+
+def test_create_app_rules_path_accepts_both_formats(tmp_path):
+    """--rules 给 rules.yaml 直接装载；旧 policy.yaml（无 schema:1）转换装载，
+    等价内容登记同一 rules_sha。修复前 rules.yaml 被无条件当 policy 装载 → PolicyError。"""
+    db = str(tmp_path / "eval.db")
+    c1 = TestClient(create_app(db, rules_path=_drp()))
+    assert c1.get("/").status_code == 200
+    c2 = TestClient(create_app(db, rules_path=default_policy_path()))
+    assert c2.get("/").status_code == 200
+    shas = {r["rules_sha"] for r in Store(db).rules_rows()}
+    assert len(shas) == 1
+
+
+def test_config_detail_pages(served):
+    """三件套详情页（doc/15 §4 配置可解释）：rules 全文+diff、chain 链组成、
+    snapshot 测法与题目清单；侧边栏 🔍 与帮助浮层渲染。"""
+    client, db, tmp_path, ops = served
+    st = Store(db)
+    sha = RULES_SHA
+    page = client.get(f"/detail/rules/{sha}").text
+    assert "pass_mark" in page and "operator_score" in page
+    assert "没有计分规则" in client.get("/detail/rules/none").text
+
+    base = st.rules_rows()[-1]["rules"]                       # 与库内另一条规则 diff
+    mod = {**base, "score": {**base["score"], "pass_mark": 75}}
+    from scoring.rules import canonical_sha
+    mod_sha = canonical_sha(mod)
+    st.register_rules(mod_sha, mod, name="v2")
+    diff = client.get(f"/detail/rules/{sha}?diff={mod_sha}").text
+    assert "pass_mark" in diff and "75" in diff
+
+    chain_sha = st.chains()[0]["chain_sha"]
+    cpage = client.get(f"/detail/chain/{chain_sha}").text
+    assert ("逐条目类型链组成" in cpage) or ("历史链" in cpage)
+
+    ver = st.snapshots()[0]["evalset_version"]
+    spage = client.get(f"/detail/snapshot/{ver}").text
+    assert "测法" in spage and "题目清单" in spage
+
+    home = client.get("/").text                                # 侧边栏 🔍 + 帮助浮层
+    assert home.count("🔍") >= 3 and "judge-help" in home and "snapshot use" in home
+
+
+def test_weight_history_view_and_restore(served):
+    """用例页权重历史：历次配置可查（含旧权重下现存结论）、可切回（写成新有效
+    配置 + 重算本用例）；切回「当前」被拒。"""
+    client, db, tmp_path, ops = served
+    st = Store(db)
+    r1 = st.revise_weights("ec-1", {"F1": 40})
+    st.rescore_cases(["ec-1"], RULES, RULES_SHA)
+    old = st.weight_history("ec-1")[0]["set_at"]
+    st.revise_weights("ec-1", {"F1": 70}, label="提高F1")
+    st.rescore_cases(["ec-1"], RULES, RULES_SHA)
+
+    page = client.get("/case/ec-1").text
+    assert "权重历史" in page and "切回" in page and old[:10] in page
+
+    resp = client.post("/api/case/weights-restore",
+                       json={"case_id": "ec-1", "set_at": old, "label": ""})
+    assert resp.status_code == 200 and resp.json()["rescored"] >= 1
+    w, wfp, _ = st.effective_weights("ec-1")
+    assert w == {"F1": 40} and wfp == r1["weight_fp"]        # 切回后指纹复原
+
+    hist = st.weight_history("ec-1")
+    assert hist[0]["active"] and hist[0]["label"].startswith("切回")
+    assert any(g["weight_fp"] == r1["weight_fp"] and not g["active"] for g in hist[1:])
+    bad = client.post("/api/case/weights-restore",
+                      json={"case_id": "ec-1", "set_at": hist[0]["set_at"], "label": hist[0]["label"]})
+    assert bad.status_code == 400 and "已是当前" in bad.json()["error"]
+    assert client.post("/api/case/weights-restore",
+                       json={"case_id": "ec-1", "set_at": "1999-01-01"}).status_code == 400
 
 
 def test_rescore_notice(tmp_path):
@@ -201,7 +275,7 @@ def test_review_page(served_plain):
     # 权重调整后的复核行按百分比显示（百分制标记 → 权重 60.0%）
     st = Store(db)
     q = st.questions()[0]
-    st.revise_weights(q["qkey"], q["current_judge_fp"], {"F1": 60})
+    st.revise_weights(q["case_id"], {"F1": 60})     # v8：按用例存 item_weights
     st.close()
     r2 = client.get(f"/review/{quote(answer_id)}")
     assert "权重 60%</span>" in r2.text
@@ -480,9 +554,9 @@ def test_judging_page(served):
 
 def _build_big_db(db_path, n_q=1000, n_per=10):
     """1 万答案 / 10 万判定：三分之一未决、三分之一失败；1000 条人工改判
-    （其中约 1000 条与机器不一致）。结论行用真实的 chain_sha / policy_sha。"""
+    （其中约 1000 条与机器不一致）。结论行用真实的 chain_sha / rules_sha。"""
     chain = load_operator_config(default_operators_path()).chain_sha
-    policy_sha = load_policy(default_policy_path())[1]
+    rules_sha = RULES_SHA
     facts = [{"id": f"F{i}", "kind": "required", "text": f"事实{i}", "keywords": [], "turn": 1,
               "group": None, "evidence": None} for i in range(1, 11)]
     store = Store(db_path)
@@ -511,7 +585,7 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                 status = "undecided" if kind == 0 else "pass"
                 concl_status = {"0": "undecided", "1": "fail", "2": "pass"}[str(kind)]
                 score = {"0": None, "1": 0.0, "2": 100.0}[str(kind)]
-                conclusions.append((a_id, fp, chain, policy_sha, concl_status, "", "{}",
+                conclusions.append((a_id, fp, chain, rules_sha, concl_status, "", "{}",
                                     score, score, score, score, "auto" if score is not None else None))
                 for fi, f in enumerate(facts):                 # 10 条判定/答案 → 10 万条
                     if kind == 0 and fi == 0:
@@ -526,15 +600,24 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                     reviews.append((a_id, "F1", f"sha{qi}", "asha", "对", "回答明确", "codfish",
                                     "2026-01-01", None))
         conn.executemany("INSERT OR REPLACE INTO questions(qkey, uid, case_id, variant_index, rewrite, dim,"
-                         " topic, granularity, tags_json, input_fp, current_judge_fp, active, first_seen)"
+                         " topic, granularity, tags_json, input_fp, current_standard_fp, active, first_seen)"
                          " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", questions)
-        conn.executemany("INSERT OR REPLACE INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", answers)
-        conn.executemany("INSERT OR REPLACE INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
-        conn.executemany("INSERT OR REPLACE INTO conclusions VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", conclusions)
+        conn.executemany("INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id,"
+                         " judge_fp_at_run, profile_id, models_json, mode, trial, skills_mode,"
+                         " skills_base, evalset_version, run_status, record_json,"
+                         " injection_found_gt1, variant_leak_json, injection_observed_json)"
+                         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", answers)
+        conn.executemany("INSERT OR REPLACE INTO verdicts(answer_id, standard_fp, chain_sha, item_id,"
+                         " kind, turn, item_sha, answer_sha, value, source, operator, reason,"
+                         " trace_json, status, judged_at, score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
+        conn.executemany("INSERT OR REPLACE INTO conclusions(answer_id, standard_fp, chain_sha, rules_sha,"
+                         " weight_fp, status, reason, detail_json, score, score_min, score_max,"
+                         " auto_score, score_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         [(a, f, c, r, "equal", *rest) for a, f, c, r, *rest in conclusions])
         conn.executemany("INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason,"
                          " reviewer, at, legacy_key) VALUES(?,?,?,?,?,?,?,?,?)", reviews)
     store.close()
-    return chain, policy_sha
+    return chain, rules_sha
 
 
 def test_synthetic_scale_performance(tmp_path):
@@ -586,26 +669,26 @@ def test_synthetic_scale_performance(tmp_path):
 
 
 def test_case_weights_editor(served):
-    """用例详情权重分配：滑块块渲染、保存接口写新期望、超限 400、saved 提示条。"""
+    """用例详情权重分配（v8：按用例存 item_weights）：编辑器渲染、保存即重算、
+    超限 400、无未覆盖条目校验、saved 提示条、标签留痕。"""
     client, db, _, _ = served
     s = Store(db)
-    qkey = s.questions()[0]["qkey"]
     case_id = s.questions()[0]["case_id"]
     s.close()
     page = client.get(f"/case/{case_id}")
     assert 'id="weight-editor"' in page.text and 'id="w-pie"' in page.text   # 饼图编辑器
     assert 'rv-detail-btn' in page.text and 'data-detail=' in page.text      # 简要条目 + 详情下钻
-    assert 'data-qkey="%s"' % qkey in page.text
-    ok = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 60}})
-    assert ok.status_code == 200 and ok.json()["changed"]
+    assert 'data-case="%s"' % case_id in page.text                           # B1：编辑对象=用例
+    ok = client.post("/api/case/weights", json={"case_id": case_id, "weights": {"F1": 60}})
+    assert ok.status_code == 200 and ok.json()["changed"] and ok.json()["rescored"] >= 1
     page3 = client.get(f"/case/{case_id}")
-    assert 'data-wchip="F1">60%</span>' in page3.text        # 百分制回显：留未分配保存后原值显示，不被归一成 100%
+    assert 'data-wchip="F1">60%</span>' in page3.text        # 百分制原值显示（未分配不折算）
     page2 = client.get(f"/case/{case_id}?saved=abcd1234")
-    assert "权重已保存为新期望 abcd1234" in page2.text and "rejudge --question" in page2.text
-    bad = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 101}})
+    assert "权重已保存" in page2.text and "不需要重判" in page2.text       # v8：无 rejudge 提示
+    bad = client.post("/api/case/weights", json={"case_id": case_id, "weights": {"F1": 101}})
     assert bad.status_code == 400 and "0–100" in bad.json()["error"]   # 该用例只有 1 个计分条目，逐值上限先触发
-    # 版本标签可自定义命名（历史版本切换条显示）
-    ok2 = client.post("/api/case/weights", json={"qkey": qkey, "weights": {"F1": 30}, "label": "权重-降F1"})
+    # 版本标签留痕（item_weights.label）
+    ok2 = client.post("/api/case/weights", json={"case_id": case_id, "weights": {"F1": 30}, "label": "权重-降F1"})
     assert ok2.status_code == 200 and ok2.json()["changed"]
     assert "权重-降F1" in client.get(f"/case/{case_id}").text
 

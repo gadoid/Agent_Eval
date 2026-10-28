@@ -6,20 +6,60 @@ import type { InterventionPlan } from './ports.js'
 import { ConfigError, sha256 } from './profile.js'
 
 /** 读取 evalset.jsonl，校验执行需要的字段；所有问题带行号一次报出 */
-export async function loadEvalset(path: string): Promise<{ rows: EvalRow[]; sha256: string }> {
+export async function loadEvalset(path: string): Promise<{ rows: EvalRow[]; sha256: string; header: SnapshotHeader | null }> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
   } catch (err) {
     throw new ConfigError(`无法读取评测集 ${path}：${(err as Error).message}`)
   }
-  return { rows: parseEvalset(text, path), sha256: sha256(text) }
+  const { rows, header } = parseEvalsetWithHeader(text, path)
+  return { rows, sha256: sha256(text), header }
+}
+
+/** dist 首行快照头（doc/15 §3.9）：{snapshot: {version, method_sha, include}} */
+export interface SnapshotHeader {
+  version: string
+  method_sha: string
+  include?: string
+}
+
+/** 快照测法（同名 .snapshot.json sidecar；doc/15 §3.10 P2） */
+export interface SnapshotMethod {
+  modes: Record<string, string>
+  run_rewrites: string[]
+  anchors: string[]
+}
+
+export async function loadMethod(distPath: string): Promise<{ methodSha: string; method: SnapshotMethod } | null> {
+  const sidecar = distPath.replace(/\.jsonl?$/, '') + '.snapshot.json'
+  let raw: string
+  try {
+    raw = await readFile(sidecar, 'utf8')
+  } catch {
+    return null                                    // 旧 dist 无测法（回退 CLI 参数执行）
+  }
+  const parsed = JSON.parse(raw) as { method_sha?: string; method?: Partial<SnapshotMethod> }
+  const m = parsed.method ?? {}
+  return {
+    methodSha: parsed.method_sha ?? '',
+    method: {
+      modes: (m.modes ?? {}) as Record<string, string>,
+      run_rewrites: m.run_rewrites ?? [],
+      anchors: m.anchors ?? [],
+    },
+  }
 }
 
 export function parseEvalset(text: string, source = '<evalset>'): EvalRow[] {
+  return parseEvalsetWithHeader(text, source).rows
+}
+
+function parseEvalsetWithHeader(text: string, source = '<evalset>'): { rows: EvalRow[]; header: SnapshotHeader | null } {
   const rows: EvalRow[] = []
   const errors: string[] = []
   const seen = new Map<string, number>()
+  let header: SnapshotHeader | null = null
   text.split(/\r?\n/).forEach((line, i) => {
     const no = i + 1
     if (line.trim() === '') return
@@ -28,6 +68,11 @@ export function parseEvalset(text: string, source = '<evalset>'): EvalRow[] {
       row = JSON.parse(line) as Record<string, unknown>
     } catch {
       errors.push(`第 ${no} 行：不是合法的 JSON`)
+      return
+    }
+    if (row.snapshot && !row.uid) {                 // 快照头行（P2）：记录后跳过
+      const s = row.snapshot as Record<string, unknown>
+      header = { version: String(s.version ?? ''), method_sha: String(s.method_sha ?? '') }
       return
     }
     const problems: string[] = []
@@ -59,7 +104,7 @@ export function parseEvalset(text: string, source = '<evalset>'): EvalRow[] {
   })
   if (errors.length > 0) throw new ConfigError(`${source}:\n  ${errors.join('\n  ')}`)
   if (rows.length === 0) throw new ConfigError(`${source}: 评测集为空`)
-  return rows
+  return { rows, header }
 }
 
 export interface PlannedEpisode {
@@ -86,6 +131,9 @@ export interface PlanOptions {
   skillsMode?: SkillsMode
   /** 规划期注入预演结果：uid → 未命中原因 */
   rehearsal?: ReadonlyMap<string, string>
+  /** 快照测法（doc/15 §3.10）：给定时按维度模式执行、按 run_rewrites 过滤变体；
+   *  与 modes 同时给时 modes 优先（诊断执行）。 */
+  method?: SnapshotMethod
 }
 
 /**
@@ -110,10 +158,22 @@ export function planEpisodes(
   const addEpisode = (row: EvalRow, mode: Mode, trial: number, plan: Extract<InterventionPlan, { ok: true }>, anchor: boolean) => {
     episodes.push({ seq: episodes.length + 1, row, mode, trial, plan, messages: userTurnsOf(row), anchor: anchor || undefined })
   }
+  const method = options.method
   for (const row of rows) {
     if (dims.size > 0 && !dims.has(row.dim)) continue
     if (only.size > 0 && !only.has(row.uid) && !only.has(row.case_id)) continue
     if (topic !== '' && row.topic !== topic) continue
+    if (method && (row.variant_index ?? 0) > 0) {
+      // 测法管执行范围（doc/15 §3.10）：种子总跑；run_rewrites 之外的改写不跑（诱导默认不跑）
+      const rw = typeof row.rewrite === 'string' ? row.rewrite : undefined
+      if (rw === undefined || !method.run_rewrites.includes(rw)) {
+        skipped.push({ uid: row.uid, mode: null, reason: `测法未纳入改写「${String(rw)}」不执行（run_rewrites）` })
+        continue
+      }
+    }
+    const rowModes: readonly Mode[] = method
+      ? [((method.modes[row.dim] ?? method.modes.default ?? 'natural') as Mode)]
+      : options.modes
     selected++
     const history = row.history ?? 'live'
     const messages = userTurnsOf(row)
@@ -135,7 +195,7 @@ export function planEpisodes(
       continue
     }
     const forbidden = forbiddenSkillsOf(row)
-    for (const mode of options.modes) {
+    for (const mode of rowModes) {
       const plan = INTERVENTIONS[mode].plan(row, profile)
       if (!plan.ok) {
         skipped.push({ uid: row.uid, mode, reason: plan.reason })

@@ -23,7 +23,16 @@
     </nav>
     <div class="rv-header-tools">
       <div class="rv-judge">
-        <span class="rv-judge-k">判定配置</span>
+        <span class="rv-judge-k">评测视角 · 判定配置 / 快照 / 计分规则
+          <button class="rv-icon-btn" type="button" id="judge-help-btn" title="三件套是什么、怎么改" aria-label="三件套帮助">?</button>
+        </span>
+        <div class="rv-judge-help" id="judge-help" hidden>
+          <p><b>三件套都是身份性配置</b>：参与会话结论的键，改任何一项都要重跑 / 重判 / 重算对应环节；下拉只切换查看口径，✎ 只改名，🔍 看详情与差异。</p>
+          <p><b>判定配置</b>（条目怎么判）：编辑 <code>scoring/operators.yaml</code>（算子与链）→ <code>python -m scoring.cli rejudge</code> 重判（只调算子，不跑 agent）。</p>
+          <p><b>快照</b>（拿什么题、按什么标准）：新建用例页产出 md → <code>python evalset/md2case.py build</code> → <code>python -m scoring.cli specs import &lt;dist&gt;</code>；切换全局当前用 <code>snapshot use &lt;版本&gt;</code>。</p>
+          <p><b>计分规则</b>（判定怎么换成分）：编辑 <code>scoring/rules.yaml</code> → <code>python -m scoring.cli rescore</code>（只重算，秒级、不调算子；score/rescore/serve 会自动登记当前 rules.yaml）。</p>
+          <p><b>条目权重</b>不在这里：用例详情页的权重编辑器，保存即重算本用例，无需重判；历史可查可切回。</p>
+        </div>
         <span class="rv-judge-row">
         <select class="rv-select" id="chain-select" data-chain="{{ chain_sha }}" onchange="var u=new URL(location);if(this.value)u.searchParams.set('chain',this.value);else u.searchParams.delete('chain');location=u">
           {% for ch in chains %}
@@ -32,6 +41,26 @@
           {% endfor %}
         </select>
         <button class="rv-icon-btn" type="button" id="chain-name-btn" title="重命名当前判定配置" aria-label="重命名判定配置">✎</button>
+        <button class="rv-icon-btn" type="button" id="chain-view-btn" title="查看判定配置详情（算子链组成）" aria-label="判定配置详情">🔍</button>
+        </span>
+        <span class="rv-judge-row">
+        <select class="rv-select" id="snapshot-select" data-snapshot="{{ snapshot or '' }}" onchange="var u=new URL(location);if(this.value&&this.value!=='__current__')u.searchParams.set('snapshot',this.value);else u.searchParams.delete('snapshot');location=u" title="快照（评测集版本 + 测法）">
+          <option value="__current__">当前快照{% if snapshot %}（{{ snapshot }}）{% endif %}</option>
+          {% for s in snapshots %}
+          <option value="{{ s.evalset_version }}" {% if s.evalset_version == snapshot %}selected{% endif %}>{{ s.name or s.evalset_version }} · {{ s.snapshot_sha[:8] }}</option>
+          {% endfor %}
+        </select>
+        <button class="rv-icon-btn" type="button" id="snapshot-name-btn" title="重命名快照" aria-label="重命名快照">✎</button>
+        <button class="rv-icon-btn" type="button" id="snapshot-view-btn" title="查看快照详情（测法与题目清单）" aria-label="快照详情">🔍</button>
+        </span>
+        <span class="rv-judge-row">
+        <select class="rv-select" id="rules-select" data-rules="{{ rules_sha }}" onchange="var u=new URL(location);if(this.value&&this.value!=='{{ rules_sha }}')u.searchParams.set('rules',this.value);else u.searchParams.delete('rules');location=u" title="计分规则">
+          {% for r in rules_rows %}
+          <option value="{{ r.rules_sha }}" {% if r.rules_sha == rules_sha %}selected{% endif %}>{{ r.name or '规则' }} · {{ r.rules_sha[:8] }}</option>
+          {% endfor %}
+        </select>
+        <button class="rv-icon-btn" type="button" id="rules-name-btn" title="重命名计分规则" aria-label="重命名计分规则">✎</button>
+        <button class="rv-icon-btn" type="button" id="rules-view-btn" title="查看计分规则详情与差异对比" aria-label="计分规则详情">🔍</button>
         </span>
       </div>
       <div class="rv-theme" role="group" aria-label="配色方案" data-theme-toggle>
@@ -53,7 +82,7 @@
   <div class="rv-main">
   {% if needs_rescore %}
   <div class="rv-notice" data-tone="error" style="margin:12px 24px 0"><b>当前口径下还没有会话结论</b>
-    <span>改口径（policy）后需重算一次会话分，不调用算子：</span>
+    <span>改计分规则（rules）后需重算一次会话分，不调用算子：</span>
     <span class="rv-cmd">python -m scoring rescore<button type="button">复制</button></span></div>
   {% endif %}
   {% block body %}{% endblock %}
@@ -68,6 +97,38 @@
       return s.selectedOptions[0] ? (s.selectedOptions[0].dataset.name || '') : ''; },
     url: '/api/chain/rename', key: 'chain_sha', field: 'name',
     placeholder: '如 规则+llm-v2（空 = 未命名）' });
+  var snapSel = document.getElementById('snapshot-select'), snapBtn = document.getElementById('snapshot-name-btn');
+  if (snapSel && snapBtn) rvRename({ btn: snapBtn, host: snapSel,
+    getId: function () { var v = snapSel.value; return v === '__current__' ? (snapSel.dataset.snapshot || '') : v; },
+    getLabel: function () {
+      var v = snapSel.value, opt = snapSel.selectedOptions[0];
+      if (v === '__current__') return '';
+      return opt ? (opt.textContent.split(' · ')[0] !== v ? opt.textContent.split(' · ')[0] : '') : ''; },
+    url: '/api/snapshot/rename', key: 'evalset_version', field: 'name',
+    placeholder: '如 基线-202610（空 = 用版本号）' });
+  var rulesSel = document.getElementById('rules-select'), rulesBtn = document.getElementById('rules-name-btn');
+  if (rulesSel && rulesBtn) rvRename({ btn: rulesBtn, host: rulesSel,
+    getId: function () { return rulesSel.dataset.rules; },
+    getLabel: function () { return ''; },
+    url: '/api/rules/rename', key: 'rules_sha', field: 'name',
+    placeholder: '如 百分制-v1（空 = 未命名）' });
+  (function () {
+    var pair = [['chain-view-btn', 'chain-select'], ['rules-view-btn', 'rules-select'],
+                ['snapshot-view-btn', 'snapshot-select']];
+    var urls = {
+      'chain-view-btn': function (t) { return t.dataset.chain ? '/detail/chain/' + encodeURIComponent(t.dataset.chain) : ''; },
+      'rules-view-btn': function (t) { return t.dataset.rules ? '/detail/rules/' + encodeURIComponent(t.dataset.rules) : ''; },
+      'snapshot-view-btn': function (t) {
+        var v = t.value !== '__current__' ? t.value : (t.dataset.snapshot || '');
+        return v ? '/detail/snapshot/' + encodeURIComponent(v) : ''; }
+    };
+    pair.forEach(function (p) {
+      var b = document.getElementById(p[0]), t = document.getElementById(p[1]);
+      if (b && t) b.onclick = function () { var u = urls[p[0]](t); if (u) window.open(u, '_blank'); };
+    });
+    var hb = document.getElementById('judge-help-btn'), hp = document.getElementById('judge-help');
+    if (hb && hp) hb.onclick = function () { hp.hidden = !hp.hidden; };
+  })();
 </script>
 {% block scripts %}{% endblock %}
 </body>

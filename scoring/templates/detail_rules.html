@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}计分规则详情 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page" data-page="detail-rules">
+  <div class="rv-page-head"><h1>计分规则详情</h1>
+    <span class="rv-meta"><span>{{ row.name or '未命名' }} · {{ row.rules_sha[:8] }}</span>
+      <span>登记于 {{ row.created_at[:19] }}</span>
+      {% if is_current %}<span class="rv-pill">当前口径</span>{% endif %}
+      <span>评测库 {{ db_path }}</span></span></div>
+
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>计分规则管「条目判定 → 会话分」的换算</b>
+    <span>及格线 / 取值分表 / 否决项 / 未决处理 / 聚合口径 / 算子分采信；改规则只需
+      <code>python -m scoring.cli rescore</code> 重算，不调算子、不需要重判。</span>
+  </div>
+
+  {% set r = row.rules %}
+  <div class="rv-table-wrap" style="margin-bottom:16px">
+  <table class="rv-table">
+    <thead><tr><th>节</th><th>参数</th><th>值</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">总</th><td>schema</td><td class="rv-mono">{{ r.schema }}</td></tr>
+      <tr><th scope="row"></th><td>undecided（未决条目处理）</td><td>{{ r.undecided }}
+        <span class="rv-meta">{% if r.undecided == 'exclude' %}不计入分母{% else %}记失败{% endif %}</span></td></tr>
+      <tr><th scope="row"></th><td>operator_score（算子打分）</td><td>{{ r.operator_score }}
+        <span class="rv-meta">{% if r.operator_score == 'adopt' %}采信算子给的分{% else %}只作参考，不计入{% endif %}</span></td></tr>
+      {% for k, v in (r.score or {}).items() %}
+      <tr><th scope="row">{% if loop.first %}score{% endif %}</th><td>{{ k }}</td>
+        <td>{% if v is mapping %}<table class="rv-table rv-table--inline">
+            {% for kk, vv in v.items() %}<tr><td class="rv-mono">{{ kk }}</td><td class="rv-num">{{ vv }}</td></tr>{% endfor %}
+          </table>{% else %}{{ v }}{% endif %}</td></tr>
+      {% endfor %}
+      {% for k, v in (r.aggregate or {}).items() %}
+      <tr><th scope="row">{% if loop.first %}aggregate{% endif %}</th><td>{{ k }}</td>
+        <td>{% if v is mapping %}<table class="rv-table rv-table--inline">
+            {% for kk, vv in v.items() %}<tr><td>{{ kk }}</td><td class="rv-num">{{ vv }}</td></tr>{% endfor %}
+          </table>{% elif v is sequence and v is not string %}{{ v|join('、') }}{% else %}{{ v }}{% endif %}</td></tr>
+      {% endfor %}
+      <tr><th scope="row">group</th><td>组权重</td><td>{{ r.group }} <span class="rv-meta">组内取最高分，组间取最大权重</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  {% if others %}
+  <div class="rv-sheet" style="margin-bottom:12px">
+    <div class="rv-pair-head">与库内其他规则对比</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">
+      <select class="rv-select" id="diff-pick">
+        {% for o in others %}<option value="{{ o.rules_sha }}" {% if o.rules_sha == diff_sha %}selected{% endif %}>
+          {{ o.name or '未命名' }} · {{ o.rules_sha[:8] }}（{{ o.created_at[:10] }}）</option>{% endfor %}
+      </select>
+      <button class="rv-btn rv-btn--primary" id="diff-go" type="button">对比差异</button>
+      {% if diff_sha %}<a class="rv-btn" href="/detail/rules/{{ row.rules_sha|urlencode }}">清除对比</a>{% endif %}
+    </div>
+    {% if diff_sha %}
+    {% if diff_rows %}
+    <div class="rv-table-wrap">
+    <table class="rv-table">
+      <thead><tr><th>参数</th><th>本规则 {{ row.rules_sha[:8] }}</th><th>{{ diff_name or '未命名' }} {{ diff_sha[:8] }}</th></tr></thead>
+      <tbody>
+      {% for d in diff_rows %}
+      <tr><th scope="row">{{ d.key }}</th>
+        <td class="rv-mono">{{ d.a|tojson }}</td>
+        <td class="rv-mono">{{ d.b|tojson }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="rv-meta" style="padding:8px 12px">两条规则内容完全一致（仅登记时间不同）。</p>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+  (function () {
+    var pick = document.getElementById('diff-pick'), go = document.getElementById('diff-go');
+    if (pick && go) go.onclick = function () {
+      location.href = '/detail/rules/{{ row.rules_sha|urlencode }}?diff=' + encodeURIComponent(pick.value); };
+  })();
+</script>
+{% endblock %}

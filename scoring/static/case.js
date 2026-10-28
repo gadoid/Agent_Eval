@@ -404,7 +404,7 @@
     var labelEl = document.getElementById('w-label');
     fetch(box.dataset.saveUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ qkey: box.dataset.qkey, judge_fp: box.dataset.fp, weights: weights,
+      body: JSON.stringify({ case_id: box.dataset.case, weights: weights,
                              label: labelEl ? labelEl.value : '' })
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {
@@ -414,12 +414,43 @@
           return;
         }
         var u = new URL(location);
-        if (res.j.changed) u.searchParams.set('saved', res.j.judge_fp.slice(0, 8));
+        if (res.j.changed) u.searchParams.set('saved', res.j.weight_fp.slice(0, 8));
         else u.searchParams.delete('saved');
-        u.searchParams.delete('judge_fp');
+        u.searchParams.delete('standard_fp');
         location.href = u;
       });
   });
   buildBars();
   drawSlices();
+})();
+
+// 权重历史（doc/15 §4.3 可追溯）：「查看」展开该 weight_fp 下的现存结论；
+// 「切回」把历史组写成新的有效配置并重算本用例（追加，不删历史）。
+(function () {
+  var host = document.getElementById('weight-history');
+  if (!host) return;
+  var caseId = host.dataset.case || '';
+  host.querySelectorAll('.rv-wh-view').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var tr = host.querySelector('.rv-wh-rows[data-setat="' + b.dataset.setat + '"]');
+      if (tr) tr.hidden = !tr.hidden;
+    });
+  });
+  host.querySelectorAll('.rv-wh-restore').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (!caseId || !window.confirm('把该历史权重写成新的当前配置并重算本用例？')) return;
+      b.disabled = true;
+      fetch('/api/case/weights-restore', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_id: caseId, set_at: b.dataset.setat, label: b.dataset.label || '' })
+      }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          if (!res.ok) { b.disabled = false; window.alert('切回失败：' + (res.j.error || '未知错误')); return; }
+          var u = new URL(location);
+          u.searchParams.set('saved', res.j.weight_fp.slice(0, 8));
+          u.searchParams.delete('standard_fp');
+          location.href = u;
+        });
+    });
+  });
 })();

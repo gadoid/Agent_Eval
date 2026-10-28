@@ -8,16 +8,32 @@ import json
 import math
 from collections import defaultdict
 
-from .policy import EpisodeVerdict, Policy
+from .rules import DEFAULT_METHOD, EpisodeVerdict, Method, Rules
 
 # 答案的比较属性（§4.2，R3 修订后分三类）：
 # - 重复采样（trial、run）：默认不限，无需声明——它们是采样标识，不是比较条件
 # - 处理条件（profile、model、mode、skills_base、evalset_version）：必须一致，
 #   或作为比较轴，或显式固定 / 声明不限
 # - 不可比较（skills_mode）：必须一致，不能作轴、不能不限
-ATTRS = ("profile", "model", "mode", "trial", "skills_mode", "skills_base", "evalset_version", "run")
+ATTRS = ("subject", "model", "effort", "agent", "skills_mode", "skills_base", "mode",
+         "trial", "evalset_version", "run")
 SAMPLING_ATTRS = frozenset({"trial", "run"})
-DERIVED_ATTR = {"profile": "model", "model": "profile"}   # 互为派生：一个作轴，另一个自动放行
+# subject 是被测配置整指纹（doc/15 §3.1）；model/effort/agent/skills_base/skills_mode
+# 是它的拆字段——一个作轴，其余自动放行（拆字段作轴时 subject 整体随之放行）
+SUBJECT_FIELDS = ("model", "effort", "agent", "skills_base", "skills_mode")
+DERIVED_ATTR = {"subject": "model", "model": "subject",
+                "effort": "subject", "agent": "subject",
+                "skills_base": "subject", "skills_mode": "subject"}
+
+
+def follows(axis: str) -> set[str]:
+    """作轴后自动放行的属性（派生/同源）。"""
+    out = {axis}
+    if axis == "subject":
+        out |= set(SUBJECT_FIELDS)
+    elif axis in DERIVED_ATTR:
+        out.add(DERIVED_ATTR[axis])
+    return out
 
 
 # ---------------------------------------------------------------- 区间
@@ -35,8 +51,8 @@ def wilson(passes: int, total: int, z: float = 1.96) -> tuple[float, float]:
 
 # ---------------------------------------------------------------- 出口 1/2：能力与归因
 
-def ability_view(verdicts: list[EpisodeVerdict], policy: Policy) -> dict:
-    """dim × mode 的通过率与前提成立率（Wilson 区间）；headline 由 policy 决定。"""
+def ability_view(verdicts: list[EpisodeVerdict], rules: Rules, method: Method | None = None) -> dict:
+    """dim × mode 的通过率与前提成立率（Wilson 区间）；headline 由快照测法决定。"""
     cells: dict[tuple, list[EpisodeVerdict]] = defaultdict(list)
     for v in verdicts:
         cells[(v.dim, v.mode)].append(v)
@@ -64,7 +80,7 @@ def ability_view(verdicts: list[EpisodeVerdict], policy: Policy) -> dict:
             "error": sum(v.status == "error" for v in vs),
             "pass_direct": rate(direct),
             "pass_after_ask": rate(after),
-            "headline": policy.headline(dim) == mode,
+            "headline": (method or DEFAULT_METHOD).headline(dim) == mode,
         }
     return out
 
@@ -102,10 +118,14 @@ def model_label(row: dict) -> str:
 
 
 def attr_value(row: dict, name: str) -> str:
-    if name == "profile":
-        return str(row.get("profile_id") or "?")
+    if name in ("subject", "profile"):          # profile 为旧名别名（旧链接兼容）
+        return str(row.get("subject_fp") or row.get("profile_id") or "?")
     if name == "model":
-        return model_label(row)
+        return str(row.get("model") or model_label(row))
+    if name == "effort":
+        return str(row.get("reasoning_effort") or "?")
+    if name == "agent":
+        return str(row.get("agent") or "?")
     if name == "run":
         return str(row.get("run_id"))
     if name == "evalset_version":
@@ -220,8 +240,9 @@ def _axis_selection(rows: list[dict], axis: str, fixes: dict[str, str], anys: se
         raise ValueError(f"未知比较属性：{unknown}")
 
     sel = [r for r in rows if all(attr_value(r, k) == v for k, v in fixes.items())]
-    others = [a for a in ATTRS if a != axis and a not in fixes and a not in anys
-              and a not in SAMPLING_ATTRS and a != DERIVED_ATTR.get(axis)]
+    follow = follows(axis)
+    others = [a for a in ATTRS if a not in follow and a not in fixes and a not in anys
+              and a not in SAMPLING_ATTRS]
     inconsistent = {a: sorted({attr_value(r, a) for r in sel}) for a in others
                     if len({attr_value(r, a) for r in sel}) > 1}
     if inconsistent:
@@ -356,16 +377,14 @@ def quality_from_db(store, rows: list[dict], chain_sha: str) -> dict:
 
 import random
 
-# 被测配置：会话分聚合的分组建（mode 不进键——headline 按维度各取一个干预）
-CONFIG_ATTRS = ("profile", "model", "skills_mode", "skills_base", "evalset_version")
-
-
+# 被测配置：会话分聚合的分组建 = subject_fp 整指纹（doc/15 §3.6；评测集版本已退出
+# 配置身份——同一被测配置跨快照的分数自动合并）。标签按指纹差异属性拼（serve 侧）。
 def config_value(row: dict) -> tuple:
-    return tuple(attr_value(row, a) for a in CONFIG_ATTRS)
+    return (attr_value(row, "subject"),)
 
 
 def config_label(row: dict) -> str:
-    return str(row.get("profile_id") or "?")
+    return str(row.get("subject_fp") or row.get("profile_id") or "?")
 
 
 def _bootstrap(values: list[float], stat, b: int = 1000, seed: int = 20261023) -> tuple[float, float]:
@@ -377,9 +396,20 @@ def _bootstrap(values: list[float], stat, b: int = 1000, seed: int = 20261023) -
     return round(stats[int(0.025 * b)], 1), round(stats[min(b - 1, int(0.975 * b))], 1)
 
 
-def _headline_rows(rows: list[dict], policy) -> list[dict]:
-    """只取各维度主口径（headline_mode）的会话。"""
-    return [r for r in rows if r["mode"] == policy.headline(r["dim"] or "?")]
+def formal_rows(rows: list[dict]) -> list[dict]:
+    """正式会话（doc/15 §3.2 C5）：诊断执行（runs.diagnostic）的会话不进分数，
+    只在对比页的诊断视图里看。"""
+    return [r for r in rows if not r.get("diagnostic")]
+
+
+def diagnostic_rows(rows: list[dict]) -> list[dict]:
+    return [r for r in rows if r.get("diagnostic")]
+
+
+def _headline_rows(rows: list[dict], method: Method | None = None) -> list[dict]:
+    """只取各维度主口径（快照测法 modes，原 headline_mode）的会话。"""
+    m = method or DEFAULT_METHOD
+    return [r for r in rows if r["mode"] == m.headline(r["dim"] or "?")]
 
 
 def _unsettled(r: dict) -> bool:
@@ -391,7 +421,7 @@ def _unsettled(r: dict) -> bool:
 
 
 def _select_mode_per_qkey(sel: list[dict], axis: str, base: str, target: str,
-                          policy: Policy) -> tuple[list[dict], list[dict]]:
+                          method: Method | None = None) -> tuple[list[dict], list[dict]]:
     """mode 未固定且不作轴时的逐题口径选择（§6.3 只取 headline_mode）：
     同一 qkey 两侧都有 headline_mode 会话 → 只取主口径；两侧只有同一个别的 mode →
     按该 mode 比（不放走可比的自然数据）；两侧 mode 不同 → 该题不进比较。
@@ -410,7 +440,7 @@ def _select_mode_per_qkey(sel: list[dict], axis: str, base: str, target: str,
             out.extend(rs)                     # 单侧题：交给既有「仅单侧」排除
             continue
         b_rs = by[(q, base)]
-        h = policy.headline(b_rs[0]["dim"] or "?")
+        h = (method or DEFAULT_METHOD).headline(b_rs[0]["dim"] or "?")
         modes = {a: {r["mode"] for r in by[(q, a)]} for a in (base, target)}
         if all(h in ms for ms in modes.values()):
             mode = h
@@ -423,13 +453,14 @@ def _select_mode_per_qkey(sel: list[dict], axis: str, base: str, target: str,
     return out, excluded
 
 
-def question_scores(rows: list[dict], policy, headline: bool = True) -> dict[str, dict]:
+def question_scores(rows: list[dict], rules: Rules, method: Method | None = None,
+                   headline: bool = True) -> dict[str, dict]:
     """题目分（§6.3）：同一配置下有确定会话分的会话平均；有未决被排除时标临时。
     输入 rows 应已限到一个配置（config_value 一致）。headline=False 供比较用
     （比较两侧本就被轴限定，mode 轴的 natural 侧不能被 ec 主口径滤掉）。"""
     out: dict[str, dict] = {}
     by_q: dict[str, list[dict]] = defaultdict(list)
-    sel = _headline_rows(rows, policy) if headline else rows
+    sel = _headline_rows(rows, method) if headline else rows
     for r in sel:
         by_q[r["qkey"]].append(r)
     for qkey, rs in by_q.items():
@@ -447,19 +478,20 @@ def question_scores(rows: list[dict], policy, headline: bool = True) -> dict[str
     return out
 
 
-def case_scores(rows: list[dict], policy, headline: bool = True) -> dict[str, dict]:
+def case_scores(rows: list[dict], rules: Rules, method: Method | None = None,
+                headline: bool = True) -> dict[str, dict]:
     """用例分（§6.3）：用例内各题目分平均；诱导变体（exclude_rewrites）不计入；
     没有确定会话分的题目进体检（all_unscored）不进用例分。"""
-    qs = question_scores(rows, policy, headline=headline)
+    qs = question_scores(rows, rules, method=method, headline=headline)
     by_case: dict[str, dict[str, dict]] = defaultdict(dict)
     for qkey, q in qs.items():
         by_case[q["case_id"]][qkey] = q
     out: dict[str, dict] = {}
     for case, members in by_case.items():
         counted = [q for q in members.values()
-                   if q["rewrite"] not in policy.score.exclude_rewrites and q["score"] is not None]
+                   if q["rewrite"] not in rules.aggregate.scored_rewrites_exclude and q["score"] is not None]
         all_unscored = [q["uid"] for qid, q in sorted(members.items())
-                        if q["rewrite"] not in policy.score.exclude_rewrites and q["score"] is None]
+                        if q["rewrite"] not in rules.aggregate.scored_rewrites_exclude and q["score"] is None]
         out[case] = {
             "score": round(sum(q["score"] for q in counted) / len(counted), 1) if counted else None,
             "n": len(counted), "questions": len(members),
@@ -503,13 +535,14 @@ def case_health(rows: list[dict], cases: dict[str, dict] | None = None) -> dict[
     return out
 
 
-def dimension_scores(rows: list[dict], policy, headline: bool = True) -> dict[str, dict]:
+def dimension_scores(rows: list[dict], rules: Rules, method: Method | None = None,
+                     headline: bool = True) -> dict[str, dict]:
     """维度分（§6.3）：dimension_unit=case 按用例分平均（question 按题目分）；
     95% 区间按用例（题目）自助法；维度临时 = 其下任一会话未决被排除。"""
-    unit = policy.score.dimension_unit
-    cs = case_scores(rows, policy, headline=headline)
-    qs = question_scores(rows, policy, headline=headline)
-    _rows_h = _headline_rows(rows, policy) if headline else rows
+    unit = rules.aggregate.dimension_unit
+    cs = case_scores(rows, rules, method=method, headline=headline)
+    qs = question_scores(rows, rules, method=method, headline=headline)
+    _rows_h = _headline_rows(rows, method) if headline else rows
     provisional_dims = {r["dim"] or "?" for r in _rows_h if _unsettled(r)}
     groups: dict[str, list[float]] = defaultdict(list)
     for case, c in cs.items():
@@ -518,7 +551,7 @@ def dimension_scores(rows: list[dict], policy, headline: bool = True) -> dict[st
     if unit == "question":
         groups = defaultdict(list)
         for q in qs.values():
-            if q["rewrite"] not in policy.score.exclude_rewrites and q["score"] is not None:
+            if q["rewrite"] not in rules.aggregate.scored_rewrites_exclude and q["score"] is not None:
                 groups.setdefault(q["dim"], []).append(q["score"])
     meta: dict[str, dict] = {}
     for dim, vals in groups.items():
@@ -531,10 +564,10 @@ def dimension_scores(rows: list[dict], policy, headline: bool = True) -> dict[st
     return meta
 
 
-def composite(dims: dict[str, dict], policy, known_dims: set[str] | None = None) -> dict:
+def composite(dims: dict[str, dict], rules: Rules, known_dims: set[str] | None = None) -> dict:
     """综合分（§6.3）：Σ 维度权重 × 维度分 / Σ 权重；缺已知维度按已有归一并标不完整；
     任一参与维度临时则综合分临时。"""
-    weights = policy.score.dimensions
+    weights = rules.aggregate.dimensions
     present = {d: v for d, v in dims.items() if v.get("score") is not None}
     if not present:
         return {"score": None, "complete": False, "provisional": False, "parts": {}}
@@ -550,17 +583,17 @@ def composite(dims: dict[str, dict], policy, known_dims: set[str] | None = None)
     }
 
 
-def score_summary(rows: list[dict], policy) -> dict:
+def score_summary(rows: list[dict], rules: Rules, method: Method | None = None) -> dict:
     """一个配置的完整分数表（题目 / 用例 / 维度 / 综合分）。"""
-    return {"questions": question_scores(rows, policy),
-            "cases": case_scores(rows, policy),
-            "dims": dimension_scores(rows, policy)}
+    return {"questions": question_scores(rows, rules, method=method),
+            "cases": case_scores(rows, rules, method=method),
+            "dims": dimension_scores(rows, rules, method=method)}
 
 
-def _side_metrics(rows: list[dict], qkeys: set[str], policy) -> dict:
+def _side_metrics(rows: list[dict], qkeys: set[str], rules: Rules) -> dict:
     sub = [r for r in rows if r["qkey"] in qkeys]
-    dims = dimension_scores(sub, policy, headline=False)
-    return {"dims": dims, "composite": composite(dims, policy, known_dims=set(dims))}
+    dims = dimension_scores(sub, rules, headline=False)
+    return {"dims": dims, "composite": composite(dims, rules, known_dims=set(dims))}
 
 
 def _dim_delta(cs: list[str], dim: str, per_case: dict, base: str, target: str) -> float:
@@ -577,9 +610,10 @@ def _dim_delta(cs: list[str], dim: str, per_case: dict, base: str, target: str) 
     return side(target) - side(base)
 
 
-def compare_scores(rows: list[dict], axis: str, base: str, target: str, policy,
-                   fixes: dict[str, str] | None = None, anys: tuple[str, ...] | set[str] = (),
-                   run_order: dict[str, int] | None = None) -> dict:
+def compare_scores(rows: list[dict], axis: str, base: str, target: str, rules: Rules,
+                   method: Method | None = None, fixes: dict[str, str] | None = None,
+                   anys: tuple[str, ...] | set[str] = (),
+                   run_order: dict[str, int] | None = None, delta: float = 10.0) -> dict:
     """分数对比（doc/10 §5.5）：放行规则沿用 compare_axis（_axis_selection）；
     轴不是 mode 且 mode 未固定时按 §6.3 主口径逐题取数（_select_mode_per_qkey），
     与用例页综合分同口径，且同一 qkey 的 natural 与 forced 不混算。两侧在共有题目上
@@ -596,10 +630,10 @@ def compare_scores(rows: list[dict], axis: str, base: str, target: str, policy,
         return {**info, "base": base, "target": target, "matrix": {}}
     if base not in axis_values or target not in axis_values:
         raise ValueError(f"基线/对照必须是轴上的取值：{axis_values}")
-    sel, mode_excluded = (_select_mode_per_qkey(sel_all, axis, base, target, policy)
+    sel, mode_excluded = (_select_mode_per_qkey(sel_all, axis, base, target, method)
                           if mode_select else (sel_all, []))
     sides = {av: [r for r in sel if attr_value(r, axis) == av] for av in (base, target)}
-    qs = {av: question_scores(sides[av], policy, headline=False) for av in sides}
+    qs = {av: question_scores(sides[av], rules, headline=False) for av in sides}
     shared = {q for q in set(qs[base]) & set(qs[target])
               if qs[base][q]["score"] is not None and qs[target][q]["score"] is not None}
     excluded = list(mode_excluded)
@@ -612,7 +646,7 @@ def compare_scores(rows: list[dict], axis: str, base: str, target: str, policy,
     wires = anchor_tripwires(sel_all, run_order)
     tripwires = {t["qkey"] for t in wires}
 
-    metrics = {av: _side_metrics(sides[av], shared, policy) for av in sides}
+    metrics = {av: _side_metrics(sides[av], shared, rules) for av in sides}
     cases = sorted({case_of[q] for q in shared})
     # 每侧每用例各维度预聚合成 (Σ分, 条数)：重采样按重数重复计入（P1：重复抽中的
     # 用例要重复计），自助法每步只做查表累加
@@ -631,7 +665,7 @@ def compare_scores(rows: list[dict], axis: str, base: str, target: str, policy,
     base_c = metrics[base]["composite"]["score"]
     target_c = metrics[target]["composite"]["score"]
     # 综合分差按两侧维度差加权平均（§6.4 公式），不用已舍入综合分相减（避免 76.8−73.9=2.9 的舍入差）
-    weights = policy.score.dimensions
+    weights = rules.aggregate.dimensions
     shared_dims = [d for d in set(metrics[base]["dims"]) & set(metrics[target]["dims"])
                    if metrics[base]["dims"][d].get("score") is not None
                    and metrics[target]["dims"][d].get("score") is not None]
@@ -674,7 +708,7 @@ def compare_scores(rows: list[dict], axis: str, base: str, target: str, policy,
         if b is None or t is None:
             continue
         d = round(t - b, 1)
-        if abs(d) > policy.score.compare_delta or q in tripwires:
+        if abs(d) > delta or q in tripwires:
             questions.append({"qkey": q, "uid": qs[base][q]["uid"], "case_id": case_of[q], "dim": dim_of[q],
                               "base": b, "target": t, "delta": d, "anchor": q in tripwires})
     questions.sort(key=lambda x: -abs(x["delta"]))
@@ -709,7 +743,8 @@ def shapley(cells: dict, factors: list[str]) -> dict:
                       for c, val in sorted(cells.items())}}
 
 
-def shapley_cells(rows: list[dict], factors: list[str], policy: Policy) -> tuple[dict, set[str]]:
+def shapley_cells(rows: list[dict], factors: list[str], rules: Rules,
+                 method: Method | None = None) -> tuple[dict, set[str]]:
     """全因子设计各格的综合分（§6.4）：组件外的处理条件须一致（复用比较轴的一致性
     规则，profile/model 互为派生时另一个放行）；mode 不作组件时逐题按 §6.3 主口径
     选 mode（各格都有 headline_mode 会话取主口径，否则各格同一唯一 mode，再否则
@@ -749,7 +784,7 @@ def shapley_cells(rows: list[dict], factors: list[str], policy: Policy) -> tuple
         if not per_cell_modes or not all(per_cell_modes):
             continue                                    # 某格没有该题 → 不在共有题目集
         dim = next((r["dim"] for sel in sel_by_cell.values() for r in sel if r["qkey"] == q), "?") or "?"
-        h = policy.headline(dim)
+        h = (method or DEFAULT_METHOD).headline(dim)
         if all(h in ms for ms in per_cell_modes):
             keep[q] = h
         elif len(per_cell_modes[0]) == 1 and all(ms == per_cell_modes[0] for ms in per_cell_modes):
@@ -759,21 +794,21 @@ def shapley_cells(rows: list[dict], factors: list[str], policy: Policy) -> tuple
     for on, sel in sel_by_cell.items():
         sub = [r for r in sel if r["qkey"] in shared
                and ("mode" in factors or r["mode"] == keep[r["qkey"]])]
-        dims = dimension_scores(sub, policy, headline=False)
-        cells[on] = composite(dims, policy, known_dims=set(dims)).get("score")
+        dims = dimension_scores(sub, rules, headline=False)
+        cells[on] = composite(dims, rules, known_dims=set(dims)).get("score")
     return cells, shared
 
 
-def judge_agreement(store, chain_sha: str, policy) -> list[dict]:
+def judge_agreement(store, chain_sha: str, rules: Rules) -> list[dict]:
     """判定质量主表（§5.6）：算子 × 条目类型的人工复核数、平均分差、分差 ≤ 10 占比、
     分歧数。机器分 = 显式分 ?? map[结论词]，人工分同；只看有效改判（sha 匹配）。"""
-    m = policy.score.map
+    m = rules.score.map
     from .items import SCALES
     sql = """SELECT v.answer_id, v.item_id, v.kind, v.value AS machine_value, v.score AS machine_score,
              v.source, v.operator, r.value AS review_value, r.score AS review_score, r.review_id
              FROM verdicts v
              JOIN answers a ON a.answer_id = v.answer_id
-             JOIN questions q ON q.qkey = a.qkey AND q.current_judge_fp = v.judge_fp
+             JOIN questions q ON q.qkey = a.qkey AND q.current_standard_fp = v.standard_fp
              JOIN reviews r ON r.answer_id = v.answer_id AND r.item_id = v.item_id
                 AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
              WHERE v.chain_sha = ?"""

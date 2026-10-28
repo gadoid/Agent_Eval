@@ -6,10 +6,11 @@
 
 题目指纹（评测结果管理改造方案 §4.1）也在本模块计算：
 - 输入指纹 input_fp：history + 用户消息序列 + 注入（point/option/rev/file/key/value）
-- 判定指纹 judge_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group）+ 路径约束
+- 标准指纹 standard_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group）+ 路径约束
 - 条目指纹 item_sha：条目对人判断的实质内容（关键词、组、权重不进入）
 参考答案、备注、证据、标签、状态、关键条件的改动不影响任何指纹。
-权重（【权重：N】，复核服务改造方案 §4.2）进入判定指纹：改权重改变会话分。
+权重自 v8 起移出标准（doc/15 §3.2）：md 的【权重】导入时换算落 item_weights，
+改权重只改计分（rescore），不再改变标准、不再触发重判。
 """
 from __future__ import annotations
 
@@ -126,28 +127,96 @@ def input_fp_of(case: dict) -> str:
     })
 
 
-def judge_fp_of(case: dict) -> str:
-    """判定指纹：结论能否直接比较。改事实/前提/路径约束 → 变；改输入 → 不变。"""
+def standard_fp_of(case: dict) -> str:
+    """标准指纹：结论能否直接比较。改事实/前提/路径约束 → 变；改输入/权重 → 不变。
+    （v8 前名 judge_fp 且计入权重；权重移出后改权重不再产生新标准，doc/15 §3.2）"""
     return _sha16({
         "answerable": case.get("answerable", True),
         "preconditions": [{"id": p.get("id"), "text": p.get("text"), "turn": p.get("turn")}
                           for p in (case.get("preconditions") or [])],
         "facts": [{"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text"),
-                   "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group"),
-                   **({"weight": f["weight"]} if "weight" in f else {})}
+                   "keywords": f.get("keywords"), "turn": f.get("turn"), "group": f.get("group")}
                   for f in (case.get("facts") or [])],
         "path": case.get("path") or [],
     })
 
 
 def weight_of(item: Item, default: float = 1) -> float:
-    """条目权重：用例未写时取 policy 的 default_weight；0 = 只记录不计分。"""
+    """条目权重（兼容路径）：条目 attrs 里带 weight 时用它（迁移前的旧 spec），
+    否则 default。v8 后标准里无权重，计分权重一律走 store.effective_weights。"""
     w = item.attrs.get("weight")
     return default if w is None else float(w)
 
 
-# 人工会话分（复核服务改造方案 §4.2）挂在这个伪条目 id 上：item_sha 存 judge_fp，
-# answer_sha 存整段回答指纹——期望或回答变了即作废。
+def strip_spec_weights(spec: dict) -> dict:
+    """spec 去权重（v8）：facts/path 条目上的 weight 键剥除，返回新 dict。"""
+    out = dict(spec)
+    if out.get("facts"):
+        out["facts"] = [{k: v for k, v in f.items() if k != "weight"} for f in out["facts"]]
+    if out.get("path"):
+        out["path"] = [{k: v for k, v in p.items() if k != "weight"} for p in out["path"]]
+    return out
+
+
+def spec_weights_to_percent(spec: dict, default_weight: float = 1) -> dict[str, float]:
+    """spec 里的相对权重 → 百分制（doc/15 §2.4，全精度不取整）。
+
+    - 计分条目（required/expected）之间换算：w_i / Σw × 100，未写权重的先按
+      default_weight 参与换算；
+    - 禁止/路径条目单独换算（只在 veto=weight 时参与计分），基数同样取各自全组；
+    - 一个权重都没有时返回 {}（该用例视为无权重，等权计分）。
+    """
+    def convert(items: list[dict], only_explicit: bool = False) -> dict[str, float]:
+        if only_explicit:      # 禁止/路径：只有写了权重的条目参与换算（veto=weight 时才计分）
+            items = [f for f in items if "weight" in f]
+        vals = {f["id"]: float(f.get("weight", default_weight)) for f in items if f.get("id")}
+        total = sum(vals.values())
+        if not items or not vals or total <= 0:
+            return {}
+        return {i: w / total * 100 for i, w in vals.items()}
+
+    facts = spec.get("facts") or []
+    scored = [f for f in facts if f.get("kind") in ("required", "expected")]
+    others = [f for f in facts if f.get("kind") not in ("required", "expected")]
+    if not any("weight" in f for f in facts + (spec.get("path") or [])):
+        return {}
+    out = convert(scored)
+    out.update(convert(others, only_explicit=True))
+    out.update(convert(spec.get("path") or [], only_explicit=True))
+    return out
+
+
+def weights_map_to_percent(weights: dict, spec: dict, default_weight: float = 1) -> dict[str, float]:
+    """新 dist 格式（doc/15 §3.9）：行顶层 weights={item_id: md 原值（相对值）} → 百分制。
+    语义与 spec_weights_to_percent 一致：计分条目全参与（未写者按 default），禁止/路径
+    只算显式写的；路径条目以 path#i 为键。空表 → {}（等权）。"""
+    if not weights:
+        return {}
+    facts = []
+    for f in spec.get("facts") or []:
+        nf = dict(f)
+        if f.get("id") in weights:
+            nf["weight"] = weights[f["id"]]
+        facts.append(nf)
+    path = []
+    for i, p_ in enumerate(spec.get("path") or [], 1):
+        np_ = dict(p_)
+        np_["id"] = f"path#{i}"
+        if np_["id"] in weights:
+            np_["weight"] = weights[np_["id"]]
+        path.append(np_)
+    return spec_weights_to_percent({**spec, "facts": facts, "path": path}, default_weight)
+
+
+def spec_weights_any(spec: dict) -> dict[str, float]:
+    """兼容两种 dist：新格式顶层 weights 优先；旧格式 facts/path 内联权重。"""
+    if spec.get("weights"):
+        return weights_map_to_percent(spec.get("weights") or {}, spec)
+    return spec_weights_to_percent(spec)
+
+
+# 人工会话分（doc/10 §4.2）挂在这个伪条目 id 上：item_sha 存 standard_fp，
+# answer_sha 存整段回答指纹——标准或回答变了即作废（权重不再使其作废，doc/15 C4）。
 TOTAL_ITEM = "@total"
 
 

@@ -157,3 +157,67 @@ export async function inventoryStale(profile: Profile): Promise<string | null> {
 
 /** 续跑一致性检查的键（01 §5）：任一不同即拒绝 */
 export const RESUME_KEYS = ['evalset', 'runner_profile', 'eline_profile', 'skills_mode', 'skills_base'] as const
+
+// ---------------- 被测配置指纹（doc/15 §3.1）：与 scoring/subject.py 双实现 ----------------
+// 同一 manifest fixture 两端必须得出相同指纹（tests/subject-fixture.json 对拍）。
+
+/** 规范化 JSON：键排序 + 紧凑分隔符，等价 Python json.dumps(sort_keys=True, ensure_ascii=False, separators=(',',':')) */
+export function canonicalJson(value: unknown): string {
+  const out: string[] = []
+  const walk = (v: unknown): void => {
+    if (v === null || typeof v === 'number' || typeof v === 'boolean') {
+      out.push(String(v))
+    } else if (typeof v === 'string') {
+      out.push(JSON.stringify(v))
+    } else if (Array.isArray(v)) {
+      out.push('[')
+      v.forEach((x, i) => { if (i) out.push(','); walk(x) })
+      out.push(']')
+    } else if (v && typeof v === 'object') {
+      out.push('{')
+      const keys = Object.keys(v as Record<string, unknown>).sort()
+      keys.forEach((k, i) => {
+        if (i) out.push(',')
+        out.push(JSON.stringify(k), ':')
+        walk((v as Record<string, unknown>)[k])
+      })
+      out.push('}')
+    } else {
+      out.push('null')
+    }
+  }
+  walk(value)
+  return out.join('')
+}
+
+export type SubjectFields = Record<string, unknown>
+
+/** 被测配置字段表（doc/15 §3.1）。缺省与 profile 解析一致：dsh.profile 'headless'、skill_tool 'skill'。 */
+export function subjectOf(profile: Profile, snapshot: Snapshot): SubjectFields {
+  const dsh = (profile.dsh ?? {}) as { profile?: string }
+  const ep = (snapshot as { eline_profile?: { sha256?: string } }).eline_profile
+  const agent = snapshot.agent ?? { name: 'dsh-cli', version: null as string | null }
+  return {
+    agent: { name: agent.name ?? 'dsh-cli', version: agent.version ?? null },
+    dsh_profile: dsh.profile ?? 'headless',
+    eline_profile_sha: ep?.sha256 ?? null,
+    model: profile.model ?? null,
+    model_provider: profile.model_provider ?? null,
+    reasoning_effort: profile.reasoning_effort ?? null,
+    routing: profile.routing ?? {},
+    skill_tool: profile.skill_tool ?? 'skill',
+    skills_base: snapshot.skills_base ?? null,
+    skills_mode: snapshot.skills_mode ?? profile.skills_mode ?? null,
+  }
+}
+
+/** subject 段（写进 run.json；scoring.register_run 优先使用，不再自行计算）。 */
+export function subjectSection(profile: Profile, snapshot: Snapshot): {
+  subject_fp: string
+  fields: SubjectFields
+  incomplete: boolean
+} {
+  const fields = subjectOf(profile, snapshot)
+  const incomplete = fields.skills_mode === null || fields.skills_base === null
+  return { subject_fp: sha256(canonicalJson(fields)).slice(0, 16), fields, incomplete }
+}

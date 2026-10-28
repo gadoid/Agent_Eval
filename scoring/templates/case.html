@@ -54,16 +54,16 @@
   <section class="rv-card" id="expect">
     {% if saved %}
     <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
-      <b>权重已保存为新期望 {{ saved }}</b><span>分数需按新期望重判后才会更新（已有人工判定保留）</span>
-      <span class="rv-cmd">python -m scoring rejudge --question {{ seed.qkey }}<button type="button">复制</button></span>
+      <b>权重已保存</b><span>本用例已按新权重重算（不产生新标准、不需要重判；已有人工判定保留）</span>
+      <span class="rv-meta">（改权重只重算本用例，不需要重判）</span>
     </div>
     {% endif %}
-    <h2>期望 <span class="rv-meta" style="font-weight:400"><span>当前期望 {{ (judge_fp or '')[:8] }}</span>
+    <h2>标准 <span class="rv-meta" style="font-weight:400"><span>当前标准 {{ (standard_fp or '')[:8] }}</span>
       {% if history|length > 1 %}<span>历史 {{ history|length }} 份</span>{% endif %}</span></h2>
     {% if history|length > 1 %}
     <div class="rv-chips-bar" style="margin-bottom:8px"><span class="rv-meta">切换期望版本</span>
-      {% for h in history %}<a class="rv-chip-filter" {% if h.judge_fp == judge_fp %}aria-pressed="true"{% else %}aria-pressed="false"{% endif %}
-        href="?judge_fp={{ h.judge_fp }}">{{ h.judge_fp[:8] }} <span class="rv-chip-n">{{ h.evalset_version }}</span></a> {% endfor %}</div>
+      {% for h in history %}<a class="rv-chip-filter" {% if h.fp == standard_fp %}aria-pressed="true"{% else %}aria-pressed="false"{% endif %}
+        href="?standard_fp={{ h.fp }}">{{ h.fp[:8] }} <span class="rv-chip-n">{{ h.evalset_version }}</span></a> {% endfor %}</div>
     {% endif %}
     <div class="rv-expect">
       <div class="rv-eyebrow">提问（全文）</div>
@@ -116,19 +116,71 @@
           </div>
         </div>
         {% if weight_facts %}
-        <div class="rv-pie-col" id="weight-editor" data-qkey="{{ seed.qkey }}" data-fp="{{ judge_fp }}"
+        <div class="rv-pie-col" id="weight-editor" data-case="{{ case_id }}" data-wfp="{{ weight_fp }}"
              data-save-url="/api/case/weights">
           <svg id="w-pie" viewBox="0 0 200 200" role="img" aria-label="权重分布饼图"></svg>
           <div class="rv-pie-legend" id="w-legend"></div>
           <div class="rv-wsum">已分配 <b id="w-sum"></b> · 未分配 <b id="w-left"></b></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="rv-btn rv-btn--primary" id="w-save" type="button">保存为新期望</button>
-            <input class="rv-input" id="w-label" maxlength="40" placeholder="版本标签（默认：权重调整）" style="width:190px">
+            <button class="rv-btn rv-btn--primary" id="w-save" type="button">保存权重</button>
+            {% if weight_label %}<span class="rv-meta">当前标签：{{ weight_label }}</span>{% endif %}
+            <input class="rv-input" id="w-label" maxlength="40" placeholder="版本标签（可空）" style="width:190px">
             <span class="rv-meta">拖滑杠圆钮调整（减少→未分配，有未分配才能增加）；双击百分比值可直接输入，粒度 1%</span>
           </div>
         </div>
         {% endif %}
       </div>
+      {% if weight_history %}
+      <details class="rv-fold" id="weight-history" data-case="{{ case_id }}">
+        <summary><span class="rv-fold-title">权重历史</span>
+          <span class="rv-meta">{{ weight_history|length }} 次配置 · 当前在首行</span>
+          <span class="rv-fold-hint" data-closed>展开</span><span class="rv-fold-hint" data-open>收起</span></summary>
+        <div class="rv-fold-body">
+          <p class="rv-meta" style="margin:0 0 8px">每次保存留档（追加不删）；「查看」读该权重下<b>已算好</b>的结论（不重算），
+            「切回」把它写成新的有效配置并只重算本用例。标准修订后条目有增减时切回会被拒并提示缺项。</p>
+          <div class="rv-table-wrap">
+          <table class="rv-table">
+            <thead><tr><th>保存时间</th><th>标签</th><th>来源</th><th>权重</th><th>weight_fp</th><th></th></tr></thead>
+            <tbody>
+            {% for g in weight_history %}
+            <tr data-wh="{{ g.set_at }}">
+              <td class="rv-mono">{{ g.set_at[:19] }}</td>
+              <td>{{ g.label or '—' }}</td>
+              <td class="rv-meta">{{ g.source }}{% if g.set_by %}/{{ g.set_by }}{% endif %}</td>
+              <td>{% for i, w in g.weights.items() %}<span class="rv-mono">{{ i }} {{ w|f1 }}%</span>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+              <td class="rv-mono" title="{{ g.weight_fp }}">{{ g.weight_fp[:10] }}{% if g.weight_fp == 'equal' %}（等权）{% endif %}</td>
+              <td>{% if g.active %}<span class="rv-pill">当前</span>{% else %}
+                <button class="rv-btn rv-wh-view" type="button" data-setat="{{ g.set_at }}">查看</button>
+                <button class="rv-btn rv-btn--primary rv-wh-restore" type="button" data-setat="{{ g.set_at }}"
+                        data-label="{{ g.label or '' }}">切回</button>{% endif %}</td>
+            </tr>
+            <tr class="rv-wh-rows" data-setat="{{ g.set_at }}" hidden>
+              <td colspan="6">
+                {% if g.rows %}
+                <table class="rv-table">
+                  <thead><tr><th>会话</th><th>模式</th><th>trial</th><th>结论</th><th>分数</th><th>来源</th></tr></thead>
+                  <tbody>
+                  {% for c in g.rows %}
+                  <tr><td class="rv-mono">{{ c.uid }}{% if c.rewrite %} <span class="rv-meta">· {{ c.rewrite }}</span>{% endif %}</td>
+                    <td>{{ c.mode }}</td><td class="rv-num">{{ c.trial }}</td>
+                    <td>{% if c.status %}<span class="rv-state" data-s="{{ 'pass' if c.status == 'pass' else ('fail' if c.status == 'fail' else 'need') }}">{{ { 'pass': '通过', 'fail': '未过', 'undecided': '待定', 'invalid': '无效', 'error': '错误'}.get(c.status, c.status) }}</span>{% if c.status == 'undecided' and c.score_min is not none %} <span class="rv-meta">{{ c.score_min|f1 }}–{{ c.score_max|f1 }}</span>{% endif %}{% else %}<span class="rv-meta">无现成结论（标准/链/规则已变，切回后重算可见）</span>{% endif %}</td>
+                    <td class="rv-num">{% if c.score is not none %}<b>{{ c.score|f1 }}</b>{% elif c.score_min is not none %}{{ c.score_min|f1 }}–{{ c.score_max|f1 }}{% else %}—{% endif %}</td>
+                    <td class="rv-meta">{{ c.score_source or '' }}</td></tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+                {% else %}
+                <span class="rv-meta">该权重下没有本用例的会话（当时还未执行）。</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      </details>
+      {% endif %}
       {% if spec.reference_answer %}
       <details class="rv-fold">
         <summary><span class="rv-fold-title">参考答案</span><span class="rv-meta">{{ spec.reference_answer|length }} 字</span>
@@ -145,14 +197,14 @@
     <div class="rv-vtabs" role="tablist" aria-label="选择变体" data-vtabs>
       <a class="rv-vtab" role="tab" data-vtab="__all" aria-selected="{{ 'true' if show_all else 'false' }}"
          tabindex="{{ 0 if show_all else -1 }}"
-         href="?{% if judge_fp %}judge_fp={{ judge_fp }}&{% endif %}variant=__all#variants">全部
+         href="?{% if standard_fp %}standard_fp={{ standard_fp }}&{% endif %}variant=__all#variants">全部
         <span class="rv-vtab-n">{{ variant_stats.all }}</span></a>
       {% for v in variant_cards %}
       <a class="rv-vtab" role="tab" id="vtab-{{ loop.index }}" data-vtab="{{ v.uid }}"
          aria-selected="{{ 'true' if not show_all and v.uid == focus_variant else 'false' }}"
          tabindex="{{ 0 if not show_all and v.uid == focus_variant else -1 }}"
          aria-controls="vpanel-{{ loop.index }}"
-         href="?{% if judge_fp %}judge_fp={{ judge_fp }}&{% endif %}variant={{ v.uid|urlencode }}#variants">
+         href="?{% if standard_fp %}standard_fp={{ standard_fp }}&{% endif %}variant={{ v.uid|urlencode }}#variants">
         <span class="rv-vtab-id">#{{ v.index }}</span>
         <span class="rv-kind">{{ v.rewrite or '种子' }}</span>
         {% if v.undecided %}<span class="rv-vtab-dot" aria-hidden="true"></span>{% endif %}
@@ -168,7 +220,7 @@
             <span class="rv-vfocus-num">#{{ v.index }}</span>
             <span class="rv-kind">{{ v.rewrite or '种子' }}</span>
             <span class="rv-pill rv-pill--mono">{{ v.uid }}</span>
-            <span class="rv-meta">期望 {{ (v.judge_fp or '无')[:8] }}</span>
+            <span class="rv-meta">标准 {{ (v.standard_fp or '无')[:8] }}</span>
           </div>
           <div class="rv-vfocus-stats">
             <span class="rv-pill">{{ v.convs }} 段对话</span>
@@ -195,7 +247,7 @@
       <span>按 {{ axis_labels.get(axis, axis) }} 分组</span></span></h2>
     <form method="get" action="/case/{{ case_id }}#pair" data-pair-form>
       <input type="hidden" name="axis" value="{{ axis }}">
-      {% if judge_fp %}<input type="hidden" name="judge_fp" value="{{ judge_fp }}">{% endif %}
+      {% if standard_fp %}<input type="hidden" name="standard_fp" value="{{ standard_fp }}">{% endif %}
       <input type="hidden" name="variant" value="{{ '__all' if show_all else focus_variant }}" data-variant-input>
       <div class="rv-chips-bar" role="group" aria-label="筛选对话" data-cfilter-group>
         <button type="button" class="rv-chip-filter" data-cfilter="all" aria-pressed="true">全部 <span class="rv-chip-n" data-cfilter-count="all">{{ conv_stats.all }}</span></button>

@@ -17,13 +17,15 @@ from pathlib import Path
 
 from collections import defaultdict
 
-from .items import (SCALES, build_context, episode_error, extract_items, input_fp_of,
-                    judge_fp_of, qkey_of, variant_leak_suspects, TOTAL_ITEM, conversation_sha,
-                    version_label, weight_of)
+from .items import (SCALES, build_context, episode_error, extract_items, input_fp_of, spec_weights_any,
+                    standard_fp_of, spec_weights_to_percent, strip_spec_weights, qkey_of,
+                    variant_leak_suspects, TOTAL_ITEM, conversation_sha, version_label, weight_of)
 from .operators import Verdict
-from .policy import EpisodeVerdict, Policy, session_conclusion
+from .policy import Policy, rules_dict_of_policy, method_dict_of_policy
+from .rules import EpisodeVerdict, Rules, canonical_sha, session_conclusion
+from .subject import subject_fp_of_manifest
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # 建表语句（§6.2）：只用标准 SQL 类型与语法
 _SCHEMA = """
@@ -278,6 +280,296 @@ def _migrate_run_title(conn) -> None:
 _MIGRATIONS[7] = [_migrate_run_title]
 
 
+# v8（doc/15 §2 配置重构）：标准指纹去权重、被测指纹、快照/测法/规则、条目权重表。
+_MIGRATION_8_SQL = """
+    ALTER TABLE runs ADD COLUMN subject_fp TEXT;
+    ALTER TABLE runs ADD COLUMN subject_json TEXT;
+    ALTER TABLE runs ADD COLUMN subject_incomplete INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE runs ADD COLUMN method_sha TEXT;
+    ALTER TABLE runs ADD COLUMN diagnostic INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE runs ADD COLUMN scope_json TEXT;
+    ALTER TABLE answers ADD COLUMN subject_fp TEXT;
+    ALTER TABLE answers ADD COLUMN model TEXT;
+    ALTER TABLE answers ADD COLUMN reasoning_effort TEXT;
+    ALTER TABLE answers ADD COLUMN agent TEXT;
+    ALTER TABLE questions ADD COLUMN off_snapshot INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE questions ADD COLUMN current_weight_fp TEXT;
+    CREATE TABLE snapshots(
+      evalset_version TEXT PRIMARY KEY, snapshot_sha TEXT NOT NULL,
+      method_json TEXT NOT NULL, method_sha TEXT NOT NULL,
+      include TEXT, name TEXT, imported_at TEXT NOT NULL);
+    CREATE TABLE item_weights(
+      case_id TEXT NOT NULL, item_id TEXT NOT NULL, weight REAL NOT NULL,
+      label TEXT, source TEXT NOT NULL, set_by TEXT, set_at TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1);
+    CREATE INDEX idx_item_weights ON item_weights(case_id, active, item_id);
+    CREATE TABLE rules(
+      rules_sha TEXT PRIMARY KEY, rules_json TEXT NOT NULL, name TEXT, created_at TEXT NOT NULL);
+    ALTER TABLE conclusions RENAME TO conclusions_legacy;
+    CREATE TABLE conclusions(
+      answer_id TEXT, standard_fp TEXT, chain_sha TEXT, rules_sha TEXT, weight_fp TEXT,
+      status TEXT, reason TEXT, detail_json TEXT,
+      score REAL, score_min REAL, score_max REAL, auto_score REAL, score_source TEXT,
+      PRIMARY KEY(answer_id, standard_fp, chain_sha, rules_sha, weight_fp));
+    """
+
+
+def _v8_percent_weights(spec: dict) -> dict[str, float]:
+    """旧期望 → 百分制权重：weight_percent 标记的权值本就是百分制（revise_weights
+    语义，取 facts 原值）；否则按相对值换算（doc/15 §2.4，全精度不取整）。"""
+    if spec.get("weight_percent"):
+        return {f["id"]: float(f["weight"]) for f in spec.get("facts") or []
+                if f.get("id") and "weight" in f}
+    return spec_weights_any(spec)
+
+
+def _migrate_v8(conn) -> None:
+    """v8 数据迁移（doc/15 §6，单事务由 _migrate 保证）：
+    1) specs 去权重重算 standard_fp 合并（当前期望那份优先，B7）；
+    2) 权重落 item_weights（种子题当前期望为有效行；变体不一致进报告）；
+    3) verdicts/spec_versions/questions/@total 键改写；伪版本「权重调整」不生成快照（S3）；
+    4) runs/answers 回填被测指纹；
+    5) 由 policy.yaml + anchors 生成各快照的测法与 snapshot_sha；
+    6) policy.yaml 生成计分规则；meta.current_snapshot 落位、偏离标记。
+    报告写 meta.v8_report（migrate-verify 读取）。空库（全新测试库）各步自然为空操作。"""
+    import pathlib
+    repo = pathlib.Path(__file__).resolve().parents[1]
+
+    # ---------- 0) 版本名规整：早期库的 evalset_version 存的是 dist 全路径，
+    # 迁移时统一为短名（version_label：basename 去 .jsonl 去 evalset- 前缀），
+    # 从此库内即短名（此前只在展示层规整）。
+    seen_versions = {r[0] for tbl in ("specs", "spec_versions", "runs", "answers")
+                     for r in conn.execute(f"SELECT DISTINCT evalset_version FROM {tbl}"
+                                           " WHERE evalset_version IS NOT NULL")}
+    for v in sorted(seen_versions):
+        nv = version_label(v)
+        if nv != v:
+            for tbl in ("specs", "spec_versions", "runs", "answers"):
+                conn.execute(f"UPDATE {tbl} SET evalset_version=? WHERE evalset_version=?", (nv, v))
+
+    # ---------- 1) specs 重建：去权重 → standard_fp，合并重复行
+    old_current = {r["qkey"]: r["current_judge_fp"] for r in
+                   conn.execute("SELECT qkey, current_judge_fp FROM questions") if r["current_judge_fp"]}
+    old_rows = conn.execute("SELECT qkey, judge_fp, spec_json, evalset_version, imported_at FROM specs").fetchall()
+    kept: dict[tuple, dict] = {}            # (qkey, standard_fp) -> 行（当前期望优先）
+    weights_by_old: dict[tuple, dict] = {}  # (qkey, 旧fp) -> 百分制权重（快照初始值/承接用）
+    fp_map: dict[tuple, str] = {}           # (qkey, 旧fp) -> 新 standard_fp
+    case_of_q: dict[str, str] = {}
+    for r in old_rows:
+        spec = json.loads(r["spec_json"] or "{}")
+        weights_by_old[(r["qkey"], r["judge_fp"])] = _v8_percent_weights(spec)
+        std = strip_spec_weights(spec)
+        std.pop("weight_percent", None)
+        fp = standard_fp_of(std)
+        fp_map[(r["qkey"], r["judge_fp"])] = fp
+        case_of_q[r["qkey"]] = std.get("case_id") or std.get("id") or "?"
+        is_cur = r["judge_fp"] == old_current.get(r["qkey"])
+        key = (r["qkey"], fp)
+        if key not in kept or (is_cur and not kept[key]["cur"]):
+            kept[key] = {"cur": is_cur, "spec": std, "version": r["evalset_version"],
+                         "imported_at": r["imported_at"]}
+    conn.execute("ALTER TABLE specs RENAME TO specs_legacy")
+    conn.execute("CREATE TABLE specs(qkey TEXT, standard_fp TEXT, spec_json TEXT,"
+                 " evalset_version TEXT, imported_at TEXT, PRIMARY KEY(qkey, standard_fp))")
+    for (qkey, fp), k in kept.items():
+        conn.execute("INSERT INTO specs VALUES(?,?,?,?,?)",
+                     (qkey, fp, json.dumps(k["spec"], ensure_ascii=False), k["version"], k["imported_at"]))
+
+    # ---------- 2) 权重 → item_weights（按用例，种子题当前期望为准，B1/§6.2）
+    seed_q: dict[str, str] = {}             # case_id -> 种子 qkey（uid 最小 / variant_index=0）
+    for r in conn.execute("SELECT qkey, uid, case_id FROM questions"):
+        cid = r["case_id"] or (r["uid"].split("#")[0] if r["uid"] else "?")
+        if cid not in seed_q or r["uid"] < conn.execute(
+                "SELECT uid FROM questions WHERE qkey=?", (seed_q[cid],)).fetchone()["uid"]:
+            seed_q[cid] = r["qkey"]
+    ts = now()
+    variant_mismatch: list[str] = []
+    for cid, q in seed_q.items():
+        cur_fp = old_current.get(q)
+        base = weights_by_old.get((q, cur_fp)) if cur_fp else None
+        if not base:
+            continue
+        for item_id, w in base.items():
+            conn.execute("INSERT INTO item_weights VALUES(?,?,?,?,?,?,?,?)",
+                         (cid, item_id, w, None, "legacy", None, ts, 1))
+        for r in conn.execute("SELECT qkey FROM questions WHERE case_id=?", (cid,)):
+            vfp = old_current.get(r["qkey"])
+            if vfp and r["qkey"] != q and weights_by_old.get((r["qkey"], vfp)) != base:
+                variant_mismatch.append(cid)
+
+    # ---------- 2b) 回填 questions.current_weight_fp（§6.2）：有权重行的用例算
+    # weight_fp 缓存列，无权重用例留 NULL（查询侧按 'equal' 兜底）。
+    latest_w: dict[str, dict[str, float]] = {}
+    for row in conn.execute(
+            "SELECT case_id, item_id, weight FROM item_weights WHERE active=1"
+            " ORDER BY set_at, rowid").fetchall():
+        latest_w.setdefault(row["case_id"], {})[row["item_id"]] = row["weight"]
+    for cid, wmap in latest_w.items():
+        conn.execute("UPDATE questions SET current_weight_fp=? WHERE case_id=?",
+                     (canonical_sha(wmap), cid))
+
+    # ---------- 3) 键改写：verdicts / spec_versions / questions / reviews@total
+    conn.execute("ALTER TABLE verdicts RENAME TO verdicts_legacy")
+    conn.execute("CREATE TABLE verdicts(answer_id TEXT, standard_fp TEXT, chain_sha TEXT, item_id TEXT,"
+                 " kind TEXT, turn INTEGER, item_sha TEXT, answer_sha TEXT, value TEXT, source TEXT,"
+                 " operator TEXT, reason TEXT, trace_json TEXT, status TEXT, judged_at TEXT, score REAL,"
+                 " PRIMARY KEY(answer_id, standard_fp, chain_sha, item_id))")
+    qkey_of_answer = {r["answer_id"]: r["qkey"] for r in conn.execute("SELECT answer_id, qkey FROM answers")}
+    discarded_diff: list[dict] = []
+    cur_first: dict[tuple, list] = {}
+    for r in conn.execute("SELECT * FROM verdicts_legacy"):
+        new_fp = fp_map.get((qkey_of_answer.get(r["answer_id"]), r["judge_fp"]), r["judge_fp"])
+        is_cur = old_current.get(qkey_of_answer.get(r["answer_id"])) == r["judge_fp"]
+        cur_first.setdefault((r["answer_id"], new_fp, r["chain_sha"], r["item_id"]), []).append(
+            {"row": r, "cur": is_cur})
+    for key, group in cur_first.items():
+        group.sort(key=lambda g: not g["cur"])          # 当前期望那份优先（B7）
+        win = group[0]["row"]
+        conn.execute(
+            "INSERT INTO verdicts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (win["answer_id"], key[1], key[2], key[3], win["kind"], win["turn"], win["item_sha"],
+             win["answer_sha"], win["value"], win["source"], win["operator"], win["reason"],
+             win["trace_json"], win["status"], win["judged_at"], win["score"]))
+        for g in group[1:]:
+            l = g["row"]
+            if (l["value"], l["source"], l["status"], l["score"]) != \
+                    (win["value"], win["source"], win["status"], win["score"]):
+                discarded_diff.append({"answer_id": l["answer_id"], "item_id": l["item_id"],
+                                       "kept": win["value"], "dropped": l["value"]})
+    conn.execute("DROP TABLE verdicts_legacy")
+    conn.execute("DROP TABLE specs_legacy")
+
+    conn.execute("ALTER TABLE spec_versions RENAME TO spec_versions_legacy")
+    conn.execute("CREATE TABLE spec_versions(qkey TEXT, standard_fp TEXT, evalset_version TEXT,"
+                 " imported_at TEXT, PRIMARY KEY(qkey, standard_fp, evalset_version))")
+    versions: dict[str, list] = {}
+    for r in conn.execute("SELECT * FROM spec_versions_legacy"):
+        if r["evalset_version"] == "权重调整":       # 伪版本（S3）：不进快照，也不保留映射
+            continue
+        new_fp = fp_map.get((r["qkey"], r["judge_fp"]))
+        if new_fp:
+            conn.execute("INSERT OR IGNORE INTO spec_versions VALUES(?,?,?,?)",
+                         (r["qkey"], new_fp, r["evalset_version"], r["imported_at"]))
+        versions.setdefault(r["evalset_version"], []).append((r["qkey"], r["judge_fp"]))
+    conn.execute("DROP TABLE spec_versions_legacy")
+
+    conn.execute("ALTER TABLE questions RENAME TO questions_legacy")
+    conn.execute("CREATE TABLE questions(qkey TEXT PRIMARY KEY,"
+                 " uid TEXT, case_id TEXT, variant_index INTEGER, rewrite TEXT,"
+                 " dim TEXT, topic TEXT, tags_json TEXT, input_fp TEXT,"
+                 " current_standard_fp TEXT, active INTEGER, first_seen TEXT,"
+                 " granularity TEXT, off_snapshot INTEGER NOT NULL DEFAULT 0, current_weight_fp TEXT)")
+    for r in conn.execute("SELECT * FROM questions_legacy"):
+        new_fp = fp_map.get((r["qkey"], r["current_judge_fp"]), r["current_judge_fp"]) \
+            if r["current_judge_fp"] else None
+        conn.execute("INSERT INTO questions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (r["qkey"], r["uid"], r["case_id"], r["variant_index"], r["rewrite"], r["dim"],
+                      r["topic"], r["tags_json"], r["input_fp"], new_fp, r["active"], r["first_seen"],
+                      r["granularity"], 0, None))
+    conn.execute("DROP TABLE questions_legacy")
+
+    for r in conn.execute("SELECT review_id, answer_id, item_sha FROM reviews WHERE item_id=?",
+                          (TOTAL_ITEM,)):
+        new_fp = fp_map.get((qkey_of_answer.get(r["answer_id"]), r["item_sha"]), r["item_sha"])
+        conn.execute("UPDATE reviews SET item_sha=? WHERE review_id=?", (new_fp, r["review_id"]))
+
+    # ---------- 4) 被测指纹回填（runs + answers）
+    for r in conn.execute("SELECT run_id, snapshot_json FROM runs").fetchall():
+        try:
+            manifest = json.loads(r["snapshot_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            manifest = {}
+        fp, js, incomplete = subject_fp_of_manifest(manifest)
+        conn.execute("UPDATE runs SET subject_fp=?, subject_json=?, subject_incomplete=? WHERE run_id=?",
+                     (fp, js, incomplete, r["run_id"]))
+    run_subject = {r["run_id"]: (r["subject_fp"], r["subject_json"]) for r in
+                   conn.execute("SELECT run_id, subject_fp, subject_json FROM runs")}
+    for a in conn.execute("SELECT answer_id, run_id, models_json FROM answers").fetchall():
+        sfp, sjs = run_subject.get(a["run_id"], (None, None))
+        subject = json.loads(sjs) if sjs else {}
+        agent = subject.get("agent") or {}
+        conn.execute("UPDATE answers SET subject_fp=?, model=?, reasoning_effort=?, agent=? WHERE answer_id=?",
+                     (sfp, subject.get("model") or (json.loads(a["models_json"] or "[]") or [None])[0],
+                      subject.get("reasoning_effort"),
+                      f"{agent.get('name')}" + (f"@{agent['version']}" if agent.get("version") else ""),
+                      a["answer_id"]))
+
+    # ---------- 5) 快照与测法（由 policy.yaml + anchors 生成，doc/15 §3.9 P1）
+    try:
+        from .policy import default_policy_path, load_policy
+        policy, _ = load_policy(default_policy_path())
+    except Exception:
+        policy = Policy()
+    try:
+        import yaml
+        mapping = yaml.safe_load((repo / "evalset" / "mapping.yaml").read_text(encoding="utf-8")) or {}
+        vocab = list(mapping.get("rewrites") or [])
+    except Exception:
+        vocab = ["口语", "极简", "语序", "诱导"]
+    anchors_all: list[str] = []
+    anchors_file = repo / "runner" / "anchors.txt"
+    if anchors_file.exists():
+        anchors_all = [x.strip() for x in anchors_file.read_text(encoding="utf-8").splitlines() if x.strip()]
+    method_file = repo / "evalset" / "method.yaml"
+    if method_file.exists():
+        import yaml as _yaml
+        method = _yaml.safe_load(method_file.read_text(encoding="utf-8")) or {}
+        if not method.get("modes"):
+            method = method_dict_of_policy(policy, vocab, anchors_all)
+    else:                                  # 首次迁移：由 policy + anchors 生成并落盘（§3.9 P1）
+        method = method_dict_of_policy(policy, vocab, anchors_all)
+        try:
+            import yaml as _yaml
+            method_file.write_text(_yaml.safe_dump(method, allow_unicode=True, sort_keys=False),
+                                   encoding="utf-8")
+        except Exception:
+            pass
+    method_js = json.dumps(method, ensure_ascii=False, sort_keys=True)
+    method_sha = canonical_sha(method)
+    uid_of_q = {r["qkey"]: r["uid"] for r in conn.execute("SELECT qkey, uid FROM questions")}
+    case_by_version: dict[str, dict] = {}
+    for version, members in sorted(versions.items()):
+        rows_v, wmap = [], {}
+        for qkey, old_fp in members:
+            new_fp = fp_map.get((qkey, old_fp))
+            qrow = conn.execute("SELECT uid, input_fp FROM questions WHERE qkey=?", (qkey,)).fetchone()
+            w = weights_by_old.get((qkey, old_fp)) or {}
+            if w:
+                wmap[case_of_q.get(qkey, "?")] = w
+            rows_v.append([qrow["uid"] if qrow else "?",
+                           (qrow["input_fp"] if qrow else "") or "", new_fp or ""])
+        snap_sha = canonical_sha({"rows": sorted(rows_v), "weights": wmap, "method_sha": method_sha})
+        conn.execute("INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?,?,?,?)",
+                     (version, snap_sha, method_js, method_sha, "admitted", None, ts))
+    latest = conn.execute("SELECT evalset_version FROM spec_versions"
+                          " ORDER BY imported_at DESC, evalset_version DESC LIMIT 1").fetchone()
+    current_snapshot = latest["evalset_version"] if latest else None
+    if current_snapshot:
+        conn.execute("INSERT OR REPLACE INTO meta VALUES('current_snapshot', ?)", (current_snapshot,))
+        std_in_snap = {r["qkey"]: r["standard_fp"] for r in conn.execute(
+            "SELECT qkey, standard_fp FROM spec_versions WHERE evalset_version=?", (current_snapshot,))}
+        for q in conn.execute("SELECT qkey, current_standard_fp FROM questions").fetchall():
+            if q["current_standard_fp"] and std_in_snap.get(q["qkey"]) != q["current_standard_fp"]:
+                conn.execute("UPDATE questions SET off_snapshot=1 WHERE qkey=?", (q["qkey"],))
+
+    # ---------- 6) 计分规则（policy.yaml 生成）+ 迁移报告
+    rules_d = rules_dict_of_policy(policy)
+    rules_js = json.dumps(rules_d, ensure_ascii=False, sort_keys=True)
+    rules_sha = canonical_sha(rules_d)
+    conn.execute("INSERT OR IGNORE INTO rules VALUES(?,?,?,?)", (rules_sha, rules_js, "迁移生成", ts))
+    conn.execute("INSERT OR REPLACE INTO meta VALUES('rules_sha', ?)", (rules_sha,))
+    report = {"merged_specs": len(old_rows) - len(kept),
+              "discarded_verdict_diff": discarded_diff,
+              "variant_weight_mismatch": sorted(set(variant_mismatch)),
+              "snapshots": sorted(versions), "rules_sha": rules_sha,
+              "current_snapshot": current_snapshot}
+    conn.execute("INSERT OR REPLACE INTO meta VALUES('v8_report', ?)",
+                 (json.dumps(report, ensure_ascii=False),))
+
+
+_MIGRATIONS[8] = [_MIGRATION_8_SQL, _migrate_v8]
+
+
 class StoreError(Exception):
     """评测库操作错误。"""
 
@@ -362,10 +654,10 @@ class Store:
     # ---------------------------------------------------------------- 题目与期望（C6/C7）
 
     def upsert_question(self, case: dict, active: bool | None = None,
-                        current_judge_fp: str | None = None,
+                        current_standard_fp: str | None = None,
                         current_if_absent: str | None = None) -> str:
-        """按编译行登记题目。active/current_judge_fp 缺省不改动（specs import 时统一刷新）；
-        current_if_absent：该题尚无当前期望时设置之并置活跃（ingest 路径，整改清单 R5）。"""
+        """按编译行登记题目。active/current_standard_fp 缺省不改动（specs import 时统一
+        刷新）；current_if_absent：该题尚无当前标准时设置之并置活跃（ingest 路径，R5）。"""
         qkey = qkey_of(case)
         variant = case.get("variant") or {}
         tags = [t.get("tag") if isinstance(t, dict) else t for t in (case.get("tags") or [])]
@@ -378,13 +670,15 @@ class Store:
         if active is not None:
             sets.append("active=?")
             args.append(1 if active else 0)
-        if current_judge_fp is not None:
-            sets.append("current_judge_fp=?")
-            args.append(current_judge_fp)
+        if current_standard_fp is not None:
+            sets.append("current_standard_fp=?")
+            args.append(current_standard_fp)
         with self.lock, self.conn:
-            exists = self.conn.execute("SELECT current_judge_fp FROM questions WHERE qkey=?", (qkey,)).fetchone()
-            if exists and current_if_absent is not None and current_judge_fp is None and not exists["current_judge_fp"]:
-                sets.append("current_judge_fp=?")
+            exists = self.conn.execute("SELECT current_standard_fp FROM questions WHERE qkey=?",
+                                       (qkey,)).fetchone()
+            if exists and current_if_absent is not None and current_standard_fp is None \
+                    and not exists["current_standard_fp"]:
+                sets.append("current_standard_fp=?")
                 args.append(current_if_absent)
                 if active is None:
                     sets.append("active=?")
@@ -393,99 +687,395 @@ class Store:
             if exists:
                 self.conn.execute(f"UPDATE questions SET {', '.join(sets)} WHERE qkey=?", tuple(args))
             else:
-                fp = current_judge_fp if current_judge_fp is not None else current_if_absent
+                fp = current_standard_fp if current_standard_fp is not None else current_if_absent
                 self.conn.execute(
                     "INSERT INTO questions(qkey, uid, case_id, variant_index, rewrite, dim, topic, granularity,"
-                    " tags_json, input_fp, current_judge_fp, active, first_seen) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " tags_json, input_fp, current_standard_fp, active, first_seen)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (qkey, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8],
                      fp, 1 if (active is None and fp) or active else 0, now()))
         return qkey
 
-    def register_spec(self, qkey: str, judge_fp: str, spec_json: dict, evalset_version: str) -> None:
-        """登记一份期望（同一 qkey × judge_fp 只存一份，首次登记的版本标签不再改写），
-        并写版本映射 spec_versions（整改清单 R1：期望按指纹寻址，版本与期望多对多）。"""
+    def register_spec(self, qkey: str, standard_fp: str, spec_json: dict, evalset_version: str) -> None:
+        """登记一份标准（同一 qkey × standard_fp 只存一份，首次登记的版本标签不再改写），
+        并写版本映射 spec_versions（R1：标准按指纹寻址，版本与标准多对多）。
+        spec_json 落库前剥除权重（v8：权重只活在 item_weights，doc/15 §2.2）。"""
+        spec_json = strip_spec_weights(dict(spec_json))
+        spec_json.pop("weight_percent", None)
+        spec_json.pop("weights", None)          # 新 dist 顶层 weights 只作导入初始值，不入标准
         ts = now()
         with self.lock, self.conn:
             self.conn.execute("INSERT OR IGNORE INTO specs VALUES(?,?,?,?,?)",
-                              (qkey, judge_fp, json.dumps(spec_json, ensure_ascii=False), evalset_version, ts))
+                              (qkey, standard_fp, json.dumps(spec_json, ensure_ascii=False),
+                               evalset_version, ts))
             self.conn.execute("INSERT OR IGNORE INTO spec_versions VALUES(?,?,?,?)",
-                              (qkey, judge_fp, evalset_version, ts))
+                              (qkey, standard_fp, evalset_version, ts))
 
-    def revise_weights(self, qkey: str, base_fp: str, weights: dict[str, float],
-                       label: str = "权重调整") -> dict:
-        """在页面上调整计分条目权重（doc/10 权重语义的在线编辑入口）：以 base_fp 的
-        期望为底本，把给出的条目权重（百分制，总和 ≤ 100）写成新 judge_fp 的期望并设为
-        当前期望。label 为期望版本标签（历史版本切换条显示，可自定义命名）。
-        item_sha 不含权重 → 已有人工改判继续有效；judge_fp 含权重 → 分数要
-        rejudge 后才按新权重算（算子走判定缓存，不重复调模型）。"""
-        version = (label or "").strip()[:40] or "权重调整"
-        spec = self.spec_of(qkey, base_fp) if base_fp else None
+    # ---------------------------------------------------------------- 条目权重（doc/15 §2.4/§3.5）
+
+    def _case_seed(self, case_id: str) -> str | None:
+        """用例的种子题 qkey（uid 最小者；页面改权重作用于整个用例，B1）。"""
+        row = self.conn.execute(
+            "SELECT qkey FROM questions WHERE case_id=? ORDER BY uid LIMIT 1", (case_id,)).fetchone()
+        return row["qkey"] if row else None
+
+    def _register_case_weights(self, case_id: str, seed_case: dict, version: str,
+                               keep_weights: bool = False) -> dict:
+        """导入时的权重冲突规则（B3，doc/15 §3.5）：与上一次导入的初始值相同 → 不写入
+        （保留页面上改过的权重）；不同/首次 → 写入新的有效行并报告覆盖。返回报告项。"""
+        new_w = spec_weights_any(seed_case)
+        cid = case_id or seed_case.get("case_id") or seed_case.get("id") or "?"
+        sub = self.conn.execute(
+            "SELECT MAX(set_at) AS s FROM item_weights WHERE case_id=? AND source='import'", (cid,)
+        ).fetchone()["s"]
+        prev = {r["item_id"]: r["weight"] for r in self.conn.execute(
+            "SELECT item_id, weight FROM item_weights WHERE case_id=? AND source='import' AND set_at=?",
+            (cid, sub or ""))} if sub else {}
+        if new_w and (not prev or prev != new_w):
+            if keep_weights:
+                return {"case_id": cid, "action": "kept (--keep-weights)", "changed": True}
+            overwritten = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM item_weights WHERE case_id=? AND active=1 AND source != 'import'",
+                (cid,)).fetchone()["n"]
+            with self.lock, self.conn:
+                self.conn.execute("UPDATE item_weights SET active=0 WHERE case_id=?", (cid,))
+                for item_id, w in new_w.items():
+                    self.conn.execute("INSERT INTO item_weights VALUES(?,?,?,?,?,?,?,?)",
+                                      (cid, item_id, w, None, "import", version, now(), 1))
+            self._refresh_weight_fp(cid)
+            return {"case_id": cid, "action": "written", "overwrote_manual": overwritten}
+        return {"case_id": cid, "action": "unchanged"}
+
+    def _refresh_weight_fp(self, case_id: str) -> str:
+        """刷新用例全部变体的 questions.current_weight_fp（S4 缓存列）。"""
+        _, wfp, _ = self.effective_weights(case_id)
+        with self.lock, self.conn:
+            self.conn.execute("UPDATE questions SET current_weight_fp=? WHERE case_id=?",
+                              (wfp, case_id))
+        return wfp
+
+    def effective_weights(self, case_id: str, standard_fp: str | None = None,
+                          default_weight: float = 1.0) -> tuple[dict, str, bool]:
+        """有效权重（doc/15 §2.4）→ (权重表, weight_fp, 权重不完整)。
+        只取当前标准里还存在的条目；新标准多出的计分条目记 0 并标不完整；
+        无任何权重行的用例 → ({}, 'equal', False)，按 default_weight 等权计分。"""
+        seed = self._case_seed(case_id)
+        if seed is None:
+            return {}, "equal", False
+        q = self.question(seed) or {}
+        fp = standard_fp or q.get("current_standard_fp")
+        spec = self.spec_of(seed, fp) if fp else None
+        items: list[tuple[str, str]] = []
+        if spec:
+            items += [(p.get("id"), "precond") for p in spec.get("preconditions") or []]
+            items += [(f"path#{i}", "path") for i in range(1, len(spec.get("path") or []) + 1)]
+            items += [(f.get("id"), f.get("kind")) for f in spec.get("facts") or []]
+        latest: dict[str, float] = {}
+        for r in self.conn.execute(
+                "SELECT item_id, weight FROM item_weights WHERE case_id=? AND active=1"
+                " ORDER BY set_at, rowid", (case_id,)):
+            latest[r["item_id"]] = float(r["weight"])       # 后写的覆盖先写的
+        if not latest:
+            return {}, "equal", False
+        known = {i for i, _ in items}
+        weights: dict[str, float] = {}
+        incomplete = False
+        for item_id, kind in items:
+            if item_id in latest:
+                weights[item_id] = latest[item_id]
+            elif kind in ("required", "expected"):
+                weights[item_id] = 0.0                       # 新条目没分到权重（记 0 + 标记）
+                incomplete = True
+        return weights, (canonical_sha(weights) if weights else "equal"), incomplete
+
+    def revise_weights(self, case_id: str, weights: dict[str, float], label: str = "",
+                       by: str = "web") -> dict:
+        """页面上按用例保存权重（B1：同一用例各变体共用；doc/15 §3.5）：校验（只收
+        计分条目、0–100、总和 ≤100、必须覆盖全部计分条目）→ 追加有效行 → 刷新
+        weight_fp。只重算本用例（rescore_cases），不再产生新标准、不再需要 rejudge。"""
+        seed = self._case_seed(case_id)
+        if seed is None:
+            raise StoreError(f"用例不存在：{case_id}")
+        q = self.question(seed) or {}
+        fp = q.get("current_standard_fp")
+        spec = self.spec_of(seed, fp) if fp else None
         if spec is None:
-            cur = self.current_spec(qkey)
-            if cur is None:
-                raise StoreError(f"期望不存在：{qkey}")
-            base_fp, spec = cur
-        weightable = {f.get("id") for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")}
-        unknown = [k for k in weights if k not in weightable]
+            raise StoreError(f"用例没有当前标准：{case_id}")
+        scored = {f.get("id") for f in spec.get("facts") or []
+                  if f.get("kind") in ("required", "expected")}
+        unknown = [k for k in weights if k not in scored]
+        missing = sorted(scored - set(weights))
         if unknown:
             raise StoreError(f"不可调权重的条目：{unknown}（只有必要/期望事实按权重计分）")
+        if missing:
+            raise StoreError(f"必须覆盖全部计分条目（缺 {missing}）；不想计分的条目写 0")
         for k, v in weights.items():
             if not isinstance(v, (int, float)) or not 0 <= float(v) <= 100:
                 raise StoreError(f"权重应为 0–100 的百分比：{k} = {v!r}")
         total = sum(float(v) for v in weights.values())
         if total > 100 + 1e-9:
             raise StoreError(f"权重总和 {total:.0f}% 超过 100%")
-        new_spec = json.loads(json.dumps(spec, ensure_ascii=False))
-        for f in new_spec.get("facts") or []:
-            if f.get("id") in weights:
-                f["weight"] = round(float(weights[f["id"]]), 1)
-        # 标记权值即百分比（0–100，剩余为未分配）：用例页按原值回显，不重新归一。
-        # judge_fp_of 只哈希固定字段，不含该标记 → 不影响指纹与比较。
-        new_spec["weight_percent"] = True
-        new_fp = judge_fp_of(new_spec)
-        if new_fp == base_fp:
-            if not spec.get("weight_percent"):
-                # 权重没变但底本是旧结构（标记落地前保存的）：就地补标记，
-                # 修复这类期望被用例页重新归一、未分配丢失的回显。
-                with self.lock, self.conn:
-                    self.conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
-                                      (json.dumps(new_spec, ensure_ascii=False), qkey, base_fp))
-            return {"changed": False, "judge_fp": base_fp, "qkey": qkey}
-        self.register_spec(qkey, new_fp, new_spec, version)
+        lab = (label or "").strip()[:40] or None
         with self.lock, self.conn:
-            self.conn.execute("UPDATE questions SET current_judge_fp=?, active=1 WHERE qkey=?",
-                              (new_fp, qkey))
-        return {"changed": True, "judge_fp": new_fp, "qkey": qkey,
-                "rejudge": f"python -m scoring rejudge --question {qkey}"}
+            self.conn.execute("UPDATE item_weights SET active=0 WHERE case_id=?", (case_id,))
+            ts = now()
+            for item_id, w in weights.items():
+                self.conn.execute("INSERT INTO item_weights VALUES(?,?,?,?,?,?,?,?)",
+                                  (case_id, item_id, round(float(w), 4), lab, "web", by, ts, 1))
+        wfp = self._refresh_weight_fp(case_id)
+        return {"case_id": case_id, "weight_fp": wfp, "changed": True}
 
-    def import_evalset(self, rows: list[dict], version: str) -> dict:
-        """specs import：登记全部期望并成为当前期望；未出现的题保留旧期望、标记非活跃。"""
+    def weights_touched_after(self, answer_id: str) -> bool:
+        """人工总分之后权重或计分规则改过（C4 提示）。"""
+        a = self.answer(answer_id)
+        if a is None:
+            return False
+        at = self.conn.execute(
+            "SELECT MAX(at) AS at FROM reviews WHERE answer_id=? AND item_id=?",
+            (answer_id, TOTAL_ITEM)).fetchone()["at"]
+        if at is None:
+            return False
+        q_row = self.question(a["qkey"]) or {}
+        w = self.conn.execute(
+            "SELECT MAX(set_at) AS s FROM item_weights WHERE case_id=?",
+            (q_row.get("case_id") or "",)).fetchone()["s"]
+        rules_at = self.conn.execute("SELECT MAX(created_at) AS s FROM rules").fetchone()["s"]
+        return any(x and x > at for x in (w, rules_at))
+
+    def weight_history(self, case_id: str) -> list[dict]:
+        """按用例列出历次权重保存（最新在前）：同一 set_at+标签+来源+操作人视为
+        一次保存。每次给出该组原始权重和「若此刻生效的 weight_fp」（与
+        effective_weights 同式：按当前标准条目过滤，计分条目缺行记 0）。"""
+        seed = self._case_seed(case_id)
+        if seed is None:
+            return []
+        q = self.question(seed) or {}
+        spec = self.spec_of(seed, q.get("current_standard_fp")) if q.get("current_standard_fp") else None
+        items: list[tuple[str, str]] = []
+        if spec:
+            items += [(p.get("id"), "precond") for p in spec.get("preconditions") or []]
+            items += [(f"path#{i}", "path") for i in range(1, len(spec.get("path") or []) + 1)]
+            items += [(f.get("id"), f.get("kind")) for f in spec.get("facts") or []]
+        known = {i for i, _ in items}
+        groups: dict[tuple, dict] = {}
+        order: list[tuple] = []
+        for r in self.conn.execute(
+                "SELECT item_id, weight, label, source, set_by, set_at, active FROM item_weights"
+                " WHERE case_id=? ORDER BY set_at DESC, rowid DESC", (case_id,)):
+            k = (r["set_at"], r["label"] or "", r["source"], r["set_by"] or "")
+            if k not in groups:
+                groups[k] = {"set_at": r["set_at"], "label": r["label"], "source": r["source"],
+                             "set_by": r["set_by"], "active": False, "weights": {}}
+                order.append(k)
+            g = groups[k]
+            g["weights"][r["item_id"]] = round(float(r["weight"]), 4)
+            g["active"] = g["active"] or bool(r["active"])
+        out = []
+        for k in order:
+            g = dict(groups[k])
+            w = {i: v for i, v in g["weights"].items() if i in known}
+            for item_id, kind in items:
+                if kind in ("required", "expected") and item_id not in w:
+                    w[item_id] = 0.0
+            g["weight_fp"] = canonical_sha(w) if w else "equal"
+            out.append(g)
+        return out
+
+    def case_conclusions_under_weight(self, case_id: str, weight_fp: str, chain_sha: str,
+                                      rules_sha: str) -> list[dict]:
+        """旧权重口径下本用例的会话结论（直读 conclusions 现存行，不重算）：
+        标准按各题当前标准联接——标准或链/规则已变的题在该权重下没有现成
+        结论（status 为 NULL），由页面提示需要重算。"""
+        rows = self.conn.execute(
+            "SELECT a.answer_id, a.mode, a.trial, q.uid, q.variant_index, q.rewrite,"
+            " c.status, c.score, c.score_source, c.score_min, c.score_max"
+            " FROM answers a JOIN questions q ON q.qkey=a.qkey"
+            " LEFT JOIN conclusions c ON c.answer_id=a.answer_id AND c.chain_sha=?"
+            "  AND c.rules_sha=? AND c.weight_fp=? AND c.standard_fp=q.current_standard_fp"
+            " WHERE q.case_id=? ORDER BY q.variant_index, a.mode, a.trial",
+            (chain_sha, rules_sha, weight_fp, case_id)).fetchall()
+        return [dict(r) for r in rows]
+
+    def _load_method(self, method: dict | None) -> tuple[dict, str]:
+        """测法：调用方给定 → 用之；否则读仓库 evalset/method.yaml（P1 导入即读，doc/15
+        §3.9）；再缺省给最小测法。返回 (method_json 字符串, method_sha)。"""
+        if method is None:
+            import pathlib
+            try:
+                import yaml
+                f = pathlib.Path(__file__).resolve().parents[1] / "evalset" / "method.yaml"
+                method = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception:
+                method = {}
+            if not method.get("modes"):
+                method = {"modes": {"default": "natural"}, "run_rewrites": [], "anchors": []}
+        method = {"modes": method.get("modes") or {"default": "natural"},
+                  "run_rewrites": list(method.get("run_rewrites") or []),
+                  "anchors": list(method.get("anchors") or [])}
+        js = json.dumps(method, ensure_ascii=False, sort_keys=True)
+        return js, canonical_sha(method)
+
+    def _register_snapshot(self, version: str, qkeys: list[str], method: dict | None = None,
+                           include: str = "admitted",
+                           weights_by_case: dict[str, dict] | None = None) -> str:
+        """登记/刷新快照（snapshot_sha 单一算法，S2：迁移与导入同式，doc/15 §1）。
+        weights_by_case：导入原始行的权重（specs 表已剥除，不能从表里取）。"""
+        method_js, method_sha = self._load_method(method)
+        rows_v, wmap = [], dict(weights_by_case or {})
+        for qkey in qkeys:
+            q = self.question(qkey) or {}
+            sv = self.conn.execute(
+                "SELECT standard_fp, spec_json FROM specs WHERE qkey=? AND evalset_version=?",
+                (qkey, version)).fetchone()
+            if sv is None:
+                continue
+            rows_v.append([q.get("uid") or "?", q.get("input_fp") or "", sv["standard_fp"]])
+            if not wmap and (q.get("variant_index") or 0) == 0:
+                w = spec_weights_any(json.loads(sv["spec_json"] or "{}"))
+                if w:
+                    wmap[q.get("case_id") or "?"] = w
+        snap_sha = canonical_sha({"rows": sorted(rows_v), "weights": wmap, "method_sha": method_sha})
+        with self.lock, self.conn:
+            self.conn.execute(
+                "INSERT INTO snapshots VALUES(?,?,?,?,?,?,?)"
+                " ON CONFLICT(evalset_version) DO UPDATE SET snapshot_sha=excluded.snapshot_sha,"
+                " method_json=excluded.method_json, method_sha=excluded.method_sha,"
+                " include=excluded.include",
+                (version, snap_sha, method_js, method_sha, include, None, now()))
+        return snap_sha
+
+    def import_evalset(self, rows: list[dict], version: str, keep_weights: bool = False,
+                       method: dict | None = None) -> dict:
+        """specs import：登记全部标准并把该版本设为当前快照；未出现的题保留旧标准、
+        标记非活跃。权重按冲突规则处理（B3）；报告覆盖手工修改/无归属/不完整的用例。"""
         qkeys: dict[str, str] = {}
+        seeds: dict[str, dict] = {}
         with self.lock, self.conn:
             for case in rows:
                 qkey = qkey_of(case)
-                fp = judge_fp_of(case)
+                fp = standard_fp_of(case)
                 self.upsert_question(case)
                 self.register_spec(qkey, fp, case, version)
                 qkeys[qkey] = fp
+                cid = case.get("case_id") or case.get("id") or "?"
+                if (case.get("variant_index") or 0) == 0 or cid not in seeds:
+                    seeds[cid] = case
             self.conn.execute("UPDATE questions SET active=0")
             for qkey, fp in qkeys.items():
-                self.conn.execute("UPDATE questions SET active=1, current_judge_fp=? WHERE qkey=?", (fp, qkey))
-        return {"questions": len(qkeys), "version": version}
+                self.conn.execute("UPDATE questions SET active=1, current_standard_fp=?, off_snapshot=0"
+                                  " WHERE qkey=?", (fp, qkey))
+            weight_report = [self._register_case_weights(cid, seed, version, keep_weights)
+                             for cid, seed in seeds.items()]
+            seed_weights = {cid: spec_weights_any(seed) for cid, seed in seeds.items()}
+            seed_weights = {cid: w for cid, w in seed_weights.items() if w}
+            for q in self.questions():
+                if q["qkey"] in qkeys:
+                    self._refresh_weight_fp(q["case_id"])
+            self._register_snapshot(version, list(qkeys), method, weights_by_case=seed_weights)
+            self.conn.execute("INSERT OR REPLACE INTO meta VALUES('current_snapshot', ?)", (version,))
+        incomplete = []
+        for cid in seeds:
+            _, _, inc = self.effective_weights(cid)
+            if inc:
+                incomplete.append(cid)
+        return {"questions": len(qkeys), "version": version, "weights": weight_report,
+                "weights_incomplete": incomplete}
 
-    def set_current(self, version: str) -> int:
-        """specs set-current：把某评测集版本的期望设为当前期望。版本不存在时抛
-        StoreError 且不做任何改动（整改清单 R1）。"""
+    def set_current(self, version: str, qkey: str | None = None) -> int:
+        """specs set-current（语义收窄，doc/15 §3.8）：给 --question 时做逐题偏离实验
+        （该题当前标准改为该版本的标准，off_snapshot=1）；不给 qkey 时等价 snapshot use。"""
         with self.lock, self.conn:
             rows = self.conn.execute(
-                "SELECT qkey, judge_fp FROM spec_versions WHERE evalset_version=?", (version,)).fetchall()
+                "SELECT qkey, standard_fp FROM spec_versions WHERE evalset_version=?", (version,)).fetchall()
             if not rows:
                 raise StoreError(f"未知评测集版本：{version}")
-            self.conn.execute("UPDATE questions SET active=0")
+            if qkey is None:
+                return self.snapshot_use(version)
+            fp = next((r["standard_fp"] for r in rows if r["qkey"] == qkey), None)
+            if fp is None:
+                raise StoreError(f"版本 {version} 不含题目：{qkey}")
+            self.conn.execute("UPDATE questions SET current_standard_fp=?, off_snapshot=1, active=1"
+                              " WHERE qkey=?", (fp, qkey))
+            self._refresh_weight_fp(self.question(qkey)["case_id"])
+            return 1
+
+    def snapshot_use(self, version: str) -> int:
+        """把某快照设为当前（doc/15 §1.1）：逐题当前标准对齐该版本、清偏离标记；
+        不在版本里的题保留旧标准、置非活跃。"""
+        with self.lock, self.conn:
+            rows = self.conn.execute(
+                "SELECT qkey, standard_fp FROM spec_versions WHERE evalset_version=?", (version,)).fetchall()
+            if not rows:
+                raise StoreError(f"未知快照：{version}")
+            snap = self.conn.execute("SELECT 1 FROM snapshots WHERE evalset_version=?",
+                                     (version,)).fetchone()
+            if snap is None:                     # 旧库导入过但没生成快照行（迁移前的版本）
+                self._register_snapshot(version, [r["qkey"] for r in rows])
+            self.conn.execute("UPDATE questions SET active=0, off_snapshot=0")
             for r in rows:
-                self.conn.execute("UPDATE questions SET active=1, current_judge_fp=? WHERE qkey=?",
-                                  (r["judge_fp"], r["qkey"]))
+                self.conn.execute("UPDATE questions SET active=1, current_standard_fp=? WHERE qkey=?",
+                                  (r["standard_fp"], r["qkey"]))
+            for cid in {self.question(r["qkey"])["case_id"] for r in rows}:
+                if cid:
+                    self._refresh_weight_fp(cid)
+            self.conn.execute("INSERT OR REPLACE INTO meta VALUES('current_snapshot', ?)", (version,))
             return len(rows)
+
+    def current_snapshot(self) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key='current_snapshot'").fetchone()
+        return row["value"] if row else None
+
+    def snapshots(self) -> list[dict]:
+        out = []
+        for r in self.conn.execute("SELECT * FROM snapshots ORDER BY imported_at, evalset_version"):
+            d = dict(r)
+            d["method"] = json.loads(d.pop("method_json") or "{}")
+            d["questions"] = self.conn.execute(
+                "SELECT COUNT(*) AS n FROM spec_versions WHERE evalset_version=?",
+                (d["evalset_version"],)).fetchone()["n"]
+            out.append(d)
+        return out
+
+    def snapshot(self, version: str) -> dict | None:
+        r = self.conn.execute("SELECT * FROM snapshots WHERE evalset_version=?", (version,)).fetchone()
+        if r is None:
+            return None
+        d = dict(r)
+        d["method"] = json.loads(d.pop("method_json") or "{}")
+        return d
+
+    def rename_snapshot(self, version: str, name: str) -> None:
+        n = str(name or "").strip()[:60]
+        with self.lock, self.conn:
+            cur = self.conn.execute("UPDATE snapshots SET name=? WHERE evalset_version=?",
+                                    (n or None, version))
+            if cur.rowcount == 0:
+                raise StoreError(f"快照不存在：{version}")
+
+    def rules_rows(self) -> list[dict]:
+        out = []
+        for r in self.conn.execute("SELECT * FROM rules ORDER BY created_at, rules_sha"):
+            d = dict(r)
+            d["rules"] = json.loads(d.pop("rules_json") or "{}")
+            out.append(d)
+        return out
+
+    def register_rules(self, rules_sha: str, rules_json: dict, name: str | None = None) -> None:
+        with self.lock, self.conn:
+            self.conn.execute("INSERT OR IGNORE INTO rules VALUES(?,?,?,?)",
+                              (rules_sha, json.dumps(rules_json, ensure_ascii=False, sort_keys=True),
+                               name, now()))
+
+    def rename_rules(self, rules_sha: str, name: str) -> None:
+        n = str(name or "").strip()[:60]
+        with self.lock, self.conn:
+            cur = self.conn.execute("UPDATE rules SET name=? WHERE rules_sha=?", (n or None, rules_sha))
+            if cur.rowcount == 0:
+                raise StoreError(f"计分规则不存在：{rules_sha}")
+
+    def meta_get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
 
     def question(self, qkey: str) -> dict | None:
         row = self.conn.execute("SELECT * FROM questions WHERE qkey=?", (qkey,)).fetchone()
@@ -500,18 +1090,18 @@ class Store:
         return [dict(r) for r in self.conn.execute(sql + " ORDER BY uid", args)]
 
     def current_spec(self, qkey: str) -> tuple[str, dict] | None:
-        """(judge_fp, 编译行) of 当前期望。"""
+        """(standard_fp, 编译行) of 当前标准。"""
         q = self.question(qkey)
-        if not q or not q["current_judge_fp"]:
+        if not q or not q["current_standard_fp"]:
             return None
-        spec = self.spec_of(qkey, q["current_judge_fp"])
+        spec = self.spec_of(qkey, q["current_standard_fp"])
         if spec is None:
             return None
-        return q["current_judge_fp"], spec
+        return q["current_standard_fp"], spec
 
-    def spec_of(self, qkey: str, judge_fp: str) -> dict | None:
-        row = self.conn.execute("SELECT spec_json FROM specs WHERE qkey=? AND judge_fp=?",
-                                (qkey, judge_fp)).fetchone()
+    def spec_of(self, qkey: str, standard_fp: str) -> dict | None:
+        row = self.conn.execute("SELECT spec_json FROM specs WHERE qkey=? AND standard_fp=?",
+                                (qkey, standard_fp)).fetchone()
         return json.loads(row["spec_json"]) if row else None
 
     # ---------------------------------------------------------------- run 与答案（C8）
@@ -526,31 +1116,55 @@ class Store:
         # 已有值——页面上手工改的名不会被无标题的重导冲掉。
         started_at = (manifest or {}).get("started_at")
         title = str((manifest or {}).get("title") or "").strip() or None
+        # 被测指纹（doc/15 §3.1）：runner P1 起在 run.json 带 subject 段（TS 算）；
+        # 缺 subject 段的旧格式在 Python 侧现算，保证两端一致（fixture 对拍）。
+        subject = (manifest or {}).get("subject")
+        if subject:
+            sfp = subject.get("subject_fp")
+            sjs = json.dumps(subject.get("fields") or {}, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":"))
+            incomplete = 1 if subject.get("incomplete") else 0
+        else:
+            sfp, sjs, incomplete = subject_fp_of_manifest(manifest or {})
+        method_sha = ((manifest or {}).get("method") or {}).get("method_sha")
         with self.lock, self.conn:
             if started_at is None:
                 row = self.conn.execute("SELECT started_at FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 started_at = row["started_at"] if row else now()
             self.conn.execute(
-                "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at, started_at, title)"
-                " VALUES(?,?,?,?,?,?,?,?)"
+                "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at,"
+                " started_at, title, subject_fp, subject_json, subject_incomplete, method_sha, diagnostic)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
                 " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
                 " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at,"
-                " title=COALESCE(excluded.title, title)",
-                (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(), started_at, title))
+                " title=COALESCE(excluded.title, title), subject_fp=excluded.subject_fp,"
+                " subject_json=excluded.subject_json, subject_incomplete=excluded.subject_incomplete,"
+                " method_sha=excluded.method_sha",
+                (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(),
+                 started_at, title, sfp, sjs, incomplete, method_sha,
+                 1 if (manifest or {}).get("diagnostic") else 0))
 
     def ingest_answer(self, record: dict, run_id: str, manifest: dict | None) -> str:
         """入库一条答案：完整 EpisodeRecord 随行保存（run 目录移走后仍可重判），
-        并登记执行时所用的期望。answer_id = run_id/episode_id。
-        题目尚无当前期望时以执行时期望设为当前期望并置活跃（R5：空库首次 score 即可判定）。
-        注入 found>1 与变体泄露嫌疑在入库时预计算存列（R7：质量页免逐答案解析）。"""
+        并登记执行时所用的标准（含权重初始行，R5 空库路径）。answer_id = run_id/episode_id。
+        题目尚无当前标准时以执行时标准设为当前并置活跃（R5）。
+        注入 found>1 与变体泄露嫌疑在入库时预计算存列（R7）；
+        被测指纹与拆字段列从 run 的 subject 回填（对比页免 join，doc/15 §2.3）。"""
         case = record.get("case") or {}
         qkey = qkey_of(case)
-        fp = judge_fp_of(case)
+        fp = standard_fp_of(case)
         self.upsert_question(case, current_if_absent=fp)
         self.register_spec(qkey, fp, case, evalset_version_of(manifest))
+        if (case.get("variant_index") or 0) == 0:
+            self._register_case_weights(case.get("case_id") or case.get("id") or "?", case,
+                                         evalset_version_of(manifest))
+            self._refresh_weight_fp(case.get("case_id") or case.get("id") or "?")
         snap = (manifest or {}).get("snapshot") or {}
         models = snap.get("models_observed")
+        run = self.run(run_id) or {}
+        subject = json.loads(run.get("subject_json") or "{}") if run.get("subject_json") else {}
+        agent = subject.get("agent") or {}
         episode_id = record.get("episode_id") or f"{record.get('uid', '?')}-{record.get('mode', '?')}-t{record.get('trial', 0)}"
         answer_id = answer_id_of(run_id, episode_id)
         found_gt1 = any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or [])
@@ -559,8 +1173,9 @@ class Store:
         self._exec(
             "INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id, judge_fp_at_run,"
             " profile_id, models_json, mode, trial, skills_mode, skills_base, evalset_version,"
-            " run_status, record_json, injection_found_gt1, variant_leak_json, injection_observed_json)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " run_status, record_json, injection_found_gt1, variant_leak_json, injection_observed_json,"
+            " subject_fp, model, reasoning_effort, agent)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
              profile_id_of(manifest),
              json.dumps(models, ensure_ascii=False) if models is not None else None,
@@ -568,7 +1183,11 @@ class Store:
              snap.get("skills_mode"), snap.get("skills_base"), evalset_version_of(manifest),
              record.get("status", "?"), json.dumps(record, ensure_ascii=False),
              1 if found_gt1 else 0, leak_json,
-             json.dumps(observed, ensure_ascii=False) if observed is not None else None))
+             json.dumps(observed, ensure_ascii=False) if observed is not None else None,
+             run.get("subject_fp"),
+             subject.get("model") or (models or [None])[0],
+             subject.get("reasoning_effort"),
+             f"{agent.get('name')}" + (f"@{agent['version']}" if agent.get("version") else "")))
         return answer_id
 
     def answer(self, answer_id: str) -> dict | None:
@@ -639,46 +1258,46 @@ class Store:
 
     # ---------------------------------------------------------------- 判定入库（C8/C10）
 
-    def write_verdicts(self, answer_id: str, judge_fp: str, chain_sha: str, rows: list[dict],
+    def write_verdicts(self, answer_id: str, standard_fp: str, chain_sha: str, rows: list[dict],
                        judged_at: str | None = None) -> int:
-        """按 (答案, 期望, 链配置) 写入一批机器判定行（整会话覆盖写，可重复执行）。"""
+        """按 (答案, 标准, 链配置) 写入一批机器判定行（整会话覆盖写，可重复执行）。"""
         ts = judged_at or now()
         with self.lock, self.conn:
-            self.conn.execute("DELETE FROM verdicts WHERE answer_id=? AND judge_fp=? AND chain_sha=?",
-                              (answer_id, judge_fp, chain_sha))
+            self.conn.execute("DELETE FROM verdicts WHERE answer_id=? AND standard_fp=? AND chain_sha=?",
+                              (answer_id, standard_fp, chain_sha))
             for r in rows:
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO verdicts(answer_id, judge_fp, chain_sha, item_id, kind, turn,"
+                    "INSERT OR REPLACE INTO verdicts(answer_id, standard_fp, chain_sha, item_id, kind, turn,"
                     " item_sha, answer_sha, value, source, operator, reason, trace_json, status, judged_at, score)"
                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (answer_id, judge_fp, chain_sha, r["item"]["id"], r["item"]["kind"], r["item"]["turn"],
+                    (answer_id, standard_fp, chain_sha, r["item"]["id"], r["item"]["kind"], r["item"]["turn"],
                      r.get("item_sha"), r["answer_sha"], r["machine"].get("value"), r["machine"].get("source", ""),
                      r["machine"].get("operator", ""), r["machine"].get("reason", ""),
                      json.dumps(r.get("trace") or [], ensure_ascii=False), r["status"], ts,
                      r["machine"].get("score")))
         return len(rows)
 
-    def verdicts(self, answer_id: str, judge_fp: str, chain_sha: str) -> list[dict]:
+    def verdicts(self, answer_id: str, standard_fp: str, chain_sha: str) -> list[dict]:
         return [dict(r) for r in self.conn.execute(
-            "SELECT * FROM verdicts WHERE answer_id=? AND judge_fp=? AND chain_sha=? ORDER BY item_id",
-            (answer_id, judge_fp, chain_sha))]
+            "SELECT * FROM verdicts WHERE answer_id=? AND standard_fp=? AND chain_sha=? ORDER BY item_id",
+            (answer_id, standard_fp, chain_sha))]
 
-    def has_verdicts(self, answer_id: str, judge_fp: str, chain_sha: str) -> bool:
+    def has_verdicts(self, answer_id: str, standard_fp: str, chain_sha: str) -> bool:
         row = self.conn.execute(
-            "SELECT 1 FROM verdicts WHERE answer_id=? AND judge_fp=? AND chain_sha=? LIMIT 1",
-            (answer_id, judge_fp, chain_sha)).fetchone()
+            "SELECT 1 FROM verdicts WHERE answer_id=? AND standard_fp=? AND chain_sha=? LIMIT 1",
+            (answer_id, standard_fp, chain_sha)).fetchone()
         return row is not None
 
     def pending_rejudge(self, chain_sha: str, qkey: str | None = None, run_id: str | None = None) -> list[dict]:
         """缺"当前期望 + 当前链配置"判定的答案。无条目的会话（运行错误）不需要判定，
         直接写结论，不算待重判。一条 SQL 找出缺判定的答案，只对它们解析 record。"""
-        sql = """SELECT a.answer_id, a.qkey, a.run_id, a.episode_id, q.current_judge_fp AS fp,
+        sql = """SELECT a.answer_id, a.qkey, a.run_id, a.episode_id, q.current_standard_fp AS fp,
                  a.record_json, s.spec_json
                  FROM answers a JOIN questions q ON a.qkey = q.qkey
-                 JOIN specs s ON s.qkey = a.qkey AND s.judge_fp = q.current_judge_fp
-                 WHERE q.current_judge_fp IS NOT NULL
+                 JOIN specs s ON s.qkey = a.qkey AND s.standard_fp = q.current_standard_fp
+                 WHERE q.current_standard_fp IS NOT NULL
                    AND NOT EXISTS (SELECT 1 FROM verdicts v WHERE v.answer_id = a.answer_id
-                        AND v.judge_fp = q.current_judge_fp AND v.chain_sha = ?)"""
+                        AND v.standard_fp = q.current_standard_fp AND v.chain_sha = ?)"""
         args: list = [chain_sha]
         if qkey:
             sql += " AND a.qkey = ?"
@@ -690,7 +1309,7 @@ class Store:
         for r in self.conn.execute(sql, tuple(args)):
             record = json.loads(r["record_json"])
             if episode_error(record, build_context(record, json.loads(r["spec_json"]))) is None:
-                out.append({"answer_id": r["answer_id"], "qkey": r["qkey"], "judge_fp": r["fp"],
+                out.append({"answer_id": r["answer_id"], "qkey": r["qkey"], "standard_fp": r["fp"],
                             "run_id": r["run_id"], "episode_id": r["episode_id"]})
         return out
 
@@ -742,22 +1361,22 @@ class Store:
             "SELECT * FROM reviews WHERE answer_id=? ORDER BY review_id", (answer_id,))]
 
     def submit_review(self, answer_id: str, item_id: str, value: str, reason: str, reviewer: str,
-                      judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str,
+                      standard_fp: str, chain_sha: str, rules: Rules, rules_sha: str,
                       score: float | None = None) -> tuple[str, str]:
         """单条改判（兼容入口）：等价于只含一条的 submit_reviews。"""
         c = self.submit_reviews(answer_id, [{"item_id": item_id, "value": value, "score": score,
-                                             "reason": reason}], None, reviewer, judge_fp, chain_sha,
-                                policy, policy_sha)
+                                             "reason": reason}], None, reviewer, standard_fp,
+                                chain_sha, rules, rules_sha)
         return c["status"], c.get("reason") or ""
 
     def _validate_entries(self, answer_id: str, entries: list[dict], total: dict | None,
-                          judge_fp: str, chain_sha: str) -> list[tuple]:
+                          standard_fp: str, chain_sha: str) -> list[tuple]:
         """校验一批人工打分（不写库）；返回待写入行 (item_id, value, score, reason, item_sha, answer_sha)。
         任一条不合法抛 StoreError（带 item_id），整批不写。"""
         a = self.answer(answer_id)
         if a is None:
             raise StoreError("答案不存在")
-        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, judge_fp, chain_sha)}
+        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, standard_fp, chain_sha)}
         out: list[tuple] = []
         for e in entries:
             item_id = e.get("item_id")
@@ -779,16 +1398,16 @@ class Store:
                 raise StoreError(f"人工会话分应为 0–100：{score!r}")
             if not (total.get("reason") or "").strip():
                 raise StoreError("人工会话分必须写理由")
-            out.append((TOTAL_ITEM, None, float(score), total["reason"].strip(), judge_fp,
-                        self._conversation_sha(a, judge_fp)))
+            out.append((TOTAL_ITEM, None, float(score), total["reason"].strip(), standard_fp,
+                        self._conversation_sha(a, standard_fp)))
         return out
 
     def submit_reviews(self, answer_id: str, entries: list[dict], total: dict | None, reviewer: str,
-                       judge_fp: str, chain_sha: str, policy: Policy, policy_sha: str) -> dict:
+                       standard_fp: str, chain_sha: str, rules: Rules, rules_sha: str) -> dict:
         """一段对话的批量人工打分（复核服务改造方案 §6.4）：全部校验 → 同一事务追加 →
         重算一次该答案的结论。任一条不合法则整体不写入；重算失败时追加的记录一并
         回滚，不留人工记录 + 旧结论的中间态。返回结论行。"""
-        rows = self._validate_entries(answer_id, entries, total, judge_fp, chain_sha)
+        rows = self._validate_entries(answer_id, entries, total, standard_fp, chain_sha)
         ts = now()
         with self.lock, self.conn:
             for item_id, value, score, reason, item_sha, ans_sha in rows:
@@ -796,18 +1415,19 @@ class Store:
                     "INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason, reviewer, at, score)"
                     " VALUES(?,?,?,?,?,?,?,?,?)",
                     (answer_id, item_id, item_sha, ans_sha, value, reason, reviewer, ts, score))
-            v = self._conclude(answer_id, judge_fp, chain_sha, policy)
-            self._write_conclusion(self.conn, answer_id, judge_fp, chain_sha, policy_sha, v)
-        return self.conclusion(answer_id, judge_fp, chain_sha, policy_sha) or {}
+            v, wfp = self._conclude(answer_id, standard_fp, chain_sha, rules)
+            self._write_conclusion(self.conn, answer_id, standard_fp, chain_sha, rules_sha, wfp, v)
+        return self.conclusion(answer_id, standard_fp, chain_sha, rules_sha, wfp) or {}
 
     def preview_conclusion(self, answer_id: str, entries: list[dict], total: dict | None,
-                           judge_fp: str, chain_sha: str, policy: Policy) -> EpisodeVerdict:
+                           standard_fp: str, chain_sha: str, rules: Rules) -> EpisodeVerdict:
         """按草稿重算结论（不落库）：草稿视作排在全部已有改判之后的人工记录。"""
-        rows = self._validate_entries(answer_id, entries, total, judge_fp, chain_sha)
+        rows = self._validate_entries(answer_id, entries, total, standard_fp, chain_sha)
         drafts = [{"item_id": item_id, "value": value, "score": score, "reason": reason,
                    "item_sha": item_sha, "answer_sha": ans_sha, "review_id": float("inf")}
                   for item_id, value, score, reason, item_sha, ans_sha in rows]
-        return self._conclude(answer_id, judge_fp, chain_sha, policy, extra_reviews=drafts)
+        v, _ = self._conclude(answer_id, standard_fp, chain_sha, rules, extra_reviews=drafts)
+        return v
 
     # ---------------------------------------------------------------- 有效结论与物化（C9/C10）
 
@@ -828,27 +1448,28 @@ class Store:
         return Verdict(vrow["value"], vrow["source"] or "", vrow["operator"] or "", reason=vrow["reason"] or "",
                        score=vrow.get("score"))
 
-    def _conversation_sha(self, a: dict, judge_fp: str) -> str:
-        spec = self.spec_of(a["qkey"], judge_fp)
+    def _conversation_sha(self, a: dict, standard_fp: str) -> str:
+        spec = self.spec_of(a["qkey"], standard_fp)
         return conversation_sha(build_context(json.loads(a["record_json"]), spec))
 
     @staticmethod
-    def total_override(reviews: list[dict], judge_fp: str, conv_sha: str) -> dict | None:
-        """有效人工会话分：最后一条 item_id=@total、item_sha=judge_fp、answer_sha=整段回答指纹、
-        分数合法且有理由的记录（期望或回答变了即作废）。"""
+    def total_override(reviews: list[dict], standard_fp: str, conv_sha: str) -> dict | None:
+        """有效人工会话分：最后一条 item_id=@total、item_sha=standard_fp、answer_sha=整段回答
+        指纹、分数合法且有理由的记录（标准或回答变了即作废；权重不再使其作废，C4）。"""
         valid = [r for r in reviews
-                 if r["item_id"] == TOTAL_ITEM and r["item_sha"] == judge_fp and r["answer_sha"] == conv_sha
+                 if r["item_id"] == TOTAL_ITEM and r["item_sha"] == standard_fp
+                 and r["answer_sha"] == conv_sha
                  and r.get("score") is not None and _valid_score(r["score"]) and (r["reason"] or "").strip()]
         if not valid:
             return None
         r = valid[-1]
         return {"score": float(r["score"]), "reason": r["reason"], "reviewer": r.get("reviewer"), "at": r.get("at")}
 
-    def effective_rows(self, answer_id: str, judge_fp: str, chain_sha: str) -> list[dict]:
+    def effective_rows(self, answer_id: str, standard_fp: str, chain_sha: str) -> list[dict]:
         """(verdict 行, 有效结论) 对：所有展示与统计的唯一取数口。"""
         reviews = self.reviews_for(answer_id)
         out = []
-        for vrow in self.verdicts(answer_id, judge_fp, chain_sha):
+        for vrow in self.verdicts(answer_id, standard_fp, chain_sha):
             out.append({"row": vrow, "eff": self.effective(vrow, reviews)})
         return out
 
@@ -870,7 +1491,7 @@ class Store:
             if r["item_id"] == TOTAL_ITEM:
                 conv_sha = conv_sha or self._conversation_sha(a, fp)
                 if r["item_sha"] != fp:
-                    out.append({"review": r, "reason": "期望已修订（人工会话分作废）"})
+                    out.append({"review": r, "reason": "标准已修订（人工会话分作废）"})
                 elif r["answer_sha"] != conv_sha:
                     out.append({"review": r, "reason": "回答已变化（人工会话分作废）"})
                 continue
@@ -890,10 +1511,10 @@ class Store:
             out.append({"review": r, "reason": why})
         return out
 
-    def _chain_shas_of(self, answer_id: str, judge_fp: str) -> list[str]:
+    def _chain_shas_of(self, answer_id: str, standard_fp: str) -> list[str]:
         return [r["chain_sha"] for r in self.conn.execute(
-            "SELECT DISTINCT chain_sha FROM verdicts WHERE answer_id=? AND judge_fp=?",
-            (answer_id, judge_fp))]
+            "SELECT DISTINCT chain_sha FROM verdicts WHERE answer_id=? AND standard_fp=?",
+            (answer_id, standard_fp))]
 
     # ---------------------------------------------------------------- 复核队列取数（R2）
 
@@ -905,12 +1526,13 @@ class Store:
         期望事实按权重计分（doc/10 §4.2），未决时同样进队列。"""
         sql = """SELECT v.answer_id, v.item_id, v.kind, v.turn, v.value AS machine_value,
                  v.source AS machine_source, v.reason AS machine_reason, v.status,
-                 q.uid, a.run_id, a.episode_id, a.mode, a.trial, a.qkey, q.current_judge_fp,
+                 q.uid, q.case_id, a.run_id, a.episode_id, a.mode, a.trial, a.qkey,
+                 q.current_standard_fp,
                  (SELECT r.value FROM reviews r WHERE r.answer_id = v.answer_id AND r.item_id = v.item_id
                     AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
                     ORDER BY r.review_id DESC LIMIT 1) AS review_value
                  FROM verdicts v JOIN answers a USING(answer_id) JOIN questions q ON a.qkey = q.qkey
-                 WHERE q.current_judge_fp = v.judge_fp AND v.chain_sha = ?
+                 WHERE q.current_standard_fp = v.standard_fp AND v.chain_sha = ?
                    AND (v.status != 'ok' OR v.value IS NULL)"""
         args: list = [chain_sha]
         if run_id:
@@ -931,22 +1553,26 @@ class Store:
             qmarks_a = ",".join("?" * len(aids))
             vr_by_answer: dict[str, list[dict]] = {}
             for v in self.conn.execute(
-                    f"SELECT answer_id, judge_fp, item_id, kind, value FROM verdicts"
+                    f"SELECT answer_id, standard_fp, item_id, kind, value FROM verdicts"
                     f" WHERE answer_id IN ({qmarks_a}) AND chain_sha = ?", (*aids, chain_sha)):
                 vr_by_answer.setdefault(v["answer_id"], []).append(dict(v))
             qkeys = {c["qkey"] for c in cands}
             qmarks_q = ",".join("?" * len(qkeys))
-            specs = {(r["qkey"], r["judge_fp"]): json.loads(r["spec_json"])
+            specs = {(r["qkey"], r["standard_fp"]): json.loads(r["spec_json"])
                      for r in self.conn.execute(
-                         f"SELECT qkey, judge_fp, spec_json FROM specs WHERE qkey IN ({qmarks_q})", tuple(qkeys))}
+                         f"SELECT qkey, standard_fp, spec_json FROM specs WHERE qkey IN ({qmarks_q})",
+                         tuple(qkeys))}
+            zero_weight: set[str] = set()
+            for cid in {c.get("case_id") for c in cands if c.get("case_id")}:
+                w, _, _ = self.effective_weights(cid)
+                zero_weight |= {i for i, x in w.items() if x <= 0}
             for a_id, items_ in by_answer.items():
                 first = items_[0]
                 forced = first["mode"] == "forced"
-                fp = first["current_judge_fp"]
+                fp = first["current_standard_fp"]
                 spec = specs.get((first["qkey"], fp)) or {}
                 answerable = spec.get("answerable", True) is not False
-                zero_weight = {f.get("id") for f in spec.get("facts") or [] if f.get("weight") == 0}
-                rows_ = [v for v in vr_by_answer.get(a_id, []) if v["judge_fp"] == fp]
+                rows_ = [v for v in vr_by_answer.get(a_id, []) if v["standard_fp"] == fp]
                 precond_fail = any(v["kind"] == "precond" and v["value"] == "不成立" for v in rows_)
                 path_violate = (not forced and any(v["kind"] == "path" and v["value"] == "违反" for v in rows_))
                 facts_live = not (precond_fail or path_violate or not answerable)
@@ -975,7 +1601,7 @@ class Store:
                  v.operator, q.uid, r.value AS review_value, r.review_id
                  FROM verdicts v
                  JOIN answers a ON a.answer_id = v.answer_id
-                 JOIN questions q ON q.qkey = a.qkey AND q.current_judge_fp = v.judge_fp
+                 JOIN questions q ON q.qkey = a.qkey AND q.current_standard_fp = v.standard_fp
                  JOIN reviews r ON r.answer_id = v.answer_id AND r.item_id = v.item_id
                     AND r.answer_sha = v.answer_sha AND r.item_sha = v.item_sha
                  WHERE v.chain_sha = ?"""
@@ -1002,16 +1628,17 @@ class Store:
                                  "human": d["review_value"]})
         return mismatch, agree, total
 
-    def _conclude(self, answer_id: str, judge_fp: str, chain_sha: str, policy: Policy,
-                  extra_reviews: list[dict] | None = None) -> EpisodeVerdict:
-        """计算一个 (答案, 期望, 链配置, 口径) 的会话结论与会话分（不写库、不调用算子）。"""
+    def _conclude(self, answer_id: str, standard_fp: str, chain_sha: str, rules: Rules,
+                  extra_reviews: list[dict] | None = None) -> tuple[EpisodeVerdict, str]:
+        """计算一个 (答案, 标准, 链配置, 计分规则, 权重) 的会话结论与会话分（不写库、
+        不调用算子）。有效权重按用例解析（doc/15 §3.5），返回 (结论, weight_fp)。"""
         a = self.answer(answer_id)
         if a is None:
             raise StoreError(f"答案不存在：{answer_id}")
-        spec_row = self.conn.execute("SELECT spec_json FROM specs WHERE qkey=? AND judge_fp=?",
-                                     (a["qkey"], judge_fp)).fetchone()
+        spec_row = self.conn.execute("SELECT spec_json FROM specs WHERE qkey=? AND standard_fp=?",
+                                     (a["qkey"], standard_fp)).fetchone()
         if spec_row is None:
-            raise StoreError(f"期望不存在：qkey={a['qkey']} judge_fp={judge_fp}")
+            raise StoreError(f"标准不存在：qkey={a['qkey']} standard_fp={standard_fp}")
         record = json.loads(a["record_json"])
         spec = json.loads(spec_row["spec_json"])
         ctx = build_context(record, spec)
@@ -1021,10 +1648,10 @@ class Store:
         if err is not None:
             return EpisodeVerdict(uid=record.get("uid", "?"), mode=record.get("mode", "?"),
                                   trial=record.get("trial", 0), dim=spec.get("dim", "?"),
-                                  status="error", error=err)
+                                  status="error", error=err), "equal"
         items = extract_items(ctx)
         reviews = self.reviews_for(answer_id) + list(extra_reviews or [])
-        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, judge_fp, chain_sha)}
+        vrows = {r["item_id"]: r for r in self.verdicts(answer_id, standard_fp, chain_sha)}
         eff: dict[str, Verdict] = {}
         statuses: dict[str, str] = {}
         for item in items:
@@ -1036,39 +1663,53 @@ class Store:
                 eff[item.id] = self.effective(vrow, reviews)
                 # 人工改判覆盖后该条目已决（R10：异常按条目 status 判，单一判据）
                 statuses[item.id] = "ok" if eff[item.id].source == "human" else vrow["status"]
-        override = self.total_override(reviews, judge_fp, conversation_sha(ctx))
-        return session_conclusion(record, ctx, items, eff, policy, routing, statuses=statuses, override=override)
+        override = self.total_override(reviews, standard_fp, conversation_sha(ctx))
+        q_row = self.question(a["qkey"]) or {}
+        weights, weight_fp, _ = self.effective_weights(q_row.get("case_id") or "", standard_fp)
+        return session_conclusion(record, ctx, items, eff, rules, routing, statuses=statuses,
+                                  override=override, weights=weights or None), weight_fp
 
     @staticmethod
-    def _write_conclusion(conn, answer_id: str, judge_fp: str, chain_sha: str,
-                          policy_sha: str, v: EpisodeVerdict) -> None:
-        """物化一条结论行（不开事务，供 submit_reviews 在同一事务内复用）。"""
-        conn.execute("INSERT OR REPLACE INTO conclusions(answer_id, judge_fp, chain_sha, policy_sha, status, reason,"
-                     " detail_json, score, score_min, score_max, auto_score, score_source)"
-                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                     (answer_id, judge_fp, chain_sha, policy_sha, v.status,
+    def _write_conclusion(conn, answer_id: str, standard_fp: str, chain_sha: str,
+                          rules_sha: str, weight_fp: str, v: EpisodeVerdict) -> None:
+        """物化一条结论行（不开事务，供 submit_reviews 在同一事务内复用）。
+        键 = (答案, 标准, 链配置, 计分规则, 权重) 五段（doc/15 §2.2）。"""
+        conn.execute("INSERT OR REPLACE INTO conclusions(answer_id, standard_fp, chain_sha, rules_sha,"
+                     " weight_fp, status, reason, detail_json,"
+                     " score, score_min, score_max, auto_score, score_source)"
+                     " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (answer_id, standard_fp, chain_sha, rules_sha, weight_fp, v.status,
                       v.invalid_reason or v.error or "", json.dumps(v.as_dict(), ensure_ascii=False),
                       v.score, v.score_min, v.score_max, v.auto_score, v.score_source))
 
-    def recompute_conclusion(self, answer_id: str, judge_fp: str, chain_sha: str,
-                             policy: Policy, policy_sha: str) -> str:
-        """重算并物化一个 (答案, 期望, 链配置, 口径) 的会话结论与会话分（不调用任何算子）。"""
-        v = self._conclude(answer_id, judge_fp, chain_sha, policy)
+    def recompute_conclusion(self, answer_id: str, standard_fp: str, chain_sha: str,
+                             rules: Rules, rules_sha: str) -> str:
+        """重算并物化一个 (答案, 标准, 链配置, 规则, 权重) 的会话结论（不调用任何算子）。"""
+        v, wfp = self._conclude(answer_id, standard_fp, chain_sha, rules)
         with self.lock, self.conn:
-            self._write_conclusion(self.conn, answer_id, judge_fp, chain_sha, policy_sha, v)
+            self._write_conclusion(self.conn, answer_id, standard_fp, chain_sha, rules_sha, wfp, v)
         return v.status
 
-    def rescore(self, policy: Policy, policy_sha: str, current_chain_sha: str | None = None) -> int:
-        """只重算会话结论表（§10 rescore）：对已有判定的全部 (答案, 期望, 链) 组合
-        与当前期望下的无条目会话（运行错误）重算，不调用任何算子。
-        无条目会话的结论记在 current_chain_sha 名下（与 answer_view_rows 的取数键一致）。"""
-        keys = [(r["answer_id"], r["judge_fp"], r["chain_sha"]) for r in self.conn.execute(
-            "SELECT DISTINCT answer_id, judge_fp, chain_sha FROM verdicts")]
+    def rescore(self, rules: Rules, rules_sha: str, current_chain_sha: str | None = None,
+                case_ids: list[str] | None = None) -> int:
+        """只重算会话结论表（rescore）：对已有判定的全部 (答案, 标准, 链) 组合与当前
+        标准下的无条目会话（运行错误）重算，不调用任何算子。case_ids 给定时只重算
+        这些用例（rescore --case / 页面保存权重后，S5：所有有判定的链一起算）。"""
+        keys = [(r["answer_id"], r["standard_fp"], r["chain_sha"])
+                for r in self.conn.execute(
+                    "SELECT DISTINCT answer_id, standard_fp, chain_sha FROM verdicts")]
+        if case_ids is not None:
+            case_by_answer = {}
+            for a in self.conn.execute("SELECT answer_id, qkey FROM answers"):
+                q = self.question(a["qkey"]) or {}
+                case_by_answer[a["answer_id"]] = q.get("case_id")
+            want = set(case_ids)
+            keys = [k for k in keys if case_by_answer.get(k[0]) in want]
         n = 0
         for answer_id, fp, chain in keys:
-            self.recompute_conclusion(answer_id, fp, chain, policy, policy_sha)
+            self.recompute_conclusion(answer_id, fp, chain, rules, rules_sha)
             n += 1
-        if current_chain_sha is not None:
+        if current_chain_sha is not None and case_ids is None:
             for a in self.answers():                      # 运行错误的答案没有判定行，直接物化结论
                 cur = self.current_spec(a["qkey"])
                 if cur is None:
@@ -1080,39 +1721,104 @@ class Store:
                 spec = cur[1]
                 if episode_error(record, build_context(record, spec)) is None:
                     continue                              # 有条目但未判定：待重判，不产出结论
-                self.recompute_conclusion(a["answer_id"], fp, current_chain_sha, policy, policy_sha)
+                self.recompute_conclusion(a["answer_id"], fp, current_chain_sha, rules, rules_sha)
                 n += 1
         return n
 
-    def conclusion(self, answer_id: str, judge_fp: str, chain_sha: str, policy_sha: str) -> dict | None:
+    def rescore_cases(self, case_ids: list[str], rules: Rules, rules_sha: str) -> int:
+        """按用例重算（doc/15 §3.5 S5）：该用例的会话在所有有判定的链下、按当前计分
+        规则重算。页面保存权重与 CLI rescore --case 走这里。"""
+        return self.rescore(rules, rules_sha, case_ids=case_ids)
+
+    def standard_compare(self, version_a: str, version_b: str, chain_sha: str,
+                          rules_sha: str) -> dict:
+        """标准对比（doc/15 §4.7 P2）：两快照共有题目上，同答案在两份标准下的结论
+        diff。标准相同 → 提示无差异；某侧缺结论（未在该标准下判过）→ 待补判清单。"""
+        std_of = {}
+        for v in (version_a, version_b):
+            std_of[v] = {r["qkey"]: r["standard_fp"] for r in self.conn.execute(
+                "SELECT qkey, standard_fp FROM spec_versions WHERE evalset_version=?", (v,))}
+        shared = sorted(set(std_of[version_a]) & set(std_of[version_b]))
+        same = [q for q in shared if std_of[version_a][q] == std_of[version_b][q]]
+        rows, pending = [], []
+        for q in [x for x in shared if x not in same]:
+            for a in self.answers(qkey=q):
+                ca = self.conclusion(a["answer_id"], std_of[version_a][q], chain_sha, rules_sha)
+                cb = self.conclusion(a["answer_id"], std_of[version_b][q], chain_sha, rules_sha)
+                if ca is None or cb is None:
+                    pending.append({"uid": self.question(q)["uid"], "answer_id": a["answer_id"],
+                                    "missing": "A" if ca is None else "B"})
+                    continue
+                rows.append({"answer_id": a["answer_id"], "uid": self.question(q)["uid"],
+                             "run_label": self.run_labels().get(a["run_id"], a["run_id"]),
+                             "mode": a["mode"], "trial": a["trial"],
+                             "a": {"status": ca["status"], "score": ca["score"]},
+                             "b": {"status": cb["status"], "score": cb["score"]},
+                             "delta": None if None in (ca["score"], cb["score"])
+                                      else round(cb["score"] - ca["score"], 1)})
+        return {"shared": len(shared), "same_standard": len(same),
+                "rows": rows, "pending": pending,
+                "fp_a": std_of[version_a], "fp_b": std_of[version_b]}
+
+    def conclusion(self, answer_id: str, standard_fp: str, chain_sha: str, rules_sha: str,
+                   weight_fp: str | None = None) -> dict | None:
+        if weight_fp is None:
+            a = self.answer(answer_id)
+            q = self.question(a["qkey"]) if a else None
+            weight_fp = (q or {}).get("current_weight_fp") or "equal"
         row = self.conn.execute(
-            "SELECT * FROM conclusions WHERE answer_id=? AND judge_fp=? AND chain_sha=? AND policy_sha=?",
-            (answer_id, judge_fp, chain_sha, policy_sha)).fetchone()
+            "SELECT * FROM conclusions WHERE answer_id=? AND standard_fp=? AND chain_sha=?"
+            " AND rules_sha=? AND weight_fp=?",
+            (answer_id, standard_fp, chain_sha, rules_sha, weight_fp)).fetchone()
         if not row:
             return None
         out = dict(row)
         out["detail"] = json.loads(row["detail_json"] or "{}")
         return out
 
-    def answer_view_rows(self, chain_sha: str, policy_sha: str, with_records: bool = False) -> list[dict]:
-        """answers × questions × 当前期望下的结论（统计与比较的取数口；
-        缺判定的 c_status 为 NULL → 待重判）。record_json 较大，仅在
-        with_records=True（锚点绊线）时随行带出；质量预计算列常带（R7）。"""
+    def answer_view_rows(self, chain_sha: str, rules_sha: str, with_records: bool = False,
+                         snapshot: str | None = None) -> list[dict]:
+        """answers × questions × (标准, 链, 规则, 权重) 下的结论（统计与比较的取数口；
+        缺判定的 c_status 为 NULL → 待重判）。snapshot 给定时按该快照逐题解析标准
+        （doc/15 §1.1），缺省当前标准；被测指纹与拆字段列随行（对比页免 join）。
+        record_json 较大，仅在 with_records=True（锚点绊线）时随行带出。"""
         record_col = "a.record_json, " if with_records else ""
         sql = f"""
         SELECT a.answer_id, a.qkey, a.run_id, a.episode_id, a.judge_fp_at_run, a.profile_id,
                a.models_json, a.mode, a.trial, a.skills_mode, a.skills_base, a.evalset_version,
                a.run_status, {record_col}a.injection_found_gt1, a.variant_leak_json,
+               a.subject_fp, a.model, a.reasoning_effort, a.agent,
+               CASE WHEN r0.diagnostic = 1 THEN 1 ELSE 0 END AS diagnostic,
                q.uid, q.case_id, q.variant_index, q.rewrite,
-               q.dim, q.topic, q.current_judge_fp, q.active,
+               q.dim, q.topic, q.current_standard_fp, q.current_weight_fp, q.off_snapshot, q.active,
+               c.standard_fp AS c_standard, c.weight_fp AS c_weight,
                c.status AS c_status, c.reason AS c_reason, c.detail_json,
                c.score AS c_score, c.score_min AS c_score_min, c.score_max AS c_score_max,
                c.score_source AS c_score_source
         FROM answers a JOIN questions q ON a.qkey = q.qkey
-        LEFT JOIN conclusions c ON c.answer_id = a.answer_id AND c.judge_fp = q.current_judge_fp
-             AND c.chain_sha = ? AND c.policy_sha = ?
+        LEFT JOIN runs r0 ON r0.run_id = a.run_id
+        LEFT JOIN conclusions c ON c.answer_id = a.answer_id AND c.chain_sha = ?
+             AND c.rules_sha = ?
+             AND c.standard_fp = q.current_standard_fp
+             AND c.weight_fp = COALESCE(q.current_weight_fp, 'equal')
         ORDER BY a.answer_id"""
-        rows = [dict(r) for r in self.conn.execute(sql, (chain_sha, policy_sha))]
+        rows = [dict(r) for r in self.conn.execute(sql, (chain_sha, rules_sha))]
+        if snapshot:                       # 按快照逐题解析标准（§1.1）并过滤不在快照内的题
+            std_of = {r["qkey"]: r["standard_fp"] for r in self.conn.execute(
+                "SELECT qkey, standard_fp FROM spec_versions WHERE evalset_version=?", (snapshot,))}
+            out = []
+            for r in rows:
+                fp = std_of.get(r["qkey"])
+                if fp is None:
+                    continue                # 这一题不在快照里：不活跃，不参与统计
+                c = self.conclusion(r["answer_id"], fp, chain_sha, rules_sha) or {}
+                r["current_standard_fp"] = fp
+                r["c_status"], r["c_reason"] = c.get("status"), c.get("reason") or ""
+                r["c_score"], r["c_score_min"] = c.get("score"), c.get("score_min")
+                r["c_score_max"], r["c_score_source"] = c.get("score_max"), c.get("score_source")
+                r["c_standard"], r["c_weight"] = c.get("standard_fp"), c.get("weight_fp")
+                out.append(r)
+            rows = out
         labels = self.run_labels()          # 展示名随行（命名改造）：runtag/队列/对比用
         for r in rows:
             r["run_label"] = labels.get(r["run_id"]) or r["run_id"]
@@ -1157,7 +1863,7 @@ class Store:
 
     REVIEW_TABS = ("undecided", "unjudged", "spot", "mismatch", "failed")
 
-    def review_conversations(self, chain_sha: str, policy: Policy, policy_sha: str,
+    def review_conversations(self, chain_sha: str, rules: Rules, rules_sha: str,
                              tab: str = "undecided", run_id: str | None = None, dim: str | None = None,
                              spot_ratio: float = 0.1, operator: str | None = None,
                              page: int = 0, size: int = 20,
@@ -1166,7 +1872,7 @@ class Store:
         undecided=结论待定（区间跨及格线/前提未判，含判定异常）；unjudged=结论已定仍有未判；
         spot=模型判过且无人工（按比例抽样）；mismatch=人工≠机器；failed=会话失败。
         first_input=False 供复核页取上/下一段：免解析全部 record（大库性能）。"""
-        rows = self.answer_view_rows(chain_sha, policy_sha)
+        rows = self.answer_view_rows(chain_sha, rules_sha)
         if run_id:
             rows = [r for r in rows if r["run_id"] == run_id]
         if dim:
@@ -1179,7 +1885,7 @@ class Store:
         judge_ids = {r["answer_id"] for r in self.conn.execute(
             "SELECT DISTINCT answer_id FROM verdicts WHERE chain_sha=? AND source='judge'", (chain_sha,))}
         human_ids = {r["answer_id"] for r in self.conn.execute("SELECT DISTINCT answer_id FROM reviews")}
-        pass_mark = policy.score.pass_mark
+        pass_mark = rules.score.pass_mark
         convs: list[dict] = []
         for r in rows:
             aid = r["answer_id"]
@@ -1236,25 +1942,26 @@ class Store:
             out.append(c)
         return out, {"tabs": tabs, "total": total, "page": page}
 
-    def conversation_view(self, answer_id: str, chain_sha: str, policy: Policy, policy_sha: str,
-                          judge_fp: str | None = None) -> dict:
-        """复核页一次取齐（§5.3）：record、当前期望、条目（按判定顺序分节）、机器栏、
-        人工栏、有效结论、人工会话分、作废记录、轮次观测。"""
+    def conversation_view(self, answer_id: str, chain_sha: str, rules: Rules, rules_sha: str,
+                          standard_fp: str | None = None) -> dict:
+        """复核页一次取齐（§5.3）：record、当前标准、条目（按判定顺序分节）、机器栏、
+        人工栏、有效结论、人工会话分、作废记录、轮次观测。条目权重显示用例有效权重
+        （item_weights，恒百分制；无权重用例不显示数值）。"""
         a = self.answer(answer_id)
         if a is None:
             raise StoreError(f"答案不存在：{answer_id}")
         cur = self.current_spec(a["qkey"])
-        fp = judge_fp or (cur[0] if cur else None)
+        fp = standard_fp or (cur[0] if cur else None)
         if fp is None:
             fp = a["judge_fp_at_run"]
         spec = self.spec_of(a["qkey"], fp) or {}
+        q_row = self.question(a["qkey"]) or {}
+        weights, _, _ = self.effective_weights(q_row.get("case_id") or "", fp)
         record = json.loads(a["record_json"])
         ctx = build_context(record, spec)
         items = extract_items(ctx)
         reviews = self.reviews_for(answer_id)
         vrows = {r["item_id"]: r for r in self.verdicts(answer_id, fp, chain_sha)}
-        sp = policy.score
-        wpct = bool(spec.get("weight_percent"))   # 百分制权重（revise_weights）→ 复核行按百分比显示
         sections = []
         for kind, label, hint in (("precond", "前提", "门槛：不成立 → 会话无效，不计分"),
                                   ("path", "路径", "否决项：违反 → 总分 0"),
@@ -1277,7 +1984,7 @@ class Store:
                 rows_.append({
                     "id": it.id, "kind": kind, "turn": it.turn, "text": it.text or "",
                     "keywords": it.attrs.get("keywords") or [],
-                    "weight": weight_of(it, sp.default_weight), "weight_is_pct": wpct,
+                    "weight": weights.get(it.id), "weight_is_pct": bool(weights),
                     "group": it.attrs.get("group"),
                     "answer": ctx.answer_for(it),
                     "machine": None if vrow is None else {
@@ -1300,7 +2007,7 @@ class Store:
                 "ask_user": (obs.get("ask_user") or {}).get("count", 0),
                 "tool_errors": obs.get("tool_errors") or [],
             })
-        concl = self.conclusion(answer_id, fp, chain_sha, policy_sha) or {}
+        concl = self.conclusion(answer_id, fp, chain_sha, rules_sha) or {}
         voided = self.voided_reviews(answer_id)
         conv_sha = conversation_sha(ctx)
         override = self.total_override(reviews, fp, conv_sha)
@@ -1316,7 +2023,8 @@ class Store:
             "profile": a["profile_id"], "models": json.loads(a["models_json"] or "[]"),
             "skills_mode": a["skills_mode"], "evalset_version": a["evalset_version"],
             "reasoning_effort": profile_content.get("reasoning_effort"),
-            "judge_fp": fp, "is_current": cur is not None and fp == cur[0],
+            "standard_fp": fp, "is_current": cur is not None and fp == cur[0],
+            "weights_touched_after": self.weights_touched_after(answer_id),
             "sections": sections, "turns": turns,
             "injections_applied": record.get("injections_applied") or [],
             "injection_observed": json.loads(a.get("injection_observed_json") or "null"),

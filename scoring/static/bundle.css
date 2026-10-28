@@ -768,3 +768,15 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 .rv-cn-saverow { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
 .rv-config-runs a { white-space: nowrap; }
 .rv-config-runlabel { font-weight: 600; }
+
+/* 配置三件套：帮助浮层与详情页（doc/15 §4 配置可解释） */
+.rv-judge { position: relative; }
+.rv-judge-help { position: absolute; top: 100%; right: 0; z-index: 40; margin-top: 6px;
+  width: 340px; max-width: 86vw; padding: 10px 12px; border-radius: var(--radius-2, 8px);
+  background: var(--bg-1, #fff); border: 1px solid var(--line-1, #ccc);
+  box-shadow: 0 8px 24px rgba(0,0,0,.14); font-size: 12px; line-height: 1.6; }
+.rv-judge-help p { margin: 0 0 8px; }
+.rv-judge-help p:last-child { margin-bottom: 0; }
+.rv-judge-help code { word-break: break-all; }
+.rv-table--inline { margin: 0; font-size: 12px; }
+.rv-table--inline td { padding: 2px 8px; }

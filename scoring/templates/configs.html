@@ -9,23 +9,24 @@
 
   <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
     <b>被测配置</b>
-    <span>配置 = profile × 模型 × 技能方式 × 知识基底 × 期望版本；会话分按配置分别计算。
-      用例管理页的统计为跨配置汇总，按配置的分数在这里看。</span>
+    <span>配置 = 被测指纹 subject（模型/努力/技能方式/基底/agent 版本，doc/15 §3.1）；
+      评测集版本不再拆分配置——同一被测配置跨快照的分数自动合并。</span>
     <a href="/compare?axis=profile">配置间对比 →</a>
   </div>
 
   <div class="rv-table-wrap">
   <table class="rv-table">
-    <thead><tr><th>配置（profile）</th><th>模型</th><th>技能方式</th><th>知识基底</th><th>期望版本</th>
+    <thead><tr><th>被测配置（subject）</th><th>模型/努力</th><th>技能方式</th><th>知识基底</th><th>agent</th>
       <th class="rv-num">对话</th><th>结论待定</th><th>综合分</th><th>关联执行</th></tr></thead>
     <tbody>
     {% for t in table %}
     <tr>
-      <th scope="row"><span class="rv-pill rv-pill--mono">{{ t.profile }}</span></th>
-      <td>{{ t.model }}</td>
+      <th scope="row"><span class="rv-pill rv-pill--mono" title="{{ t.subject_fp }}">{{ t.label }}</span>
+        {% if t.incomplete %} <span class="rv-flag">身份不完整</span>{% endif %}</th>
+      <td>{{ t.model }}{% if t.effort %} <span class="rv-meta">· {{ t.effort }}</span>{% endif %}</td>
       <td>{{ t.skills_mode or '—' }}</td>
-      <td>{{ t.skills_base or '—' }}</td>
-      <td>{{ t.evalset_version }}</td>
+      <td title="{{ t.skills_base }}">{{ (t.skills_base or '—')[:12] }}</td>
+      <td>{{ t.agent or '—' }}</td>
       <td class="rv-num">{{ t.n }}</td>
       <td>{% if t.undecided %}<span class="rv-state" data-s="need">{{ t.undecided }} 段</span>{% else %}<span class="rv-meta">—</span>{% endif %}</td>
       <td>{% if t.score is not none %}<b>{{ t.score|f1 }}</b>{% if t.provisional %} <span class="rv-meta">（临时）</span>{% endif %}

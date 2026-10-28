@@ -248,6 +248,12 @@ export interface RunManifest {
   skipped: SkippedRow[]
   /** 环境快照（01 第 5 节），run 开始时由工具计算 */
   snapshot?: Record<string, unknown>
+  /** 被测配置指纹（doc/15 §3.1）：runner 计算，scoring 落 runs.subject_*；缺省时 scoring 按 Python 侧回算 */
+  subject?: { subject_fp: string; fields: Record<string, unknown>; incomplete: boolean }
+  /** 诊断执行（doc/15 §3.10）：显式 --modes 时的 run 标记，其会话不进正式分 */
+  diagnostic?: boolean
+  /** 执行所用测法（快照 sidecar）；无测法的旧 dist 为 null */
+  method?: { method_sha: string } | null
   /** 本 run 纳入的锚点 uid（绊线用） */
   anchor_uids?: string[]
   /** dry-run/运行前的成本估算与本 run 实际用量 */

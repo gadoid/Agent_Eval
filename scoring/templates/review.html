@@ -118,6 +118,10 @@
       {% endfor %}
       {% endfor %}
       <div class="rv-total" id="total"></div>
+      {% if v.weights_touched_after and v.override %}
+      <div class="rv-notice" data-tone="notice" style="margin:8px 0;padding:8px 12px">
+        计分规则或权重已在人工总分之后修改——人工总分仍有效，请确认是否需要重新给分（doc/15 C4）。</div>
+      {% endif %}
       <div class="rv-sheet-foot"><span class="rv-kbd">J</span><span class="rv-kbd">K</span> 换条目 ·
         <span class="rv-kbd">1</span>–<span class="rv-kbd">9</span> 快捷分 · <span class="rv-kbd">N</span> 输入分数 ·
         <span class="rv-kbd">Y</span> 同意机器 · <span class="rv-kbd">E</span> 理由 · <span class="rv-kbd">T</span> 手改总分 ·

@@ -1,5 +1,5 @@
 """题目指纹与变体泄露嫌疑（items.py；R6/R11 验收）。"""
-from scoring.items import input_fp_of, judge_fp_of, qkey_of, variant_leak_suspects
+from scoring.items import input_fp_of, standard_fp_of, qkey_of, variant_leak_suspects
 from tests.helpers import mk_record
 
 
@@ -15,7 +15,7 @@ def test_fingerprint_reference_note_and_tag_changes_do_not_matter():
     c1 = case_of(reference_answer="旧参考", note="旧备注", tags=["a"], status="structured")
     c2 = case_of(reference_answer="新参考", note="新备注", tags=["b"], status="review")
     assert qkey_of(c1) == qkey_of(c2)
-    assert judge_fp_of(c1) == judge_fp_of(c2)
+    assert standard_fp_of(c1) == standard_fp_of(c2)
 
 
 def test_fingerprint_topic_changes_qkey():
@@ -24,14 +24,14 @@ def test_fingerprint_topic_changes_qkey():
     c2 = case_of(topic="收汇风险")
     assert qkey_of(c1) != qkey_of(c2)
     assert input_fp_of(c1) != input_fp_of(c2)
-    assert judge_fp_of(c1) == judge_fp_of(c2)
+    assert standard_fp_of(c1) == standard_fp_of(c2)
 
 
 def test_fingerprint_fact_text_changes_judge_fp_only():
     c1 = case_of()
     c2 = case_of(facts=[dict(c1["facts"][0], text="改写后的事实文本"),
                         dict(c1["facts"][1], text="未收尾款也可以先电放")])
-    assert judge_fp_of(c1) != judge_fp_of(c2)
+    assert standard_fp_of(c1) != standard_fp_of(c2)
     assert qkey_of(c1) == qkey_of(c2)                # 输入没变 → 同一题
 
 
@@ -40,7 +40,7 @@ def test_fingerprint_user_message_changes_qkey():
     c2 = case_of(turns=[{"role": "user", "content": "问题一改写"}])
     assert qkey_of(c1) != qkey_of(c2)
     assert input_fp_of(c1) != input_fp_of(c2)
-    assert judge_fp_of(c1) == judge_fp_of(c2)
+    assert standard_fp_of(c1) == standard_fp_of(c2)
 
 
 # ---------------------------------------------------------------- 变体泄露嫌疑（C5，R6 修订）
@@ -114,11 +114,11 @@ def test_seed_not_checked():
 
 
 def test_weight_changes_judge_fp_not_item_sha():
-    from scoring.items import Item, item_sha_of, judge_fp_of, weight_of
+    from scoring.items import Item, item_sha_of, standard_fp_of, weight_of
     from tests.helpers import fact, mk_record
     case = mk_record()["case"]
     weighted = dict(case, facts=[dict(f, weight=2) if f["id"] == "F1" else f for f in case["facts"]])
-    assert judge_fp_of(case) != judge_fp_of(weighted)
+    assert standard_fp_of(case) == standard_fp_of(weighted)   # v8：权重移出标准（doc/15 §3.2）
     f1 = next(f for f in case["facts"] if f["id"] == "F1")
     a = Item("required", "F1", f1["text"], f1["turn"], f1)
     b = Item("required", "F1", f1["text"], f1["turn"], dict(f1, weight=2))

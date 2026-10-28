@@ -1,0 +1,101 @@
+{
+  "description": "被测指纹双实现对拍 fixture（doc/15 §7.4）：Python scoring/subject.py 与 TS runner/src/snapshot.ts 必须对每个 case 得出相同 subject_fp。ts_profile_overrides 模拟 CLI --model/--reasoning-effort 在 profile 上的生效值（Python 侧从 profile id 后缀解析）。",
+  "cases": [
+    {
+      "name": "full-bundled-copy",
+      "manifest": {
+        "profile": {
+          "id": "eline-glm53-bundledcopy",
+          "content": {
+            "id": "eline-glm53-bundledcopy",
+            "model": "glm-5.3",
+            "model_provider": "deepseek-account",
+            "reasoning_effort": "high",
+            "skills_mode": "bundled-copy",
+            "skill_tool": "skill",
+            "routing": {
+              "进单资料审核": [
+                "trade-documents"
+              ]
+            },
+            "dsh": {
+              "profile": "headless"
+            }
+          }
+        },
+        "snapshot": {
+          "skills_mode": "bundled-copy",
+          "skills_base": "0123456789abcdef0123",
+          "agent": {
+            "name": "dsh-cli",
+            "version": "0.2.0-rc.6"
+          },
+          "eline_profile": {
+            "method": "files",
+            "sha256": "fedcba0987654321",
+            "files": [
+              "~/.eline/agent.json"
+            ]
+          }
+        }
+      },
+      "ts_profile_overrides": {},
+      "expected_subject_fp": "acef789ca9da6160",
+      "expected_incomplete": false
+    },
+    {
+      "name": "override-suffix",
+      "manifest": {
+        "profile": {
+          "id": "eline-glm53-defaultroots@deepseek-v4-flash-high",
+          "content": {
+            "id": "eline-glm53-defaultroots",
+            "model": "glm-5.3",
+            "reasoning_effort": "low",
+            "skills_mode": "default-roots",
+            "dsh": {
+              "profile": "dsh-eval"
+            }
+          }
+        },
+        "snapshot": {
+          "skills_mode": "default-roots",
+          "skills_base": "abcdef0123456789abcd",
+          "agent": {
+            "name": "dsh-cli",
+            "version": "0.2.0-rc.6"
+          },
+          "eline_profile": {
+            "method": "files",
+            "sha256": "1111222233334444",
+            "files": []
+          }
+        }
+      },
+      "ts_profile_overrides": {
+        "model": "deepseek-v4-flash",
+        "reasoning_effort": "high"
+      },
+      "expected_subject_fp": "d148178046659e23",
+      "expected_incomplete": false
+    },
+    {
+      "name": "legacy-sparse",
+      "manifest": {
+        "profile": {
+          "id": "old-run",
+          "content": {
+            "id": "old-run"
+          }
+        },
+        "snapshot": {
+          "skills_mode": "default-roots",
+          "skills_base": "9999aaaabbbbccccdddd"
+        }
+      },
+      "ts_profile_overrides": {},
+      "expected_subject_fp": "ae687d385a76bafe",
+      "expected_incomplete": false
+    }
+  ]
+}

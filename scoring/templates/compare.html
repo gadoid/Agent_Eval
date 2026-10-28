@@ -3,6 +3,49 @@
 {% block title %}结果对比 · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page">
+  {% if diagnostic_count and not (request.query_params.get('diagnostic') == '1') %}
+  <div class="rv-notice" data-tone="notice" style="margin-bottom:12px">
+    <b>诊断会话</b><span>{{ diagnostic_count }} 段诊断执行的会话未计入本页分数</span>
+    <a href="?diagnostic=1">查看诊断视图 →</a>
+  </div>
+  {% endif %}
+  {% if request.query_params.get('diagnostic') == '1' %}
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>诊断视图</b><span>只显示诊断执行的会话（显式 --modes 的 run），不进正式分数</span>
+    <a href="?">← 返回正式视图</a>
+  </div>
+  {% endif %}
+  <section class="rv-card" style="margin-bottom:12px">
+    <div class="rv-cn-head"><b>标准对比</b>
+      <span class="rv-meta">同一批答案在两份快照标准下的结论差异（验证标准修订效果，doc/15 §4.7）</span></div>
+    <form class="rv-cn-saverow" onsubmit="return false">
+      <div class="rv-field"><label>快照 A</label>
+        <select class="rv-select" id="std-a">{% for s in snapshot_options %}<option value="{{ s }}" {% if s == std_a %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <div class="rv-field"><label>快照 B</label>
+        <select class="rv-select" id="std-b">{% for s in snapshot_options %}<option value="{{ s }}" {% if s == std_b %}selected{% endif %}>{{ s }}</option>{% endfor %}</select></div>
+      <button class="rv-btn rv-btn--primary" type="button" id="std-go">对比</button>
+    </form>
+    {% if std_rep %}
+      {% if std_rep.same_standard == std_rep.shared %}
+      <div class="rv-meta">两快照共有 {{ std_rep.shared }} 题，标准完全相同——没有可对比的修订。</div>
+      {% else %}
+      <div class="rv-meta" style="margin-bottom:8px">共有 {{ std_rep.shared }} 题；标准相同的 {{ std_rep.same_standard }} 题不列；差异 {{ std_rep.rows|length }} 段、待补判 {{ std_rep.pending|length }} 段。</div>
+      {% if std_rep.rows %}
+      <div class="rv-table-wrap"><table class="rv-table">
+        <thead><tr><th>题目</th><th>执行</th><th>模式</th><th>A 结论/分</th><th>B 结论/分</th><th>分差</th></tr></thead>
+        <tbody>{% for r in std_rep.rows %}
+          <tr><td>{{ r.uid }}</td><td>{{ r.run_label }}</td><td>{{ r.mode }}</td>
+            <td>{{ r.a.status }} / {{ r.a.score|f1 }}</td><td>{{ r.b.status }} / {{ r.b.score|f1 }}</td>
+            <td>{% if r.delta is not none %}{{ r.delta|f1 }}{% else %}—{% endif %}</td></tr>
+        {% endfor %}</tbody></table></div>
+      {% endif %}
+      {% if std_rep.pending %}
+      <div class="rv-meta">待补判（某侧未在该标准下判过，rejudge 后可对比）：{% for p in std_rep.pending %}{{ p.uid }}（缺{{ p.missing }}） {% endfor %}</div>
+      {% endif %}
+      {% endif %}
+    {% endif %}
+  </section>
+
   <div class="rv-page-head"><h1>结果对比</h1>
     <span class="rv-meta"><span>只在双方共有的题目上比</span><span>放行规则沿用比较轴护栏</span></span></div>
 
@@ -29,9 +72,9 @@
   <div class="rv-notice" data-tone="error"><b>已拒绝比较</b><span>{{ rep.blocked }}</span></div>
   {% elif rep %}
   <div class="rv-delta" style="margin-bottom:16px">
-    {% set dth = policy.score.compare_delta|f1 %}
-    {% set ups = rep.questions | selectattr('delta', 'gt', policy.score.compare_delta) | list %}
-    {% set downs = rep.questions | selectattr('delta', 'lt', -policy.score.compare_delta) | list %}
+    {% set dth = compare_delta|f1 %}
+    {% set ups = rep.questions | selectattr('delta', 'gt', compare_delta) | list %}
+    {% set downs = rep.questions | selectattr('delta', 'lt', -compare_delta) | list %}
     <div data-d="up"><div class="rv-delta-l">变好（题目分 +{{ dth }} 以上）</div><div class="rv-delta-n">{{ ups|length }}</div>
       <div class="rv-meta"><span>题</span></div></div>
     <div data-d="down"><div class="rv-delta-l">变差（−{{ dth }} 以下）</div><div class="rv-delta-n">{{ downs|length }}</div>
@@ -75,7 +118,7 @@
   {% if rep.excluded_qkeys %}<div class="rv-meta" style="margin-bottom:12px">已排除：{% for e in rep.excluded_qkeys %}{{ e.qkey }}（{{ e.reason }}）{% endfor %}</div>{% endif %}
 
   {% if rep.questions %}
-  <h2>逐题差异 <span class="rv-meta" style="font-weight:400"><span>只列变化超过 {{ policy.score.compare_delta|f1 }} 分或锚点绊线的题</span></span></h2>
+  <h2>逐题差异 <span class="rv-meta" style="font-weight:400"><span>只列变化超过 {{ compare_delta|f1 }} 分或锚点绊线的题</span></span></h2>
   <div class="rv-table-wrap">
   <table class="rv-table">
     <thead><tr><th class="rv-sticky-col">题目</th><th>维度</th><th class="rv-num">基线</th><th class="rv-num">对照</th><th class="rv-num">变化</th><th>说明</th></tr></thead>
@@ -112,3 +155,10 @@
   {% endif %}
 </main>
 {% endblock %}
+
+<script>
+document.getElementById('std-go').addEventListener('click', function () {
+  var a = document.getElementById('std-a').value, b = document.getElementById('std-b').value;
+  var u = new URL(location); u.searchParams.set('std_a', a); u.searchParams.set('std_b', b); location = u;
+});
+</script>

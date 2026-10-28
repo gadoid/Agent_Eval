@@ -3,7 +3,9 @@
 假 judge 算子（tests.helpers）行为等价于旧版测试的 mk_judges 默认值。"""
 from scoring.chain import judge_episode
 from scoring.cli import conclusions
-from scoring.policy import EpisodeVerdict, policy_from_dict
+from scoring.policy import policy_from_dict, rules_dict_of_policy
+from scoring.rules import rules_from_dict
+from scoring.rules import EpisodeVerdict
 from scoring.views import ability_view, attribution_view, wilson
 from tests import legacy_scoring_reference as legacy
 from tests.helpers import cfg_fact, cfg_map, fact, fake_config, mk_record, turn
@@ -21,7 +23,7 @@ def run_old(record, judges=None):
 
 def run_new(record, cfg=None, policy_dict=None):
     cfg = cfg or fake_config()
-    policy = policy_from_dict(policy_dict or {})
+    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict(policy_dict or {})))
     rows = judge_episode(record, cfg, "r-test").rows
     return conclusions([record], rows, [], policy)[0]
 

@@ -7,8 +7,10 @@ import pytest
 from scoring import cli
 from scoring.chain import judge_episode, load_operator_config, load_verdicts, write_verdicts
 from scoring.effective import Review, append_review, load_reviews
-from scoring.items import judge_fp_of
+from scoring.items import standard_fp_of
 from scoring.policy import default_policy_path, load_policy
+from scoring.rules import load_rules as _lr, default_rules_path as _drp
+RULES, RULES_SHA = _lr(_drp())
 from scoring.store import Store
 from tests.helpers import CountingFact, make_run, mk_record
 
@@ -79,7 +81,7 @@ def test_score_ingests_judges_and_summarizes(tmp_path, db, capsys):
         fp = s.current_spec(a["qkey"])[0]
         rows = s.verdicts(a["answer_id"], fp, chain)
         assert {(r["item_id"], r["value"]) for r in rows} == {("F1", "未提及"), ("X1", "未采信")}
-        concl = s.conclusion(a["answer_id"], fp, chain, load_policy(default_policy_path())[1])
+        concl = s.conclusion(a["answer_id"], fp, chain, RULES_SHA)
         assert concl["status"] == "fail"
     # 重复 score：无待重判 → 不再写判定，摘要稳定
     assert cli.main(["score", str(run_dir), "--operators", ops, "--db", db]) == 0
@@ -155,7 +157,7 @@ def test_ingest_and_specs_set_current(tmp_path, db, capsys):
     assert cli.main(["specs", "set-current", "v1", "--db", db]) == 0
     s = Store(db)
     q = s.questions()[0]
-    assert s.current_spec(q["qkey"])[0] == judge_fp_of(_dist_row("v1"))
+    assert s.current_spec(q["qkey"])[0] == standard_fp_of(_dist_row("v1"))
     s.close()
 
 
@@ -168,7 +170,7 @@ def test_import_legacy_matches_file_pipeline(tmp_path, db):
     run_dir = make_run(tmp_path, "demo", records)
     ops = ops_yaml(tmp_path)
     cfg = load_operator_config(ops)
-    policy, policy_sha = load_policy(default_policy_path())
+    rules_sha = RULES_SHA          # v8：CLI --policy 缺省走 rules.yaml（sha 与旧 policy 转换一致）
     rows = []
     for r in records:
         rows.extend(judge_episode(r, cfg, "demo").rows)
@@ -177,14 +179,14 @@ def test_import_legacy_matches_file_pipeline(tmp_path, db):
     append_review(run_dir, Review(run_id="demo", episode_id=f1["episode_id"], item_id="F1",
                                   value="对", answer_sha=f1["answer_sha"], reason="回答明确",
                                   reviewer="codfish"))
-    expected = cli.conclusions(records, rows, load_reviews(run_dir), policy)
+    expected = cli.conclusions(records, rows, load_reviews(run_dir), RULES)
 
     assert cli.main(["import-legacy", str(run_dir), "--db", db]) == 0
     s = Store(db)
     for record, exp in zip(records, expected):
         ep = record.get("episode_id") or f"{record['uid']}-{record['mode']}-t{record['trial']}"
         a = next(x for x in s.answers() if x["episode_id"] == ep)
-        c = s.conclusion(a["answer_id"], a["judge_fp_at_run"], "legacy", policy_sha)
+        c = s.conclusion(a["answer_id"], a["judge_fp_at_run"], "legacy", rules_sha)
         assert c is not None and c["status"] == exp.status, (record["uid"], c["status"], exp.status)
         detail = c["detail"]
         assert detail["facts"] == exp.facts
@@ -208,9 +210,9 @@ def test_export_at_run_round_trips(tmp_path, db):
     s.add_review(a0["answer_id"], "F1", "对", "回答明确", "codfish",
                  next(r for r in s.verdicts(a0["answer_id"], fp0, chain) if r["item_id"] == "F1")["item_sha"],
                  next(r for r in s.verdicts(a0["answer_id"], fp0, chain) if r["item_id"] == "F1")["answer_sha"])
-    s.rescore(load_policy(default_policy_path())[0], load_policy(default_policy_path())[1], chain)
+    s.rescore(RULES, RULES_SHA, chain)
     src = {a["answer_id"]: (s.conclusion(a["answer_id"], fp0, chain,
-                                         load_policy(default_policy_path())[1]) or {}).get("status")
+                                         RULES_SHA) or {}).get("status")
            for a in s.answers()}
     s.close()
 
@@ -222,9 +224,9 @@ def test_export_at_run_round_trips(tmp_path, db):
     db2 = str(tmp_path / "eval2.db")
     assert cli.main(["import-legacy", str(out), "--db", db2]) == 0
     s2 = Store(db2)
-    policy_sha = load_policy(default_policy_path())[1]
+    rules_sha = RULES_SHA
     for a in s2.answers():
-        c = s2.conclusion(a["answer_id"], a["judge_fp_at_run"], chain, policy_sha)
+        c = s2.conclusion(a["answer_id"], a["judge_fp_at_run"], chain, rules_sha)
         assert c is not None and c["status"] == src[a["answer_id"]]
     # 改判也随行带回
     assert any(r["item_id"] == "F1" for a in s2.answers() for r in s2.reviews_for(a["answer_id"]))
@@ -271,7 +273,7 @@ def test_score_on_fresh_db_without_specs_import(tmp_path, db, capsys):
     chain = load_operator_config(ops).chain_sha
     for a in s.answers():
         fp = s.current_spec(a["qkey"])[0]      # 执行时期望即当前期望
-        assert s.conclusion(a["answer_id"], fp, chain, load_policy(default_policy_path())[1])["status"] == "fail"
+        assert s.conclusion(a["answer_id"], fp, chain, RULES_SHA)["status"] == "fail"
     s.close()
 
 

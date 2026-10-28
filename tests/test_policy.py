@@ -3,7 +3,17 @@ import pytest
 
 from scoring.items import build_context, extract_items
 from scoring.operators import Verdict
-from scoring.policy import Policy, policy_from_dict, session_conclusion
+from scoring.policy import Policy, policy_from_dict
+from scoring.rules import Rules, rules_from_dict, session_conclusion
+from scoring.policy import rules_dict_of_policy
+
+
+def rules_of(policy) -> Rules:
+    """旧 policy（dict 或 Policy 对象）→ Rules（v8 迁移同式转换）：保住旧用例体的口径定义。"""
+    if isinstance(policy, Policy):
+        return rules_from_dict(rules_dict_of_policy(policy))
+    return rules_from_dict(rules_dict_of_policy(policy_from_dict(policy)))
+
 from tests.helpers import fact, mk_record
 
 
@@ -16,7 +26,7 @@ def conclude(record, eff_over, policy=None, override=None):
     ctx = build_context(record)
     items = extract_items(ctx)
     eff = {i.id: eff_over.get(i.id, V(None)) for i in items}
-    return session_conclusion(record, ctx, items, eff, policy, override=override)
+    return session_conclusion(record, ctx, items, eff, rules_of(policy), override=override)
 
 
 def test_policy_validation():

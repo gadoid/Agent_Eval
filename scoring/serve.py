@@ -27,15 +27,19 @@ from pydantic import BaseModel
 from . import views
 from .chain import default_operators_path, load_operator_config
 from .items import SCALES
-from .policy import default_policy_path, load_policy
+from .policy import default_policy_path, load_policy, rules_dict_of_policy
+from .rules import (Method, Rules, RulesError, canonical_sha, default_rules_path, load_rules,
+                    rules_from_dict, rules_to_dict)
 from .store import Store, StoreError
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 TAB_LABELS = {"undecided": "结论待定", "unjudged": "有未判条目", "spot": "模型抽检",
               "mismatch": "人工≠机器", "failed": "会话失败"}
-AXIS_LABELS = {"profile": "被测配置（profile）", "model": "被测模型（model）", "mode": "干预模式（mode）",
-               "skills_base": "知识库（skills_base）", "evalset_version": "期望版本",
+AXIS_LABELS = {"subject": "被测配置（subject）", "profile": "被测配置（subject）",
+               "model": "被测模型（model）", "effort": "努力程度（effort）", "agent": "agent 版本",
+               "mode": "干预模式（mode）", "skills_base": "知识库（skills_base）",
+               "evalset_version": "快照（评测集版本）",
                "trial": "采样次数（trial）", "run": "run"}
 KIND_LABELS = {"precond": "前提", "path": "路径", "forbidden": "禁止", "required": "必要",
                "expected": "期望", "refusal": "拒答"}
@@ -100,10 +104,15 @@ class ReviewBatchIn(BaseModel):
 
 
 class WeightsIn(BaseModel):
-    qkey: str
-    judge_fp: str = ""
+    case_id: str
     weights: dict[str, float]
-    label: str = "权重调整"
+    label: str = ""
+
+
+class WeightsRestoreIn(BaseModel):
+    case_id: str
+    set_at: str
+    label: str = ""                                   # 同秒多次保存时与 set_at 共同定位
 
 
 class RunRenameIn(BaseModel):
@@ -113,6 +122,16 @@ class RunRenameIn(BaseModel):
 
 class ChainRenameIn(BaseModel):
     chain_sha: str
+    name: str = ""
+
+
+class SnapshotRenameIn(BaseModel):
+    evalset_version: str
+    name: str = ""
+
+
+class RulesRenameIn(BaseModel):
+    rules_sha: str
     name: str = ""
 
 
@@ -401,14 +420,26 @@ def _ev_dict(v) -> dict:
 
 # ---------------------------------------------------------------- 应用
 
-def create_app(db: str | Path, policy_path: str | Path | None = None,
+def create_app(db: str | Path, rules_path: str | Path | None = None,
                operators_path: str | Path | None = None,
                cases_dir: str | Path | None = None) -> FastAPI:
     app = FastAPI(title="Agent_Eval 复核服务", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     store = Store(db)
     cases_root = Path(cases_dir) if cases_dir else DEFAULT_CASES_DIR
-    policy, policy_sha = load_policy(policy_path or default_policy_path())
+    # 计分规则（doc/15 §3.7）：rules.yaml 为主；--policy 为弃用别名（旧 policy 转换加载）。
+    # rules 表是唯一事实来源：启动时把加载的规则登记进库，页面按 rules_sha 选择。
+    if rules_path:
+        try:                                   # rules.yaml 直接装载
+            rules, rules_sha = load_rules(rules_path)
+        except RulesError:                     # 旧 policy 文件（无 schema:1）→ 转换装载
+            from .policy import load_policy as _lp
+            _pol, _ = _lp(rules_path)
+            _d = rules_dict_of_policy(_pol)
+            rules, rules_sha = rules_from_dict(_d), canonical_sha(_d)
+    else:
+        rules, rules_sha = load_rules(default_rules_path())
+    store.register_rules(rules_sha, rules_to_dict(rules))
     cfg = load_operator_config(operators_path or default_operators_path())
     default_chain = cfg.chain_sha
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -417,34 +448,71 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     templates.env.filters["status_label"] = status_label
     templates.env.filters["kind_label"] = lambda k: KIND_LABELS.get(k, k)
     templates.env.filters["f1"] = lambda x: "" if x is None else f"{x:.1f}".rstrip("0").rstrip(".")
-    templates.env.globals["pass_mark"] = policy.score.pass_mark
-    templates.env.globals["compare_delta"] = policy.score.compare_delta
+    templates.env.globals["pass_mark"] = rules.score.pass_mark
+    templates.env.globals["compare_delta"] = 10.0     # 展示参数（S7）：对比页可改，记浏览器本地
     _nav_cache: dict = {}
 
     def chain_of(request: Request) -> str:
         c = request.query_params.get("chain")
         return c if c and any(ch["chain_sha"] == c for ch in store.chains()) else default_chain
 
-    def rows(request: Request | str, with_records: bool = False) -> list[dict]:
+    def snapshot_of(request: Request) -> str | None:
+        """请求所用快照（doc/15 §1.1）：URL ?snapshot= 优先，否则当前快照。"""
+        s = request.query_params.get("snapshot")
+        if s and store.snapshot(s):
+            return s
+        return None                        # None = 当前（answer_view_rows 内解析）
+
+    def rules_state(request: Request) -> tuple[Rules, str]:
+        """请求所用计分规则：URL ?rules= 选库内版本，否则启动加载的当前规则。"""
+        rs = request.query_params.get("rules")
+        if rs:
+            for row in store.rules_rows():
+                if row["rules_sha"] == rs:
+                    return rules_from_dict(row["rules"]), row["rules_sha"]
+        return rules, rules_sha
+
+    def method_of(snapshot: str | None) -> Method:
+        if snapshot:
+            row = store.snapshot(snapshot)
+            return Method.from_dict((row or {}).get("method"))
+        cur = store.current_snapshot()
+        if cur:
+            row = store.snapshot(cur)
+            return Method.from_dict((row or {}).get("method"))
+        return Method()
+
+    def rows(request: Request | str, with_records: bool = False,
+             snapshot: str | None = None, r_sha: str | None = None,
+             diagnostic: bool | None = None) -> list[dict]:
+        """取数口（doc/15 §3.2 C5）：默认只取正式会话（诊断 run 不进分数）；
+        diagnostic=True 时只取诊断会话（对比页诊断视图）。"""
         chain = chain_of(request) if isinstance(request, Request) else request
-        return store.answer_view_rows(chain, policy_sha, with_records=with_records)
+        rs = store.answer_view_rows(chain, r_sha or rules_sha, with_records=with_records,
+                                    snapshot=snapshot)
+        if diagnostic is None:
+            diagnostic = isinstance(request, Request) and request.query_params.get("diagnostic") == "1"
+        if diagnostic:
+            return [r for r in rs if r.get("diagnostic")]
+        return [r for r in rs if not r.get("diagnostic")]
 
     def nav_count(chain: str) -> int:
-        """顶栏「复核」计数 = 结论待定的对话数（轻量 SQL，不做条目级扫描）。"""
+        """侧栏「复核」计数 = 结论待定的对话数（轻量 SQL，不做条目级扫描）。"""
         if _nav_cache.get("chain") != chain:
             n = store.conn.execute(
                 "SELECT COUNT(*) FROM conclusions c JOIN answers a ON a.answer_id = c.answer_id"
                 " JOIN questions q ON q.qkey = a.qkey"
-                " WHERE q.current_judge_fp = c.judge_fp AND c.chain_sha = ? AND c.policy_sha = ?"
+                " WHERE q.current_standard_fp = c.standard_fp AND c.chain_sha = ? AND c.rules_sha = ?"
+                " AND c.weight_fp = COALESCE(q.current_weight_fp, 'equal')"
                 " AND c.status IN ('undecided', 'error')",
-                (chain, policy_sha)).fetchone()[0]
+                (chain, rules_sha)).fetchone()[0]
             _nav_cache.update({"chain": chain, "n": n})
         return _nav_cache["n"]
 
     def needs_rescore() -> bool:
-        """当前口径下尚无会话结论（改 policy 后未 rescore）：页面提示执行命令。"""
-        return store.conn.execute("SELECT 1 FROM conclusions WHERE policy_sha=? LIMIT 1",
-                                  (policy_sha,)).fetchone() is None
+        """当前规则下尚无会话结论（改 rules 后未 rescore）：页面提示执行命令。"""
+        return store.conn.execute("SELECT 1 FROM conclusions WHERE rules_sha=? LIMIT 1",
+                                  (rules_sha,)).fetchone() is None
 
     def stale_runs() -> list[str]:
         """技能基底与导出清单不一致的 run（快照 skills_base_stale）。"""
@@ -461,21 +529,25 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
 
     def render(request: Request, name: str, **ctx):
         chain = chain_of(request)
+        snap = snapshot_of(request) or store.current_snapshot()
         return templates.TemplateResponse(request=request, name=name, context={
             "db_path": str(store.path), "chain_sha": chain, "chain_short": chain[:8],
             "chains": store.chains(), "nav_count": nav_count(chain),
             "needs_rescore": needs_rescore(), "stale_runs": stale_runs(),
-            "policy": policy, "pass_mark": policy.score.pass_mark,
+            "rules": rules, "rules_sha": rules_sha, "rules_short": rules_sha[:8],
+            "rules_rows": store.rules_rows(), "pass_mark": rules.score.pass_mark,
+            "snapshot": snap, "snapshots": store.snapshots(),
+            "snapshot_method": method_of(snap),
             "tab_labels": TAB_LABELS, "axis_labels": AXIS_LABELS, **ctx})
 
     # ---------------- 用例管理页（首页；跨配置汇总，按配置的分数在配置管理页）
     @app.get("/")
     async def cases(request: Request, dim: str = "", topic: str = "",
                     granularity: str = "", sort: str = "pending", flag_only: str = "", page: int = 0):
-        all_rows = rows(request)
-        summary = views.score_summary(all_rows, policy)
+        all_rows = rows(request, snapshot=snapshot_of(request))
+        summary = views.score_summary(all_rows, rules, method_of(snapshot_of(request)))
         known_dims = {r["dim"] for r in all_rows if r["dim"]}
-        comp = views.composite(summary["dims"], policy, known_dims=known_dims)
+        comp = views.composite(summary["dims"], rules, known_dims=known_dims)
         stats = views.question_stats(all_rows)
         qs = store.questions()
         by_case: dict[str, list] = {}
@@ -534,16 +606,31 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     async def configs_page(request: Request):
         rs = rows(request)
         known_dims = {r["dim"] for r in rs if r["dim"]}
-        groups: dict[tuple, list] = {}
+        groups: dict[str, list] = {}
         for r in rs:
-            groups.setdefault(views.config_value(r), []).append(r)
+            groups.setdefault(r.get("subject_fp") or "?", []).append(r)
+
+        def subject_label(fp: str, grp: list[dict]) -> str:
+            """差异属性拼名（doc/13 §2.3 口径）：跨组差异的属性入名；全组相同回退 profile id。"""
+            attrs = [("model", "模型"), ("reasoning_effort", "努力"), ("skills_mode", "技能"),
+                     ("skills_base", "基底"), ("agent", "agent")]
+            parts = [f"{label} {grp[0].get(k) or '?'}" for k, label in attrs
+                     if any(str(g.get(k)) != str(grp[0].get(k)) for g in [grp[0]])]
+            return fp[:8] if not parts else (grp[0].get("profile_id") or fp[:8])
+
+        subj_rows = {r["run_id"]: r for r in rs}
+        incomplete = {r["run_id"] for r0 in store.runs()
+                      for r in [subj_rows.get(r0["run_id"])] if r and r0.get("subject_incomplete")}
         table = []
-        for key, grp in groups.items():
-            summary = views.score_summary(grp, policy)
-            comp = views.composite(summary["dims"], policy, known_dims=known_dims)
+        for fp, grp in groups.items():
+            summary = views.score_summary(grp, rules)
+            comp = views.composite(summary["dims"], rules, known_dims=known_dims)
             table.append({
-                "profile": key[0], "model": key[1], "skills_mode": key[2],
-                "skills_base": key[3], "evalset_version": key[4],
+                "subject_fp": fp, "label": subject_label(fp, grp),
+                "model": grp[0].get("model") or views.model_label(grp[0]),
+                "effort": grp[0].get("reasoning_effort"), "agent": grp[0].get("agent"),
+                "skills_mode": grp[0].get("skills_mode"), "skills_base": grp[0].get("skills_base"),
+                "incomplete": any(r["run_id"] in incomplete for r in grp),
                 "n": len(grp), "undecided": sum(1 for r in grp if r["c_status"] == "undecided"),
                 "score": comp.get("score"), "provisional": comp.get("provisional"),
                 "complete": comp.get("complete"),
@@ -579,6 +666,10 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                 "evalset_version": views.attr_value(r0, "evalset_version"),
                 "skills_mode": sorted({r["skills_mode"] for r in grp if r["skills_mode"]}),
                 "stale": rid in stale,
+                "diagnostic": bool(r0.get("diagnostic")),
+                "models_mismatch": any(
+                    r.get("model") and json.loads(r["models_json"] or "[]")
+                    and r["model"] not in json.loads(r["models_json"] or "[]") for r in grp),
                 "n": len(grp),
                 "undecided": sum(1 for r in grp if r["c_status"] == "undecided"),
                 "at": r0["started_at"] or r0["imported_at"] or ""})
@@ -612,7 +703,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
 
     # ---------------- 用例详情
     @app.get("/case/{case_id}")
-    async def case_detail(request: Request, case_id: str, axis: str = "profile", judge_fp: str = "",
+    async def case_detail(request: Request, case_id: str, axis: str = "subject", standard_fp: str = "",
                           variant: str = "", saved: str = "",
                           pair: Annotated[list[str], Query()] = []):
         members = [q for q in store.questions() if (q["case_id"] or q["uid"]) == case_id]
@@ -621,26 +712,29 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         members.sort(key=lambda q: (q["variant_index"] or 0, q["uid"]))
         seed = members[0]
         cur = store.current_spec(seed["qkey"])
-        fp = judge_fp or (cur[0] if cur else None)
+        fp = standard_fp or (cur[0] if cur else None)
         spec = store.spec_of(seed["qkey"], fp) if fp else {}
         history = [dict(r) for r in store.conn.execute(
-            "SELECT judge_fp, evalset_version, imported_at FROM specs WHERE qkey=? ORDER BY imported_at",
+            "SELECT standard_fp AS fp, evalset_version, imported_at FROM specs"
+            " WHERE qkey=? ORDER BY imported_at",
             (seed["qkey"],))]
         all_rows = rows(request)
         case_rows = [r for r in all_rows if r["case_id"] == case_id]
         axis_values = sorted({views.attr_value(r, axis) for r in case_rows})
         convs = []
         for r in sorted(case_rows, key=lambda r: (r["answer_id"])):
-            concl = store.conclusion(r["answer_id"], r["current_judge_fp"] or "", chain_of(request), policy_sha) or {}
+            concl = store.conclusion(r["answer_id"], r["current_standard_fp"] or "",
+                                     chain_of(request), rules_sha) or {}
             chips = []
-            for er in store.effective_rows(r["answer_id"], r["current_judge_fp"] or "", chain_of(request)):
+            for er in store.effective_rows(r["answer_id"], r["current_standard_fp"] or "",
+                                           chain_of(request)):
                 chips.append({"id": er["row"]["item_id"], "kind": er["row"]["kind"],
                               "value": er["eff"].value, "score": er["eff"].score,
                               "source": er["eff"].source})
             convs.append({"r": r, "concl": concl, "chips": chips,
                           "axis_label": views.attr_value(r, axis),
                           "pending_items": sum(1 for c in chips if c["value"] is None)})
-        health = views.case_health(case_rows, views.case_scores(case_rows, policy)).get(case_id, [])
+        health = views.case_health(case_rows, views.case_scores(case_rows, rules)).get(case_id, [])
         by_uid: dict[str, list] = {}
         for c in convs:
             by_uid.setdefault(c["r"]["uid"], []).append(c)
@@ -653,7 +747,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                       if c["concl"].get("score") is not None]
             variant_cards.append({
                 "uid": q["uid"], "index": q["variant_index"] or 0, "rewrite": q["rewrite"] or "",
-                "judge_fp": q["current_judge_fp"] or "",
+                "standard_fp": q["current_standard_fp"] or "",
                 "questions": [t.get("content") or "" for t in vspec.get("turns") or []
                               if t.get("role") == "user"],
                 "convs": len(rows_v),
@@ -709,19 +803,25 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                           "cells": [p["turns"][i] if i < len(p["turns"]) else None for p in pair_data]}
                          for i in range(n)]
         injections = spec.get("injections") or []
-        # 权重分配编辑器（doc/10 §5.4 权重在线调整）：只列计分条目。带 weight_percent
-        # 标记的期望（revise_weights 写入）权值即百分比、剩余为未分配，不能重新归一
-        # （否则带未分配保存后回显会被折算掉）；旧期望权重是相对值，展示时归一成百分比。
+        # 权重编辑器（doc/15 §4.3）：数据源 = item_weights 有效权重（按用例，恒百分制）。
+        # 无权重行 → 等权展示（total 可折算），保存时必须覆盖全部计分条目。
+        case_weights, case_wfp, weights_incomplete = store.effective_weights(case_id)
+        # 权重历史（可追溯）：每次保存一组；「查看」直读该 weight_fp 下的现存结论
+        w_hist = store.weight_history(case_id)
+        _w_chain, (_w_rules, _w_rsha) = chain_of(request), rules_state(request)
+        for g in w_hist:
+            g["rows"] = store.case_conclusions_under_weight(case_id, g["weight_fp"], _w_chain, _w_rsha)
+        wlabel_row = store.conn.execute(
+            "SELECT label FROM item_weights WHERE case_id=? AND active=1 AND label IS NOT NULL"
+            " ORDER BY set_at DESC LIMIT 1", (case_id,)).fetchone()
         weight_facts = []
         wf = [f for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")]
-        total_w = sum(float(f.get("weight", 1)) for f in wf)
         weight_map: dict[str, int] = {}
         for f in wf:
-            w = float(f.get("weight", 1))
-            if spec.get("weight_percent"):
-                pct = round(w)
+            if case_weights:
+                pct = round(case_weights.get(f["id"], 0))
             else:
-                pct = round(w / total_w * 100) if total_w else round(100 / len(wf))
+                pct = round(100 / len(wf)) if wf else 0
             weight_map[f["id"]] = pct
             weight_facts.append({"id": f["id"], "kind": f["kind"], "pct": pct})
         # 条目详情（简要列表点「详情」下钻）：全部条目类型
@@ -744,16 +844,19 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                                  "weight": weight_map.get(f.get("id")) if f.get("kind") in ("required", "expected") else None,
                                  "note": note})
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
-                      judge_fp=fp or "", history=history, convs=convs, axis=axis,
+                      standard_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
                       injections=injections, health=health, variant_cards=variant_cards,
                       weight_facts=weight_facts, weight_map=weight_map,
+                      weights_incomplete=weights_incomplete, weight_fp=case_wfp,
+                      weight_history=w_hist,
+                      weight_label=(wlabel_row["label"] if wlabel_row else None),
                       item_details=item_details, saved=saved,
                       variant_stats=variant_stats, conv_stats=conv_stats,
                       conv_totals=conv_totals, conv_group_counts=conv_group_counts,
                       focus_variant=focus_variant, show_all=show_all,
                       pair=pair, pair_data=pair_data, pair_rows=pair_rows,
-                      headline=policy.headline(seed["dim"] or "?"),
+                      headline=method_of(snapshot_of(request)).headline(seed["dim"] or "?"),
                       summary_dim=(spec.get("dim") or "?"))
 
     # ---------------- 复核队列
@@ -764,7 +867,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             tab = "undecided"
         spot = spot if spot in (10, 20, 100) else 10
         chain = chain_of(request)
-        convs, meta = store.review_conversations(chain, policy, policy_sha, tab=tab,
+        convs, meta = store.review_conversations(chain, rules, rules_sha, tab=tab,
                                                  run_id=run_id or None, dim=dim or None,
                                                  spot_ratio=spot / 100, operator=op or None, page=page)
         operators = [r[0] for r in store.conn.execute(
@@ -788,13 +891,13 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                           op: str = "", spot: int = 10):
         chain = chain_of(request)
         try:
-            v = store.conversation_view(answer_id, chain, policy, policy_sha)
+            v = store.conversation_view(answer_id, chain, rules, rules_sha)
         except StoreError as e:
             return render(request, "error.html", message=str(e))
         if tab not in TAB_LABELS:
             tab = "undecided"
         spot = spot if spot in (10, 20, 100) else 10
-        convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6,
+        convs, _ = store.review_conversations(chain, rules, rules_sha, tab=tab, size=10 ** 6,
                                               spot_ratio=spot / 100, operator=op or None,
                                               first_input=False)
         ids = [c["answer_id"] for c in convs]
@@ -809,19 +912,26 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             pos, total = i + 1, len(ids)
         else:
             pos, total = 0, 0
-        m = policy.score.map
+        m = rules.score.map
         return render(request, "review.html", v=v, tab=tab, pos=pos, total_q=total,
                       prev_url=prev_url, next_url=next_url, score_map=m,
                       extra_qs=extra,
                       scales={k: list(v_) for k, v_ in SCALES.items()},
-                      pass_mark=policy.score.pass_mark,
+                      pass_mark=rules.score.pass_mark,
                       detail=(v["conclusion"] or {}).get("detail") or {})
 
     # ---------------- 结果对比
     @app.get("/compare")
     async def compare(request: Request, axis: str = "skills_base", base: str = "", target: str = "",
-                      any: str = "", fix: str = "", factors: str = "", run: str = ""):
+                      any: str = "", fix: str = "", factors: str = "", run: str = "",
+                      std_a: str = "", std_b: str = ""):
         rep = error = shap = None
+        std_rep = None
+        if std_a and std_b:                       # 标准对比（doc/15 §4.7 P2）
+            try:
+                std_rep = store.standard_compare(std_a, std_b, chain_of(request), rules_sha)
+            except StoreError as e:
+                error = str(e)
         rs = rows(request, with_records=True)
         run_order = {r["run_id"]: i for i, r in enumerate(store.runs())}
         axis_values = sorted({views.attr_value(r, axis) for r in rs})
@@ -833,18 +943,23 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                 fixes[k.strip()] = v.strip()
         if base and target:
             try:
-                rep = views.compare_scores(rs, axis=axis, base=base, target=target, policy=policy,
+                rep = views.compare_scores(rs, axis=axis, base=base, target=target, rules=rules,
+                                           method=method_of(snapshot_of(request)),
                                            fixes=fixes, anys=anys, run_order=run_order)
             except ValueError as e:
                 error = str(e)
         if factors and not error:
             try:
                 facs = [f.strip() for f in factors.split(",") if f.strip()]
-                cells, shared = views.shapley_cells(rs, facs, policy)
+                cells, shared = views.shapley_cells(rs, facs, rules, method_of(snapshot_of(request)))
                 shap = views.shapley(cells, facs)
             except ValueError as e:
                 error = str(e)
-        return render(request, "compare.html", axis=axis, axis_values=axis_values,
+        diag_n = sum(1 for r in store.answer_view_rows(chain_of(request), rules_sha)
+                     if r.get("diagnostic"))
+        return render(request, "compare.html", axis=axis, axis_values=axis_values, std_rep=std_rep,
+                      std_a=std_a, std_b=std_b, snapshot_options=[s["evalset_version"] for s in store.snapshots()],
+                      diagnostic_count=diag_n,
                       base=base, target=target, any=any, fix=fix, factors=factors,
                       rep=rep, error=error, shap=shap, attrs=[a for a in views.ATTRS if a != "skills_mode"],
                       axis_labels=AXIS_LABELS,
@@ -854,7 +969,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
     @app.get("/judging")
     async def judging(request: Request):
         chain = chain_of(request)
-        agree = views.judge_agreement(store, chain, policy)
+        agree = views.judge_agreement(store, chain, rules)
         rs = rows(request)
         uid_of = {r["answer_id"]: r["uid"] for r in rs}
         voided = []
@@ -872,7 +987,57 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
                                     "human": r["c_score"], "auto": detail["auto_score"], "gap": round(gap, 1)})
         big_gap.sort(key=lambda x: -x["gap"])
         return render(request, "judging.html", agree=agree, voided=voided[:100], big_gap=big_gap[:20],
-                      chains=store.chains(), policy_sha=policy_sha[:8])
+                      chains=store.chains(), rules_sha=rules_sha[:8])
+
+    # ---------------- 配置详情（三件套可查：内容 + 差异，doc/15 §4 配置可解释）
+    @app.get("/detail/rules/{sha}")
+    async def detail_rules(request: Request, sha: str, diff: str = ""):
+        rows_r = store.rules_rows()
+        row = next((r for r in rows_r if r["rules_sha"] == sha), None)
+        if row is None:
+            return render(request, "error.html", message=f"库中没有计分规则 {sha}")
+        diff_rows = []
+        other = next((r for r in rows_r if r["rules_sha"] == diff), None) if diff else None
+        if other is not None:
+            a, b = row["rules"], other["rules"]
+            for k in sorted(set(a) | set(b)):
+                if a.get(k) != b.get(k):
+                    diff_rows.append({"key": k, "a": a.get(k), "b": b.get(k)})
+        return render(request, "detail_rules.html", row=row,
+                      others=[r for r in rows_r if r["rules_sha"] != sha],
+                      diff_sha=(other["rules_sha"] if other else ""),
+                      diff_name=((other["name"] or "") if other else ""),
+                      diff_rows=diff_rows, is_current=(sha == rules_sha))
+
+    @app.get("/detail/chain/{sha}")
+    async def detail_chain(request: Request, sha: str):
+        row = next((c for c in store.chains() if c["chain_sha"] == sha), None)
+        if row is None:
+            return render(request, "error.html", message=f"库中没有判定配置 {sha}")
+        mapping = None
+        if sha == cfg.chain_sha:                     # 当前 operators.yaml 的逐条目链组成
+            mapping = [{"kind": k, "ops": [f"{o.id}@{o.version}" for o in ops]}
+                       for k, ops in sorted((cfg.chains or {}).items())]
+        return render(request, "detail_chain.html", row=row, mapping=mapping,
+                      instance_specs=(cfg.instance_specs or {} if sha == cfg.chain_sha else None),
+                      is_current=(sha == cfg.chain_sha))
+
+    @app.get("/detail/snapshot/{version}")
+    async def detail_snapshot(request: Request, version: str):
+        row = store.snapshot(version)
+        if row is None:
+            return render(request, "error.html", message=f"库中没有快照 {version}")
+        members = [dict(r) for r in store.conn.execute(
+            "SELECT sv.qkey, sv.standard_fp, q.uid, q.variant_index, q.rewrite, q.current_standard_fp"
+            " FROM spec_versions sv JOIN questions q ON q.qkey=sv.qkey"
+            " WHERE sv.evalset_version=? ORDER BY q.variant_index, sv.qkey", (version,))]
+        for m in members:
+            m["is_current"] = (m["current_standard_fp"] == m["standard_fp"])
+        seeds = {r["case_id"] for r in store.conn.execute(
+            "SELECT DISTINCT case_id FROM item_weights WHERE source='import'")}
+        return render(request, "detail_snapshot.html", row=row, members=members,
+                      seeded_cases=sorted(seeds),
+                      is_current=(version == store.current_snapshot()))
 
     # ---------------- 接口（§9）
     def _batch_target(body: ReviewBatchIn) -> tuple[str, str]:
@@ -888,7 +1053,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         try:
             chain, fp = _batch_target(body)
             v = store.preview_conclusion(body.answer_id,
-                                         [e.model_dump() for e in body.entries], body.total, fp, chain, policy)
+                                         [e.model_dump() for e in body.entries], body.total, fp, chain, rules)
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return _ev_dict(v)
@@ -898,12 +1063,12 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         try:
             chain, fp = _batch_target(body)
             c = store.submit_reviews(body.answer_id, [e.model_dump() for e in body.entries], body.total,
-                                     body.reviewer or "?", fp, chain, policy, policy_sha)
+                                     body.reviewer or "?", fp, chain, rules, rules_sha)
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         _nav_cache.clear()
         tab = "undecided"
-        convs, _ = store.review_conversations(chain, policy, policy_sha, tab=tab, size=10 ** 6,
+        convs, _ = store.review_conversations(chain, rules, rules_sha, tab=tab, size=10 ** 6,
                                               first_input=False)
         ids = [x["answer_id"] for x in convs]
         # 跳转跟随当前位置：从本段在队列中的位置向后取下一段（绕回、跳过自己），
@@ -929,7 +1094,7 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
             fp = cur[0] if cur else a["judge_fp_at_run"]
             status, reason = store.submit_review(body["answer_id"], body["item_id"], body["value"],
                                                  body.get("reason", ""), body.get("reviewer") or "?",
-                                                 fp, default_chain, policy, policy_sha)
+                                                 fp, default_chain, rules, rules_sha)
         except (StoreError, KeyError) as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         _nav_cache.clear()
@@ -937,13 +1102,33 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
 
     @app.post("/api/case/weights")
     async def case_weights(body: WeightsIn):
-        """权重分配保存（用例详情页）：写成新 judge_fp 的期望并设为当前期望；
-        总和 ≤ 100% 在两端都校验。label 为期望版本标签（可自定义命名）。"""
+        """权重保存（按用例，doc/15 §4.3）：写 item_weights 有效行 + 刷新 weight_fp，
+        随后只重算本用例在所有有判定的链下的结论——不产生新标准、不需要 rejudge。"""
         try:
-            res = store.revise_weights(body.qkey, body.judge_fp, dict(body.weights), body.label)
+            res = store.revise_weights(body.case_id, dict(body.weights), body.label)
+            n = store.rescore_cases([body.case_id], rules, rules_sha)
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
-        return res
+        return {**res, "rescored": n}
+
+    @app.post("/api/case/weights-restore")
+    async def case_weights_restore(body: WeightsRestoreIn):
+        """权重切回历史配置：把该组值写成新的有效行（追加，历史不删）+ 只重算本用例。
+        标准修订后条目集变化时 revise_weights 会拒绝并说明缺哪些条目。"""
+        try:
+            group = next((g for g in store.weight_history(body.case_id)
+                          if g["set_at"] == body.set_at and (g["label"] or "") == body.label.strip()), None)
+            if group is None:
+                return JSONResponse({"error": f"没有这次保存记录：{body.set_at}"}, status_code=400)
+            if group["active"]:
+                return JSONResponse({"error": "该权重配置已是当前配置"}, status_code=400)
+            label = f"切回·{group['label'] or body.set_at[:16]}"
+            res = store.revise_weights(body.case_id, group["weights"], label)
+            n = store.rescore_cases([body.case_id], rules, rules_sha)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        _nav_cache.clear()
+        return {**res, "rescored": n, "label": label}
 
     @app.post("/api/run/rename")
     async def run_rename(body: RunRenameIn):
@@ -962,6 +1147,24 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         return {"chain_sha": body.chain_sha, "name": body.name.strip() or None}
+
+    @app.post("/api/snapshot/rename")
+    async def snapshot_rename(body: SnapshotRenameIn):
+        """快照命名（展示层）：空串清除。"""
+        try:
+            store.rename_snapshot(body.evalset_version, body.name)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"evalset_version": body.evalset_version, "name": body.name.strip() or None}
+
+    @app.post("/api/rules/rename")
+    async def rules_rename(body: RulesRenameIn):
+        """计分规则命名（展示层）：空串清除。"""
+        try:
+            store.rename_rules(body.rules_sha, body.name)
+        except StoreError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return {"rules_sha": body.rules_sha, "name": body.name.strip() or None}
 
     @app.post("/api/case/preview")
     async def case_preview(body: CaseNewIn):
@@ -1028,9 +1231,9 @@ def create_app(db: str | Path, policy_path: str | Path | None = None,
 
 
 def run_server(db: str, host: str = "127.0.0.1", port: int = 8765,
-               policy_path: str | None = None, operators_path: str | None = None):
+               rules_path: str | None = None, operators_path: str | None = None):
     import uvicorn
 
-    app = create_app(db, policy_path, operators_path)
+    app = create_app(db, rules_path, operators_path)
     print(f"复核服务：http://{host}:{port}（评测库 {db}，仅本机）")
     uvicorn.run(app, host=host, port=port, log_level="warning")

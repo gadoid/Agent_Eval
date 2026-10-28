@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}判定配置详情 · Agent_Eval 复核{% endblock %}
+{% block body %}
+<main class="rv-page" data-page="detail-chain">
+  <div class="rv-page-head"><h1>判定配置详情</h1>
+    <span class="rv-meta"><span>{{ row.name or '未命名' }} · {{ row.chain_sha[:8] }}</span>
+      <span>首见于 {{ row.created_at[:19] }}</span>
+      {% if is_current %}<span class="rv-pill">与当前 operators.yaml 一致</span>{% endif %}
+      <span>评测库 {{ db_path }}</span></span></div>
+
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>判定配置管「条目由谁判」</b>
+    <span>每个条目类型一条算子链，前一个算子弃权才轮到下一个；改链后
+      <code>python -m scoring.cli rejudge</code> 重判（只调算子，不跑 agent）。</span>
+  </div>
+
+  <div class="rv-table-wrap" style="margin-bottom:16px">
+  <table class="rv-table">
+    <thead><tr><th>算子实例</th><th>判定模型</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">{{ row.operators|join('、') or '—' }}</th>
+        <td>{{ row.judge_models|join('、') or '—' }}</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  {% if mapping %}
+  <div class="rv-table-wrap" style="margin-bottom:16px">
+    <div class="rv-pair-head" style="padding:8px 12px">逐条目类型链组成（当前 operators.yaml）</div>
+  <table class="rv-table">
+    <thead><tr><th>条目类型</th><th>链（依次尝试）</th><th>语义</th></tr></thead>
+    <tbody>
+      {% for m in mapping %}
+      <tr><th scope="row">{{ m.kind|kind_label }}</th>
+        <td>{% if m.ops %}<span class="rv-mono">{{ m.ops|join(' → ') }}</span>{% else %}<span class="rv-meta">空链 → 全部人工判</span>{% endif %}</td>
+        <td class="rv-meta">{{ {'required': '必要事实（关键词可判）', 'expected': '期望事实（关键词可判）',
+             'forbidden': '禁止事实（否决项，模型算子未接 → 人工）',
+             'precond': '前提门槛（不成立则会话无效）',
+             'path': '技能路径（否决项）', 'refusal': '拒答行为'}.get(m.kind, '') }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <div class="rv-notice" data-tone="notice" style="margin-bottom:12px">
+    <b>历史链</b>
+    <span>此 chain_sha 与当前 operators.yaml 不一致，库里只留有算子清单（上表）；
+      逐条目链组成以当时的 operators.yaml 为准。</span>
+  </div>
+  {% endif %}
+
+  {% if instance_specs %}
+  <div class="rv-table-wrap">
+    <div class="rv-pair-head" style="padding:8px 12px">算子实例参数</div>
+  <table class="rv-table">
+    <thead><tr><th>实例</th><th>impl</th><th>参数</th></tr></thead>
+    <tbody>
+      {% for iid, sp in instance_specs.items() %}
+      <tr><th scope="row" class="rv-mono">{{ iid }}</th><td class="rv-mono">{{ sp.impl }}</td>
+        <td class="rv-mono">{{ sp|tojson }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

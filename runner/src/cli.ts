@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 import { buildEvalsetFromMd } from './md-compile.js'
 import { findSessionFiles, inspectSession, renderInspect } from './inspect.js'
 import { runEvaluation } from './orchestrator.js'
-import { loadEvalset, planEpisodes } from './planner.js'
+import { loadEvalset, loadMethod, planEpisodes } from './planner.js'
 import type { AgentAdapter } from './ports.js'
 import { assertModelConfigComplete, ConfigError, loadProfile } from './profile.js'
 
@@ -32,7 +32,8 @@ const USAGE = `用法：
 
 run 选项：
   --cases <路径>...           markdown 目录或文件（可重复；与 --evalset 互斥）
-  --modes natural,forced    干预方式，默认 natural；forced 在第一轮前加 /skill名 强制加载
+  --modes natural,forced    诊断执行：显式指定模式时该 run 标诊断（不进正式分）；
+                            不给时按快照测法执行（evalset method.yaml → .snapshot.json）
   --trials N                每个用例每种干预的独立采样次数，默认 3
   --concurrency N           并发数，默认 1
   --dims 知识召回,...        只跑这些维度
@@ -102,7 +103,9 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
     throw new ConfigError(`缺少参数：${missing.map((m) => `--${m}`).join(' ')}\n\n${USAGE}`)
   }
   if (values.evalset && values.cases?.length) throw new ConfigError('--cases 与 --evalset 互斥，只能给一个')
-  const modes = list(values.modes) as Mode[]
+  // P2（doc/15 §3.10）：--modes 不给 → 按快照测法执行（维度→模式）；显式给出 → 诊断执行
+  const diagnostic = values.modes !== undefined
+  const modes = values.modes === undefined ? (['natural'] as Mode[]) : (list(values.modes) as Mode[])
   const badMode = modes.find((m) => !MODES.includes(m))
   if (badMode || modes.length === 0) throw new ConfigError(`--modes 只能是 ${MODES.join('、')}，收到 ${String(values.modes)}`)
   const trials = positiveInt(values.trials, '--trials')
@@ -138,25 +141,40 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
 `)
   }
 
-  // 锚点：anchors.txt 与 Profile 同目录；全量 run（无过滤）默认并入，--anchors 可覆盖
-  const anchorsFile = join(dirname(values.profile as string), 'anchors.txt')
-  const anchorList = (await readFile(anchorsFile, 'utf8').catch(() => ''))
-    .split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'))
-  const fullRun = dims.length === 0 && only.length === 0 && topic === ''
-  const anchors = (values.anchors ? values.anchors === 'on' : fullRun) ? anchorList : []
+  // 测法（P2）：dist 同名 .snapshot.json；有测法且非诊断执行 → 模式/变体/锚点都从测法来
+  const methodPack = evalsetPath ? await loadMethod(evalsetPath as string) : null
+  const method = methodPack && !diagnostic ? methodPack.method : undefined
+  const evalRows0 = await loadEvalset(evalsetPath as string)
+  const knownUids = new Set(evalRows0.rows.flatMap((r) => [r.uid, r.case_id]))
+  let anchors: string[]
+  if (method) {
+    anchors = method.anchors.filter((a) => knownUids.has(a))
+    const dropped = method.anchors.filter((a) => !knownUids.has(a))
+    if (dropped.length > 0) err.write(`  测法锚点不在评测集（忽略）：${dropped.join('、')}\n`)
+  } else {
+    // 旧 dist 无测法 / 诊断执行：anchors.txt 与 Profile 同目录；全量 run 默认并入
+    const anchorsFile = join(dirname(values.profile as string), 'anchors.txt')
+    const anchorList = (await readFile(anchorsFile, 'utf8').catch(() => ''))
+      .split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'))
+    const fullRun = dims.length === 0 && only.length === 0 && topic === ''
+    anchors = (values.anchors ? values.anchors === 'on' : fullRun) ? anchorList : []
+  }
 
   const lastAverages = values.out ? await lastRunAverages(values.out, profile.id) : undefined
 
   if (values['dry-run']) {
-    const { rows } = await loadEvalset(evalsetPath as string)
+    const { rows } = evalRows0
     const known = new Set(rows.flatMap((r) => [r.uid, r.case_id]))
-    for (const a of anchors) if (!known.has(a)) out.write(`  锚点 ${a} 不在当前评测集中，请替换（anchors.txt）\n`)
+    for (const a of anchors) if (!known.has(a)) out.write(`  锚点 ${a} 不在当前评测集中，请替换\n`)
     const plan = planEpisodes(rows, profile, DSH_CLI_CAPABILITIES, 'dsh-cli', {
-      modes, trials, dims, only, topic, anchors, skillsMode: profile.skills_mode,
+      modes, trials, dims, only, topic, anchors, skillsMode: profile.skills_mode, method,
     })
     const totalTurns = plan.episodes.reduce((n, e) => n + e.messages.length, 0)
+    const modeText = method
+      ? `按测法（${String(Object.keys(method.modes).length)} 维映射${method.run_rewrites.length > 0 ? `，改写 ${method.run_rewrites.join('、')}` : ''}）`
+      : `${modes.join('、')}${diagnostic ? '（诊断执行）' : ''}`
     out.write(
-      `评测集 ${String(rows.length)} 行，筛选后 ${String(plan.selected)} 行；计划会话 ${String(plan.episodes.length)} 段（${modes.join('、')} × ${String(trials)} 次），共 ${String(totalTurns)} 轮\n`,
+      `评测集 ${String(rows.length)} 行，筛选后 ${String(plan.selected)} 行；计划会话 ${String(plan.episodes.length)} 段（${modeText} × ${String(trials)} 次），共 ${String(totalTurns)} 轮\n`,
     )
     if (lastAverages) {
       out.write(`  估算：约 ${String(Math.round(totalTurns * lastAverages.tokensPerTurn))} tokens、${(totalTurns * lastAverages.hoursPerTurn).toFixed(1)} 小时（按上一 run 每轮均值）\n`)
@@ -197,6 +215,9 @@ async function cmdRun(args: string[], out: NodeJS.WritableStream, err: NodeJS.Wr
       adapter,
       title: values.title ?? undefined,
       modes,
+      method,
+      diagnostic: diagnostic || undefined,
+      methodSha: methodPack?.methodSha,
       trials,
       concurrency,
       dims,

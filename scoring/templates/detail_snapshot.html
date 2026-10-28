@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}快照详情 · Agent_Eval 复核{% endblock %}
+{% block body %}
+{% set m = row.method %}
+<main class="rv-page" data-page="detail-snapshot">
+  <div class="rv-page-head"><h1>快照详情</h1>
+    <span class="rv-meta"><span>{{ row.name or row.evalset_version }}</span>
+      <span>{{ row.evalset_version }} · 快照 {{ row.snapshot_sha[:8] }}</span>
+      <span>导入于 {{ row.imported_at[:19] }}</span>
+      {% if is_current %}<span class="rv-pill">全局当前</span>{% endif %}
+      <span>评测库 {{ db_path }}</span></span></div>
+
+  <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
+    <b>快照 = 一版评测集的全量身份</b>
+    <span>题面 + 判定标准 + 权重初始值 + 测法；内容不可原地改，新内容 = 新快照。
+      切换全局当前：<code>python -m scoring.cli snapshot use {{ row.evalset_version }}</code>；
+      同批答案跨快照结论差异在 <a href="/compare">结果对比 · 标准对比</a>。</span>
+  </div>
+
+  <div class="rv-sheet" style="margin-bottom:16px">
+    <div class="rv-pair-head">测法（method · {{ row.method_sha[:8] }}）</div>
+    <div class="rv-table-wrap">
+    <table class="rv-table">
+      <thead><tr><th>维度</th><th>执行模式</th></tr></thead>
+      <tbody>
+        {% for dim, mode in (m.modes or {}).items() %}
+        <tr><th scope="row">{{ dim if dim != 'default' else '（其余维度缺省）' }}</th><td>{{ mode }}
+          <span class="rv-meta">{% if mode == 'forced' %}强制加载技能{% else %}自然路由{% endif %}</span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="rv-meta" style="padding:8px 12px">执行改写：{{ m.run_rewrites|join('、') if m.run_rewrites else '无（只跑种子）' }}
+      —— 不在名单里的改写（如「诱导」）按测法不执行。</p>
+    <p class="rv-meta" style="padding:0 12px 8px">绊线锚点：{{ m.anchors|join('、') if m.anchors else '无' }}
+      {% if row.include %} · 收录口径：{{ row.include }}{% endif %}</p>
+  </div>
+
+  <div class="rv-table-wrap" style="margin-bottom:16px">
+    <div class="rv-pair-head" style="padding:8px 12px">题目清单（{{ members|length }} 题）</div>
+  <table class="rv-table">
+    <thead><tr><th>题</th><th>qkey</th><th>标准 standard_fp</th><th>该题当前标准</th></tr></thead>
+    <tbody>
+      {% for x in members %}
+      <tr><th scope="row" class="rv-mono">{{ x.uid }}{% if x.rewrite %} <span class="rv-meta">· {{ x.rewrite }}</span>{% endif %}</th>
+        <td class="rv-mono">{{ x.qkey }}</td>
+        <td class="rv-mono" title="{{ x.standard_fp }}">{{ x.standard_fp[:12] }}</td>
+        <td>{% if x.is_current %}<span class="rv-pill">一致</span>{% else %}<span class="rv-meta">已改（用例页可切回）</span>{% endif %}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if seeded_cases %}
+  <p class="rv-meta">权重种子：导入时按 md 内【权重】写入了 {{ seeded_cases|length }} 个用例（{{ seeded_cases|join('、') }}）；
+    此后的在线调整见各用例页「权重历史」。</p>
+  {% endif %}
+</main>
+{% endblock %}

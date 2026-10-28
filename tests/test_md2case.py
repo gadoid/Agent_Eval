@@ -325,7 +325,10 @@ def test_build_and_diff_and_rev_linkage(env):
     v1 = env / "dist" / "v1.jsonl"
     assert md2case.main(["build", str(env / "cases"), "-o", str(v1), "--version", "v1",
                          "--include", "admitted,draft"]) == 0
-    rows = [json.loads(l) for l in v1.read_text(encoding="utf-8").splitlines()]
+    lines = [json.loads(l) for l in v1.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["snapshot"]["version"] == "v1"          # 首行快照头（P2，doc/15 §3.9）
+    assert (env / "dist" / "v1.snapshot.json").exists()     # 测法 sidecar
+    rows = lines[1:]
     assert {r["uid"] for r in rows} == {"ec-0102#0", "ec-0102#1", "kr-0001#0"}
 
     # v2：kr 退役、ec 备注（内容修订）、rev 1→2、新增 kr-0002
@@ -353,7 +356,8 @@ def test_build_and_diff_and_rev_linkage(env):
     assert "ec-0102" in section("因降级移出")          # rev 变化触发降级，v2 中被移出
     src = (env / "cases" / "ec-0102.md").read_text(encoding="utf-8")
     assert "status: structured" in src and "rev 1→2" in src
-    v2_rows = [json.loads(l) for l in v2.read_text(encoding="utf-8").splitlines()]
+    v2_rows = [r for r in (json.loads(l) for l in v2.read_text(encoding="utf-8").splitlines()
+                           if l.strip()) if r.get("uid")]
     assert "ec-0102#0" not in {r["uid"] for r in v2_rows}
 
 
@@ -387,10 +391,14 @@ def test_weight_attr_compiles_and_round_trips(env):
                    .replace("后三位应填 500 【轮次：2】【证据：R1】", "后三位应填 500 【轮次：2】【证据：R1】【权重：0.5】"))
     case = parse_ok(env, text, "ec-0102")
     rows = md2case.compile_case(case, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")
-    weights = {f["id"]: f.get("weight") for f in rows[0]["facts"]}
-    assert weights == {"F1": 2, "X1": 0.5} and rows[0]["path"][0]["weight"] == 0
+    # v8（doc/15 §3.9）：md 原值在行顶层 weights；facts/path 不再内联（标准不含权重）
+    assert rows[0]["weights"] == {"F1": 2, "X1": 0.5, "path#1": 0}
+    assert all("weight" not in f for f in rows[0]["facts"]) and "weight" not in rows[0]["path"][0]
+    from scoring.items import weights_map_to_percent
+    pct = weights_map_to_percent(rows[0]["weights"], rows[0])   # 导入侧换算：计分与禁止分组换算
+    assert pct == {"F1": 100.0, "X1": 100.0}        # 各组只有显式成员 → 各自 100%；权重 0 组丢弃（不计分）
     again = md2case.md_to_case(md2case.case_to_md(case), "<render>")      # 权重 0 不能在往返中丢失
-    assert again["path"][0]["weight"] == 0 and {f["id"]: f.get("weight") for f in again["facts"]} == weights
+    assert again["path"][0]["weight"] == 0 and {f["id"]: f.get("weight") for f in again["facts"]} == {"F1": 2, "X1": 0.5}
 
 
 def test_error_bad_weight(env):

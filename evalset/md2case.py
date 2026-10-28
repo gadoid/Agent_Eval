@@ -887,10 +887,18 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
             row["turn"] = f.get("turn")
             row["group"] = f.get("group")
             row["evidence"] = f.get("evidence")
-            if "weight" in f:                      # 未写权重时不出现，读取方按 policy.default_weight
-                row["weight"] = f["weight"]
-            out.append(row)
+            out.append(row)          # v8 起权重不进标准（doc/15 §3.9）：行顶层 weights 带 md 原值
         return out
+
+    def weights_of():
+        w = {}
+        for f in case.get("facts") or []:
+            if "weight" in f and f.get("id"):
+                w[f["id"]] = f["weight"]
+        for i, p in enumerate(case.get("path") or [], 1):
+            if "weight" in p:
+                w[f"path#{i}"] = p["weight"]
+        return w
 
     base = {
         "schema": SCHEMA, "id": cid, "dim": case["dim"], "status": case["status"],
@@ -905,13 +913,16 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
                            "injections": p.get("injections", [])}
                           for p in case.get("preconditions") or []],
         "facts": facts_of(),
-        "path": case.get("path") or [],
+        "path": [{k: v for k, v in p.items() if k != "weight"} for p in (case.get("path") or [])],
+        "weights": weights_of(),
         "evidence": ev_rows,
         "reference_answer": case.get("reference_answer"),
         "note": case.get("note"),
         "evalset_version": version,
     }
 
+    if not base.get("weights"):
+        base.pop("weights", None)                # 无显式权重的用例不落键（等权计分）
     base["case_id"] = cid
     rows = [dict(base, uid=f"{cid}#0", variant_index=0, variant=None,
                  turns=[{"role": USER, "content": t} for t in turns])]
@@ -1101,6 +1112,42 @@ def cmd_convert(args) -> int:
     return 0
 
 
+def load_method(method_path: str | None = None) -> dict:
+    """测法（doc/15 §3.9）：--method 给定用之；缺省 evalset/method.yaml；缺失即报错。"""
+    path = Path(method_path) if method_path else HERE / "method.yaml"
+    if not path.exists():
+        raise SystemExit(f"构建中止：需要测法文件（{path}，或 --method 指定；doc/15 §3.9）")
+    method = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {"modes": method.get("modes") or {"default": "natural"},
+            "run_rewrites": list(method.get("run_rewrites") or []),
+            "anchors": list(method.get("anchors") or [])}
+
+
+def method_sha(method: dict) -> str:
+    import hashlib
+    canon = json.dumps(method, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+
+
+def validate_method(method: dict, mapping: dict, uids: set) -> list:
+    """校验测法：模式取值、改写方式在词表、锚点 uid 在本快照（不在的剔除并提示）。"""
+    warns = []
+    for dim, mode in (method.get("modes") or {}).items():
+        if dim != "default" and dim not in mapping.get("dims", {}):
+            raise SystemExit(f"构建中止：测法 modes 引用了未知维度「{dim}」")
+        if mode not in ("natural", "forced"):
+            raise SystemExit(f"构建中止：测法模式只能是 natural/forced，{dim}={mode}")
+    vocab = set(mapping.get("rewrites") or [])
+    bad = [r for r in method.get("run_rewrites") or [] if r not in vocab]
+    if bad:
+        raise SystemExit(f"构建中止：测法 run_rewrites 不在改写词表：{bad}")
+    missing = [a for a in method.get("anchors") or [] if a not in uids]
+    if missing:
+        warns.append(f"提示：测法锚点不在本快照（已剔除）：{'、'.join(missing)}")
+        method["anchors"] = [a for a in method["anchors"] if a in uids]
+    return warns
+
+
 def cmd_build(args) -> int:
     mapping = load_mapping()
     cases, failures, by_id = load_all(args.paths, mapping)
@@ -1108,7 +1155,7 @@ def cmd_build(args) -> int:
         report(failures)
         print(f"构建中止：{len(failures)} 个文件有错误", file=sys.stderr)
         return 1
-    verbose: list[str] = []
+    verbose = []
     points = load_knowledge([KNOWLEDGE_DIR]) if KNOWLEDGE_DIR.is_dir() else {}
     demoted = apply_rev_linkage(cases, by_id, points, verbose) if args.linkage else set()
     include = set(args.include.split(","))
@@ -1118,18 +1165,27 @@ def cmd_build(args) -> int:
         for r in compile_case(c, points, args.version):
             rows.append(r)
             row_map[r["uid"]] = r
+    method = load_method(args.method)
+    verbose += validate_method(method, mapping, set(row_map))
+    msha = method_sha(method)
     out = Path(args.output)
     if out.exists():
         print(f"构建中止：{out} 已存在（dist 按版本不可变）", file=sys.stderr)
         return 1
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh:
+        # 快照头（doc/15 §3.9）：首行声明版本/测法/入选；正文行权重在顶层 weights
+        fh.write(json.dumps({"snapshot": {"version": args.version, "method_sha": msha,
+                                          "include": args.include}}, ensure_ascii=False) + "\n")
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-
+    sidecar = out.with_name(out.stem + ".snapshot.json")
+    sidecar.write_text(json.dumps({"version": args.version, "method_sha": msha, "method": method},
+                                  ensure_ascii=False, indent=1), encoding="utf-8")
     if args.prev:
-        prev_map = {json.loads(l)["uid"]: json.loads(l)
-                    for l in Path(args.prev).read_text(encoding="utf-8").splitlines() if l.strip()}
+        prev_map = {r["uid"]: r for r in
+                    (json.loads(l) for l in Path(args.prev).read_text(encoding="utf-8").splitlines()
+                     if l.strip()) if r.get("uid")}      # 跳过快照头行（P2 dist / 新旧皆可作 prev）
         retired = {c["id"] for c in cases if c["status"] == "retired"}
         demoted_notes = {c["id"]: (c.get("status_note") or "").split("；")[-1] for c in cases if c["id"] in demoted}
         diff = build_diff(prev_map, row_map, retired, demoted_notes,
@@ -1267,10 +1323,11 @@ def main(argv=None) -> int:
     p.add_argument("-o", "--output")
     p.set_defaults(func=cmd_convert)
 
-    p = sub.add_parser("build", help="编译为运行用 JSONL")
+    p = sub.add_parser("build", help="编译为运行用 JSONL（首行快照头 + 同名 .snapshot.json 测法）")
     p.add_argument("paths", nargs="+")
     p.add_argument("-o", "--output", required=True)
     p.add_argument("--version", required=True)
+    p.add_argument("--method", help="测法文件（缺省 evalset/method.yaml）")
     p.add_argument("--prev", help="上一版 dist，用于生成自动 diff")
     p.add_argument("--include", default="admitted")
     p.add_argument("--no-linkage", dest="linkage", action="store_false",

@@ -12,10 +12,14 @@ import type { PlanOptions, PlannedEpisode } from './planner.js'
 import type { AgentAdapter } from './ports.js'
 import { mirrorSessions } from './mirror.js'
 import { ConfigError } from './profile.js'
-import { computeSnapshot, inventoryStale, loadInventory } from './snapshot.js'
+import { computeSnapshot, inventoryStale, loadInventory, subjectSection } from './snapshot.js'
 import { checkResumable, countStatuses, ResultStore } from './store.js'
 
 export interface EvaluationOptions extends PlanOptions {
+  /** 诊断执行（doc/15 §3.10）：显式给 --modes/--anchors 时的 run 标记，不进正式分 */
+  diagnostic?: boolean
+  /** 执行所用测法的 method_sha（run.json 留档；scoring 落 runs.method_sha） */
+  methodSha?: string
   evalsetPath: string
   profilePath: string
   profile: Profile
@@ -115,6 +119,8 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
     profile: { path: resolve(options.profilePath), sha256: options.profileSha256, content: profile },
     agent: { name: adapter.name, version: adapter.version ?? null, capabilities: adapter.capabilities },
     modes: [...options.modes],
+    diagnostic: options.diagnostic ?? false,
+    method: options.methodSha ? { method_sha: options.methodSha } : null,
     trials: options.trials,
     concurrency: options.concurrency,
     filters: { dims: [...(options.dims ?? [])], only: [...(options.only ?? [])] },
@@ -123,6 +129,7 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
     error_rate: 0,
     skipped,
     snapshot: snapshot as unknown as Record<string, unknown>,
+    subject: subjectSection(profile, snapshot),
     anchor_uids: [...new Set(episodes.filter((e) => e.anchor).map((e) => e.row.uid))],
     estimate: est,
     warnings,

@@ -4,12 +4,13 @@ import json
 
 import pytest
 
-from scoring.items import input_fp_of, judge_fp_of
-from scoring.policy import policy_from_dict
+from scoring.items import input_fp_of, standard_fp_of
+from scoring.policy import policy_from_dict, rules_dict_of_policy
+from scoring.rules import rules_from_dict
 from scoring.store import Store, StoreError
 from tests.helpers import make_run, mk_record
 
-POLICY = policy_from_dict({})
+POLICY = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
 POLICY_SHA = "p1"
 
 
@@ -38,12 +39,14 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "7"
+    assert v["value"] == "8"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
-    # 重复打开不重复迁移
+    # 重复打开不重复迁移（meta 行数稳定：v8 起含 current_snapshot/rules_sha 等固定键）
     s2 = Store(store.path)
-    assert s2.conn.execute("SELECT COUNT(*) c FROM meta").fetchone()["c"] == 1
+    n1 = store.conn.execute("SELECT COUNT(*) c FROM meta").fetchone()["c"]
+    n2 = s2.conn.execute("SELECT COUNT(*) c FROM meta").fetchone()["c"]
+    assert n1 == n2
     s2.close()
 
 
@@ -60,7 +63,7 @@ def test_ingest_idempotent(store, tmp_path):
     assert {q["qkey"]: q["first_seen"] for q in store.questions()} == first_seen
     a = store.answers()[0]
     assert a["mode"] == "natural" and a["trial"] == 1 and a["record_json"]
-    assert a["judge_fp_at_run"] == judge_fp_of(records[0]["case"])
+    assert a["judge_fp_at_run"] == standard_fp_of(records[0]["case"])
     assert a["qkey"] == records[0]["case"]["uid"] + "|" + input_fp_of(records[0]["case"])
 
 
@@ -90,12 +93,12 @@ def test_ingest_sets_current_when_absent(store, tmp_path):
     """R5：空库 ingest 即设当前期望并置活跃 → 首次 score 直接可判定。"""
     ingest(store, tmp_path, "demo", [mk_record()])
     q = store.questions()[0]
-    assert q["active"] == 1 and q["current_judge_fp"] == judge_fp_of(mk_record()["case"])
+    assert q["active"] == 1 and q["current_standard_fp"] == standard_fp_of(mk_record()["case"])
     # 已有当前期望的题目（specs import 过）不被 run 的执行时期望覆盖
     store.import_evalset(_dist_rows("v2", text="改写后的事实文本"), "v2")
     ingest(store, tmp_path, "demo2", [mk_record()])
     q2 = next(x for x in store.questions() if x["uid"] == "ec-1#0")
-    assert q2["current_judge_fp"] == judge_fp_of(_dist_rows("v2", text="改写后的事实文本")[0])
+    assert q2["current_standard_fp"] == standard_fp_of(_dist_rows("v2", text="改写后的事实文本")[0])
 
 
 def test_ingest_registers_at_run_spec(store, tmp_path):
@@ -120,13 +123,13 @@ def test_set_current_rolls_back_same_fp_spec(store, tmp_path):
     """R1：只改参考答案的 v2（判定指纹不变）后，set-current v1 能回退。"""
     ingest(store, tmp_path, "demo", [mk_record()])
     store.import_evalset(_dist_rows("v1", ref="旧参考"), "v1")
-    fp_v1 = judge_fp_of(_dist_rows("v1")[0])
+    fp_v1 = standard_fp_of(_dist_rows("v1")[0])
     assert store.current_spec(store.questions()[0]["qkey"])[0] == fp_v1
     store.import_evalset(_dist_rows("v2", ref="新参考"), "v2")     # 判定指纹相同
     assert store.current_spec(store.questions()[0]["qkey"])[0] == fp_v1   # 内容寻址，期望不变
     n = store.set_current("v1")
     q = store.questions()[0]
-    assert n == 1 and q["active"] == 1 and q["current_judge_fp"] == fp_v1
+    assert n == 1 and q["active"] == 1 and q["current_standard_fp"] == fp_v1
 
 
 def test_set_current_rolls_back_changed_spec(store, tmp_path):
@@ -134,7 +137,7 @@ def test_set_current_rolls_back_changed_spec(store, tmp_path):
     ingest(store, tmp_path, "demo", [mk_record()])
     store.import_evalset(_dist_rows("v1"), "v1")
     store.import_evalset(_dist_rows("v2", text="改写后的事实文本"), "v2")
-    fp_v1 = judge_fp_of(_dist_rows("v1")[0])
+    fp_v1 = standard_fp_of(_dist_rows("v1")[0])
     assert store.current_spec(store.questions()[0]["qkey"])[0] != fp_v1
     assert store.set_current("v1") == 1
     assert store.current_spec(store.questions()[0]["qkey"])[0] == fp_v1
@@ -144,10 +147,10 @@ def test_set_current_unknown_version_is_error(store, tmp_path):
     """R1：未知版本 → 报错，题目状态与当前期望不变。"""
     ingest(store, tmp_path, "demo", [mk_record()])
     store.import_evalset(_dist_rows("v1"), "v1")
-    before = {q["qkey"]: (q["active"], q["current_judge_fp"]) for q in store.questions()}
+    before = {q["qkey"]: (q["active"], q["current_standard_fp"]) for q in store.questions()}
     with pytest.raises(StoreError, match="未知评测集版本"):
         store.set_current("no-such-version")
-    assert {q["qkey"]: (q["active"], q["current_judge_fp"]) for q in store.questions()} == before
+    assert {q["qkey"]: (q["active"], q["current_standard_fp"]) for q in store.questions()} == before
 
 
 def test_missing_question_marked_inactive(store, tmp_path):
@@ -156,14 +159,14 @@ def test_missing_question_marked_inactive(store, tmp_path):
     store.import_evalset([dict(dict(mk_record()["case"], uid="other#0", id="other", case_id="other"),
                                evalset_version="v2")], "v2")
     q = next(x for x in store.questions() if x["uid"] == "ec-1#0")
-    assert q["active"] == 0 and q["current_judge_fp"] is not None
+    assert q["active"] == 0 and q["current_standard_fp"] is not None
 
 
 # ---------------------------------------------------------------- 有效结论与改判（§6.3）
 
-def _write_one_verdict(store, answer_id, judge_fp, chain_sha, item_id="F1", kind="required",
+def _write_one_verdict(store, answer_id, standard_fp, chain_sha, item_id="F1", kind="required",
                        value="未提及", item_sha="is1", answer_sha="as1", status="ok"):
-    store.write_verdicts(answer_id, judge_fp, chain_sha, [{
+    store.write_verdicts(answer_id, standard_fp, chain_sha, [{
         "schema": 1, "run_id": "r", "episode_id": "e", "uid": "u",
         "item": {"kind": kind, "id": item_id, "turn": None},
         "machine": {"value": value, "source": "judge" if value else "", "operator": "f@1", "reason": ""},
@@ -201,7 +204,7 @@ def test_voided_reviews_listing(store, tmp_path):
 
 # ---------------------------------------------------------------- 未决队列（R2 验收）
 
-def _write_verdicts(store, answer_id, judge_fp, chain_sha, specs):
+def _write_verdicts(store, answer_id, standard_fp, chain_sha, specs):
     """一次写一个会话的多条判定（write_verdicts 按 (answer, fp, chain) 整键覆盖）。"""
     rows = []
     for sp in specs:
@@ -212,7 +215,7 @@ def _write_verdicts(store, answer_id, judge_fp, chain_sha, specs):
                         "operator": "f@1", "reason": ""},
             "trace": [], "answer_sha": sp.get("answer_sha", "as1"),
             "item_sha": sp.get("item_sha", "is1"), "status": sp.get("status", "ok")})
-    store.write_verdicts(answer_id, judge_fp, chain_sha, rows)
+    store.write_verdicts(answer_id, standard_fp, chain_sha, rows)
 
 
 def test_undecided_items_respect_reviews_and_short_circuit(store, tmp_path):
@@ -336,7 +339,7 @@ def _build_v1_db(path, record, run_id="r1"):
     from scoring.store import _SCHEMA
     case = record["case"]
     old_q = f"{case['uid']}|{_old_input_fp(case)}"
-    fp = judge_fp_of(case)
+    fp = standard_fp_of(case)
     conn = sqlite3.connect(str(path))
     conn.executescript(_SCHEMA)
     manifest = {"run_id": run_id, "started_at": "2026-10-22T06:48:21Z", "snapshot": {"skills_mode": "default-roots"}}
@@ -367,8 +370,8 @@ def test_v1_upgrade_recompute_and_backfill(tmp_path):
     old_q = _build_v1_db(db_path, record)
     assert old_q != qkey_of(record["case"])          # 旧算法 qkey 不含 topic → 必然不同
 
-    store = Store(db_path)                           # 打开即完成 1→2→…→7 迁移
-    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "7"
+    store = Store(db_path)                           # 打开即完成 1→2→…→8 迁移
+    assert store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()["value"] == "8"
     new_q = qkey_of(record["case"])
     qs = store.questions()
     assert len(qs) == 1 and qs[0]["qkey"] == new_q   # 没有拆成两题
@@ -413,7 +416,7 @@ def test_v1_upgrade_merges_when_new_qkey_already_exists(tmp_path):
     qs = store.questions()
     assert len(qs) == 1 and qs[0]["qkey"] == new_q
     assert qs[0]["first_seen"] == "2026-10-22T08:00:00"      # 合并取更早
-    assert qs[0]["current_judge_fp"] == judge_fp_of(record["case"])   # 新行无当前期望 → 取旧行的
+    assert qs[0]["current_standard_fp"] == standard_fp_of(record["case"])   # 新行无当前期望 → 取旧行的
     assert qs[0]["active"] == 1
     store.close()
 
@@ -450,18 +453,18 @@ def test_v1_upgrade_qkey_fork_expectations_follow_their_topic(tmp_path):
     conn.execute("INSERT INTO runs VALUES(?,?,?,?,?,?)",
                  ("r2", "/y", "v1", "p1", "{}", "2026-10-23T09:30:00"))
     conn.execute("INSERT INTO answers VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                 ("r2/" + ep_y, old_q, "r2", ep_y, judge_fp_of(ry["case"]), "p1", '["glm-5.3"]',
+                 ("r2/" + ep_y, old_q, "r2", ep_y, standard_fp_of(ry["case"]), "p1", '["glm-5.3"]',
                   ry["mode"], ry["trial"], "default-roots", None, "v1", "ok",
                   json.dumps(ry, ensure_ascii=False)))
     conn.commit()
     conn.close()
 
     store = Store(db_path)
-    fp_x = judge_fp_of(rx["case"])
+    fp_x = standard_fp_of(rx["case"])
     by_q = {q["qkey"]: q for q in store.questions()}
     assert set(by_q) == {q_x, q_y}                    # 分叉成两题，旧 qkey 消失
-    assert by_q[q_x]["current_judge_fp"] == fp_x and by_q[q_x]["active"] == 1
-    assert by_q[q_y]["current_judge_fp"] is None and by_q[q_y]["active"] == 0
+    assert by_q[q_x]["current_standard_fp"] == fp_x and by_q[q_x]["active"] == 1
+    assert by_q[q_y]["current_standard_fp"] is None and by_q[q_y]["active"] == 0
     assert by_q[q_y]["first_seen"] == by_q[q_x]["first_seen"] == "2026-10-22T08:00:00"
     assert store.spec_of(q_x, fp_x) is not None       # 期望在自己的 topic 名下
     assert store.spec_of(q_y, fp_x) is None
@@ -473,12 +476,12 @@ def test_v1_upgrade_qkey_fork_expectations_follow_their_topic(tmp_path):
 
 
 def test_v1_upgrade_qkey_fork_current_pointer_follows_its_spec(tmp_path):
-    """M1：旧 qkey 下两份期望（judge_fp 不同、topic 不同）各归各的新 qkey；
+    """M1：旧 qkey 下两份期望（standard_fp 不同、topic 不同）各归各的新 qkey；
     当前期望指针指向其期望所在的新 qkey，spec_versions 随期望拆分。"""
     from scoring.items import qkey_of
     rx = _topic_record("尾款与电放")                  # 期望 1：facts 文本 A、topic X
     ry = _topic_record("信用证交单", fact_text="电放必须取得托收指示书")  # 期望 2：文本 B、topic Y
-    fp_x, fp_y = judge_fp_of(rx["case"]), judge_fp_of(ry["case"])
+    fp_x, fp_y = standard_fp_of(rx["case"]), standard_fp_of(ry["case"])
     assert fp_x != fp_y
 
     db_path = tmp_path / "v1fork2.db"
@@ -488,7 +491,7 @@ def test_v1_upgrade_qkey_fork_current_pointer_follows_its_spec(tmp_path):
     conn.execute("INSERT INTO specs VALUES(?,?,?,?,?)",
                  ("ec-1#0|" + _old_input_fp(ry["case"]), fp_y,
                   json.dumps(ry["case"], ensure_ascii=False), "v2", "2026-10-23T09:00:00"))
-    conn.execute("UPDATE questions SET current_judge_fp=?", (fp_y,))   # 当前期望 = 期望 2
+    conn.execute("UPDATE questions SET current_judge_fp=?", (fp_y,))   # 当前期望 = 期望 2（v1 旧列名）
     conn.commit()
     conn.close()
 
@@ -497,10 +500,10 @@ def test_v1_upgrade_qkey_fork_current_pointer_follows_its_spec(tmp_path):
     assert store.spec_of(q_x, fp_x) is not None and store.spec_of(q_y, fp_y) is not None
     assert store.current_spec(q_y)[0] == fp_y        # 指针跟着期望 2 走
     by_q = {q["qkey"]: q for q in store.questions()}
-    assert by_q[q_y]["current_judge_fp"] == fp_y and by_q[q_y]["active"] == 1
-    assert by_q[q_x]["current_judge_fp"] is None and by_q[q_x]["active"] == 0
-    sv = {(r["qkey"], r["judge_fp"]) for r in store.conn.execute(
-        "SELECT qkey, judge_fp FROM spec_versions")}
+    assert by_q[q_y]["current_standard_fp"] == fp_y and by_q[q_y]["active"] == 1
+    assert by_q[q_x]["current_standard_fp"] is None and by_q[q_x]["active"] == 0
+    sv = {(r["qkey"], r["standard_fp"]) for r in store.conn.execute(
+        "SELECT qkey, standard_fp FROM spec_versions")}
     assert sv == {(q_x, fp_x), (q_y, fp_y)}
     store.close()
 
@@ -591,12 +594,12 @@ def test_human_total_override_and_voiding(store, tmp_path):
                              {"score": 65, "reason": "表述到位，扣分过重"}, "codfish", fp, "c1", POLICY, POLICY_SHA)
     assert c["status"] == "pass" and c["score"] == 65 and c["score_source"] == "human" and c["auto_score"] == 33
     assert store.voided_reviews(a["answer_id"]) == []
-    # 期望修订（judge_fp 变）后人工会话分作废
-    store.conn.execute("UPDATE questions SET current_judge_fp='fp-new' WHERE qkey=?", (a["qkey"],))
+    # 期望修订（standard_fp 变）后人工会话分作废
+    store.conn.execute("UPDATE questions SET current_standard_fp='fp-new' WHERE qkey=?", (a["qkey"],))
     store.conn.execute("INSERT INTO specs SELECT qkey, 'fp-new', spec_json, evalset_version, imported_at"
-                       " FROM specs WHERE qkey=? AND judge_fp=?", (a["qkey"], fp))
+                       " FROM specs WHERE qkey=? AND standard_fp=?", (a["qkey"], fp))
     voided = store.voided_reviews(a["answer_id"])
-    assert any(v["review"]["item_id"] == "@total" and "期望已修订" in v["reason"] for v in voided)
+    assert any(v["review"]["item_id"] == "@total" and "标准已修订" in v["reason"] for v in voided)
 
 
 def test_preview_does_not_write(store, tmp_path):
@@ -644,50 +647,82 @@ def test_spot_sampling_stable_per_answer():
 
 # ---------------------------------------------------------------- 权重在线调整（doc/10 §5.4）
 
-def test_revise_weights_new_spec_and_validation(store, tmp_path):
-    """权重调整写成新 judge_fp 的期望并设为当前；≤100% 与可调条目校验；重复保存幂等。"""
+def test_weight_history_and_conclusions_under_weight(store, tmp_path):
+    """权重历史（doc/15 §3.5 可追溯）：按保存分组最新在前；旧组的 weight_fp 与
+    当时缓存一致；旧权重下的结论可直读；切回 = 用旧组值再存一次（指纹复原）。"""
+    a, fp = _scored_answer(store, tmp_path)                    # F1(2)/E1(1)/X1，用例 ec-1
+    store.recompute_conclusion(a["answer_id"], fp, "c1", POLICY, POLICY_SHA)
+    r1 = store.revise_weights("ec-1", {"F1": 40, "E1": 30})
+    assert store.rescore_cases(["ec-1"], POLICY, POLICY_SHA) >= 1
+    old_fp = r1["weight_fp"]
+    assert store.questions()[0]["current_weight_fp"] == old_fp
+
+    r2 = store.revise_weights("ec-1", {"F1": 70, "E1": 10}, label="提高F1")
+    store.rescore_cases(["ec-1"], POLICY, POLICY_SHA)
+
+    hist = store.weight_history("ec-1")
+    assert len(hist) == 3                                      # 导入种子 + 两次在线调整
+    assert hist[0]["active"] and hist[0]["label"] == "提高F1" and hist[0]["weight_fp"] == r2["weight_fp"]
+    assert not hist[1]["active"] and hist[1]["weights"] == {"F1": 40, "E1": 30}
+    assert hist[1]["weight_fp"] == old_fp                      # 与当时的缓存指纹一致
+    assert hist[2]["source"] == "import"                       # md 内联权重是导入种子
+
+    rows = store.case_conclusions_under_weight("ec-1", old_fp, "c1", POLICY_SHA)
+    assert len(rows) == 1 and rows[0]["status"] is not None    # 旧权重下结论仍在
+    rows_new = store.case_conclusions_under_weight("ec-1", r2["weight_fp"], "c1", POLICY_SHA)
+    assert rows_new[0]["status"] is not None
+
+    store.revise_weights("ec-1", hist[1]["weights"], label="切回")
+    w, wfp, _ = store.effective_weights("ec-1")
+    assert w == {"F1": 40, "E1": 30} and wfp == old_fp         # 切回后指纹复原
+
+
+def test_revise_weights_case_level_and_validation(store, tmp_path):
+    """v8（doc/15 B1/§3.5）：权重按用例存 item_weights，保存即重算——不产生新
+    标准、不触发重判；校验只收计分条目、0–100、覆盖全部计分条目。"""
     ingest(store, tmp_path, "demo", [mk_record()])
     q = store.questions()[0]
-    old_fp = q["current_judge_fp"]
+    old_fp = q["current_standard_fp"]
     spec0 = store.spec_of(q["qkey"], old_fp)
-    assert all("weight" not in f for f in spec0["facts"])    # 原始未写权重
+    assert all("weight" not in f for f in spec0["facts"])    # 标准不含权重（v8 剥除）
 
-    res = store.revise_weights(q["qkey"], old_fp, {"F1": 40})
-    assert res["changed"] and res["judge_fp"] != old_fp
-    assert store.current_spec(q["qkey"])[0] == res["judge_fp"]
-    f1 = next(f for f in store.spec_of(q["qkey"], res["judge_fp"])["facts"] if f["id"] == "F1")
-    assert f1["weight"] == 40
-    assert store.spec_of(q["qkey"], res["judge_fp"])["weight_percent"] is True  # 百分制标记（回显不归一）
-    assert "rejudge" in res["rejudge"]
+    res = store.revise_weights(q["case_id"], {"F1": 40})
+    assert res["changed"] and res["weight_fp"]
+    assert store.current_spec(q["qkey"])[0] == old_fp        # 标准未变，无需 rejudge
+    w, wfp, inc = store.effective_weights(q["case_id"])
+    assert w == {"F1": 40} and wfp == res["weight_fp"] and not inc
+    rows = store.conn.execute("SELECT item_id, weight, active, source FROM item_weights"
+                              " WHERE case_id=? ORDER BY item_id", (q["case_id"],)).fetchall()
+    assert [(r["item_id"], r["weight"], r["active"], r["source"]) for r in rows] == [("F1", 40, 1, "web")]
 
     with pytest.raises(StoreError):                          # 超 100%
-        store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 101})
+        store.revise_weights(q["case_id"], {"F1": 101})
     with pytest.raises(StoreError):                          # 禁止事实不可调（否决项）
-        store.revise_weights(q["qkey"], res["judge_fp"], {"X1": 50})
-    again = store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 40})
-    assert again["changed"] is False                          # 同值幂等
-    lab = store.revise_weights(q["qkey"], res["judge_fp"], {"F1": 50}, label=" 权重-提高F1 ")
-    assert lab["changed"] and lab["judge_fp"] != res["judge_fp"]
-    assert store.conn.execute("SELECT evalset_version FROM specs WHERE qkey=? AND judge_fp=?",
-                              (q["qkey"], lab["judge_fp"])).fetchone()["evalset_version"] == "权重-提高F1"
+        store.revise_weights(q["case_id"], {"X1": 50})
+    store.revise_weights(q["case_id"], {"F1": 50}, label="权重-提高F1")
+    rows = store.conn.execute("SELECT item_id, weight, active, label FROM item_weights"
+                              " WHERE case_id=? ORDER BY active DESC, set_at", (q["case_id"],)).fetchall()
+    assert rows[0]["weight"] == 50 and rows[0]["label"] == "权重-提高F1" and rows[0]["active"] == 1
+    assert rows[1]["active"] == 0                            # 旧行留历史（可追溯）
 
 
-def test_migrate_weight_percent_backfills_marker(store, tmp_path):
-    """v6 迁移：早期「权重调整」落库的期望（无标记）补 weight_percent，
-    否则用例页把权值重新归一到 100%，未分配丢失、像没保存。"""
-    ingest(store, tmp_path, "demo", [mk_record()])
-    q = store.questions()[0]
-    fp = store.revise_weights(q["qkey"], q["current_judge_fp"], {"F1": 40})["judge_fp"]
-    legacy = store.spec_of(q["qkey"], fp)
-    assert legacy["weight_percent"] is True                   # 新落库即带标记
-    legacy = json.loads(json.dumps(legacy)); legacy.pop("weight_percent")
-    with store.lock, store.conn:                             # 模拟修复前落库的旧结构
-        store.conn.execute("UPDATE specs SET spec_json=? WHERE qkey=? AND judge_fp=?",
-                           (json.dumps(legacy, ensure_ascii=False), q["qkey"], fp))
-    assert not store.spec_of(q["qkey"], fp).get("weight_percent")
-    from scoring.store import _migrate_weight_percent
-    _migrate_weight_percent(store.conn)
-    assert store.spec_of(q["qkey"], fp)["weight_percent"] is True
+def test_weights_touched_after_total(store, tmp_path):
+    """C4：人工总分之后改权重 → weights_touched_after 为真（页面提示），人工总分本身仍有效。"""
+    a, fp = _scored_answer(store, tmp_path)
+    store.submit_reviews(a["answer_id"], [{"item_id": "F1", "value": "未提及"}],
+                         {"score": 65, "reason": "到位"}, "codfish", fp, "c1", POLICY, POLICY_SHA)
+    assert store.total_override(store.reviews_for(a["answer_id"]), fp,
+                                store._conversation_sha(a, fp))["score"] == 65
+    assert store.weights_touched_after(a["answer_id"]) is False
+    with store.lock, store.conn:      # 回拨 1 秒，避开同秒比较的时间粒度
+        store.conn.execute("UPDATE reviews SET at='2000-01-01T00:00:00'"
+                           " WHERE answer_id=? AND item_id='@total'", (a["answer_id"],))
+    cid = store.question(a["qkey"])["case_id"]
+    store.revise_weights(cid, {"F1": 80, "E1": 20})   # _scored_answer 的 F1/E1 都是计分条目，须全覆盖
+    assert store.weights_touched_after(a["answer_id"]) is True
+    # 人工总分不因权重作废（标准与回答未变）
+    assert store.total_override(store.reviews_for(a["answer_id"]), fp,
+                                store._conversation_sha(a, fp))["score"] == 65
 
 
 # ---------------------------------------------------------------- 执行记录与判定配置命名（命名改造）
