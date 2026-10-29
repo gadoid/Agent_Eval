@@ -829,6 +829,7 @@ def test_case_create_and_roundtrip(served, tmp_path):
     parsed = md2case.md_to_case(text, str(saved))
     assert parsed["id"] == "kr-9001" and parsed["facts"][0]["keywords"] == ["开船后的提单"]
     assert ok.json()["hint"] and "build" in ok.json()["hint"][1]
+    assert f"--db {Path(db).as_posix()}" in ok.json()["hint"][1]   # 手动 build 与页面保存同口径
 
     # 重复 id / 非法目录 / 校验失败（ec 缺注入与禁止事实）
     dup = c2.post("/api/case/create", json=_kr_body())

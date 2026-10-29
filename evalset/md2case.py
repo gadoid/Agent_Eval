@@ -19,6 +19,7 @@ import argparse
 import datetime as _dt
 import json
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -1409,6 +1410,14 @@ def next_version(dist_dir: Path, today=None, reserved=()) -> str:
     return f"{base}-{max(ns) + 1}"
 
 
+def snapshot_versions_in_db(db_path: Path) -> list[str]:
+    """build --db：读评测库已登记的版本（自动取号用）。库不存在或缺表直接抛错。"""
+    if not db_path.exists():
+        raise FileNotFoundError(f"评测库不存在：{db_path}")
+    with sqlite3.connect(str(db_path)) as conn:
+        return [r[0] for r in conn.execute("SELECT evalset_version FROM snapshots")]
+
+
 def cmd_build(args) -> int:
     mapping = load_mapping()
     cases, failures, by_id = load_all(args.paths, mapping)
@@ -1421,9 +1430,19 @@ def cmd_build(args) -> int:
     demoted = apply_rev_linkage(cases, by_id, points, verbose) if args.linkage else set()
     include = set(args.include.split(","))
     picked = [c for c in cases if c["status"] in include]
-    out = Path(args.output)
+    out = Path(args.output) if args.output else None
+    dist_dir = out.parent if out else Path("dist")
     if not args.version:                                  # 决定 16：缺省自动取号
-        args.version = next_version(out.parent)
+        reserved = ()
+        if args.db:
+            try:
+                reserved = snapshot_versions_in_db(Path(args.db))
+            except (OSError, sqlite3.Error) as e:
+                print(f"构建中止：读取评测库版本失败（{args.db}）：{e}", file=sys.stderr)
+                return 1
+        args.version = next_version(dist_dir, reserved=reserved)
+    if out is None:                                       # -o 可省略：按版本号命名
+        out = dist_dir / f"evalset-{args.version}.jsonl"
     rows, row_map = [], {}
     for c in picked:
         for r in compile_case(c, points, args.version):
@@ -1616,8 +1635,10 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("build", help="编译为运行用 JSONL（首行快照头 + 同名 .snapshot.json 测法）")
     p.add_argument("paths", nargs="+")
-    p.add_argument("-o", "--output", required=True)
+    p.add_argument("-o", "--output",
+                   help="输出文件（缺省 dist/evalset-<版本号>.jsonl）")
     p.add_argument("--version", help="版本号（缺省自动取号 vYYYYMMDD-N，doc/17 决定 16）")
+    p.add_argument("--db", help="可选：读评测库 snapshots 表参与自动取号，避开已登记版本")
     p.add_argument("--method", help="测法文件（缺省 evalset/method.yaml）")
     p.add_argument("--prev", help="上一版 dist，用于生成自动 diff")
     p.add_argument("--include", default=DEFAULT_INCLUDE)

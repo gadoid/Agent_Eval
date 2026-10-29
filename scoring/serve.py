@@ -468,7 +468,7 @@ def _build_case_md(b: CaseNewIn) -> tuple[str, list[str], list[str]]:
     return md, errors, warnings
 
 
-def _build_hint(rel_path: str, reserved=()) -> list[str]:
+def _build_hint(rel_path: str, reserved=(), db=None) -> list[str]:
     """保存成功后的下一步命令（新建用例仍走手动流程，doc/17 §5.1）。"""
     m2c = _md2case()
     dist = _REPO_ROOT / "evalset" / "dist"
@@ -476,6 +476,8 @@ def _build_hint(rel_path: str, reserved=()) -> list[str]:
     prevs = sorted(dist.glob("evalset-*.jsonl")) if dist.is_dir() else []
     build = (f"python evalset/md2case.py build evalset/cases"
              f" -o evalset/dist/evalset-{version}.jsonl --version {version}")
+    if db:
+        build += f" --db {Path(db).as_posix()}"        # 与页面保存同口径：取号避开库内版本
     if prevs:
         build += f" --prev {prevs[-1].as_posix()}"
     return [f"python evalset/md2case.py check {rel_path}", build,
@@ -1605,7 +1607,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         except ValueError:
             rel = str(path)
         return {"id": cid, "path": rel, "warnings": warnings,
-                "md": md, "hint": _build_hint(rel, reserved=store.snapshot_versions())}
+                "md": md, "hint": _build_hint(rel, reserved=store.snapshot_versions(),
+                                              db=store.path)}
 
     # ---------------- 旧路由 301（§4.1）
     @app.get("/question/{qkey}")

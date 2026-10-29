@@ -415,6 +415,29 @@ def test_build_default_includes_structured(env):
     assert rows[0]["snapshot"]["include"] == md2case.DEFAULT_INCLUDE
 
 
+def test_build_auto_version_skips_db_versions(env, monkeypatch):
+    """build --db（doc/17 决定 16）：自动取号把评测库已登记的版本算进去——dist 不进 git，
+    换机器或清空 dist 后同一天不再重号，避免 build 出注定导入失败的版本。
+    省略 -o 时按版本号落到 dist/evalset-<版本>.jsonl。"""
+    import datetime
+    import sqlite3
+    monkeypatch.chdir(env)
+    (env / "cases").mkdir()
+    (env / "cases" / "kr-0001.md").write_text(KR_CASE, encoding="utf-8")
+    today = datetime.date.today().strftime("%Y%m%d")
+    db = env / "eval.db"
+    with sqlite3.connect(str(db)) as conn:
+        conn.execute("CREATE TABLE snapshots(evalset_version TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO snapshots VALUES(?)", (f"v{today}-1",))
+    assert md2case.main(["build", str(env / "cases"), "--db", str(db)]) == 0
+    out = env / "dist" / f"evalset-v{today}-2.jsonl"
+    header = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+    assert header["snapshot"]["version"] == f"v{today}-2"
+    # 库不存在 → 中止（不静默回落到只扫本地 dist）
+    assert md2case.main(["build", str(env / "cases"),
+                         "--db", str(env / "nope.db")]) == 1
+
+
 def test_build_refuses_overwrite(env):
     (env / "cases").mkdir()
     (env / "cases" / "kr-0001.md").write_text(KR_CASE, encoding="utf-8")
