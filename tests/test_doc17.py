@@ -301,3 +301,49 @@ def test_save_pipeline_version_autoincrements(pipeline_env):
     assert vs[0] != vs[1] and vs[1].endswith(str(int(vs[1].rsplit("-", 1)[1])))
     files = sorted(p.name for p in dist.glob("evalset-*.jsonl"))
     assert len(files) == 2
+
+
+REF_CASE = """---
+id: kr-0401
+dim: 知识召回
+topic: 测试
+granularity: 细节
+status: admitted
+answerable: false
+拒答权重: 80
+tags: [来源/人工构造]
+---
+
+## 问题
+舱单资料最晚开船前几天提交？
+
+## 关键条件
+- 业务：舱单
+
+## 参考答案
+依据资料无法回答。
+
+## 备注
+不可回答题：期望说明依据资料无法回答。
+"""
+
+
+def test_save_pipeline_refusal_weight(pipeline_env):
+    """拒答权重（饼图编辑器拖杠）：拒答伪条目不在 edit 的 items 集内（带去即 400，
+    前端把它从 items 里排除）；改拒答权重走 refusal_weight 字段落 md，保存时按
+    决定 12 归一写回——唯一计分条目恒回 100。"""
+    client, cases, dist, db = pipeline_env
+    (cases / "batch" / "kr-0401.md").write_text(REF_CASE, encoding="utf-8")
+
+    bad = client.post("/api/case/kr-0401/edit", json={
+        "case_id": "kr-0401", "items": [{"id": "refusal", "weight": 60}]})
+    assert bad.status_code == 400 and "未知条目" in bad.json()["error"]
+
+    r = client.post("/api/case/kr-0401/edit", json={
+        "case_id": "kr-0401", "refusal_weight": 60})
+    assert r.status_code == 200, r.text
+    md = (cases / "batch" / "kr-0401.md").read_text(encoding="utf-8")
+    assert "拒答权重: 100" in md                       # 单一计分条目归一回 100
+    s = Store(db)
+    assert s.case_scoring("kr-0401")["items"]["refusal"]["weight"] == 100.0
+    s.close()

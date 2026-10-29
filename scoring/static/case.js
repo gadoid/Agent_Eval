@@ -196,7 +196,7 @@
   rows.forEach(function (r) {
     var w = Math.round((r.weight || 0) * 100) / 100;
     items.push({ id: r.id, kind: r.kind, use: r.use === 'ref' ? 'ref' : 'score',
-                 pct: w, last: w, fixed: r.kind === 'refusal', hint: r.node_hint || '',
+                 pct: w, last: w, orig: w, fixed: r.kind === 'refusal', hint: r.node_hint || '',
                  label: r.kind === 'path' ? '路径' : (r.kind === 'refusal' ? '拒答' : r.id),
                  color: COLORS[items.length % COLORS.length] });
   });
@@ -204,8 +204,8 @@
   var rest = { id: '@rest', use: 'score', pct: 0, fixed: false, label: '未分配', color: GRAY };
   function total() { return items.reduce(function (a, it) { return a + (it.use === 'score' ? it.pct : 0); }, 0); }
   function item(id) { for (var i = 0; i < items.length; i++) if (items[i].id === id) return items[i]; return null; }
-  function largest() {   // 未分配互转只动可编辑的计分条目（固定拒答不参与）
-    var cand = items.filter(function (s) { return s.use === 'score' && !s.fixed; });
+  function largest() {   // 未分配互转的对象：权重最大的计分条目
+    var cand = items.filter(function (s) { return s.use === 'score'; });
     return cand.slice().sort(function (a, b) { return b.pct - a.pct; })[0];
   }
   function fmt(v) { return String(Math.round(v * 100) / 100); }
@@ -288,13 +288,12 @@
              (s.use === 'score') + '" title="切换条目用途：计分参与会话分；参考只判定不计分">' +
              (s.use === 'score' ? '计分' : '参考') + '</button>';
     } else if (s.fixed) {
-      pill = '<span class="sc-use-pill" title="拒答权重由 md「拒答权重」固定">计分</span>';
+      pill = '<span class="sc-use-pill" title="拒答条目始终计分；权重回写 md「拒答权重」">计分</span>';
     }
     var op = (isRest || ref) ? ';opacity:.5' : '';
-    var knob = (!isRest && !s.fixed && !ref)
-      ? '<button class="rv-wbar-knob" type="button" aria-label="' + s.label + ' 比例"></button>' : '';
+    var knob = ref ? '' : '<button class="rv-wbar-knob" type="button" aria-label="' + s.label + ' 比例"></button>';
     var pctTxt = ref ? '参考' : fmt(s.pct) + '%';
-    var pctTitle = (ref || s.fixed) ? '' : ' title="双击直接输入百分比"';
+    var pctTitle = ref ? '' : ' title="双击直接输入百分比"';
     return '<i class="rv-lg-dot" style="background:' + (ref ? GRAY : s.color) + op + '"></i>' +
       '<span class="rv-lg-label" title="' + s.label + (s.hint ? ' · ' + s.hint : '') + '">' + s.label + '</span>' +
       pill +
@@ -423,9 +422,14 @@
 
   // ---------------- 保存（服务端再校验；同值幂等）
   function payload() {
-    return items.map(function (it) {
-      return { id: it.id, use: it.use, weight: it.use === 'score' ? it.pct : 0 };
-    });
+    return items.filter(function (it) { return it.kind !== 'refusal'; })   // 拒答不在 edit 的条目集里
+      .map(function (it) {
+        return { id: it.id, use: it.use, weight: it.use === 'score' ? it.pct : 0 };
+      });
+  }
+  function refusalWeight() {          // 拒答权重单独走 refusal_weight 字段（改了才带）
+    var rf = items.filter(function (it) { return it.kind === 'refusal'; })[0];
+    return (rf && Math.abs(rf.pct - rf.orig) > 1e-9) ? rf.pct : null;
   }
   function say(text, isError) {
     if (msg) {
@@ -462,9 +466,10 @@
   if (saveMd) saveMd.addEventListener('click', function () {
     if (!window.confirm('保存到用例：回写 md 并生成新快照设为当前（覆盖此前的快照选择与逐题偏离）。继续？')) return;
     saveMd.disabled = true;
-    post('/api/case/' + encodeURIComponent(caseId) + '/edit', {
-      case_id: caseId, items: payload()
-    }).then(function (res) { saveMd.disabled = false; done(res, '保存到用例'); });
+    var body = { case_id: caseId, items: payload() };
+    if (refusalWeight() !== null) body.refusal_weight = refusalWeight();
+    post('/api/case/' + encodeURIComponent(caseId) + '/edit', body)
+      .then(function (res) { saveMd.disabled = false; done(res, '保存到用例'); });
   });
 
   var saveTemp = document.getElementById('sc-save-temp');
