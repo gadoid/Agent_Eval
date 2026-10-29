@@ -425,6 +425,24 @@ def test_draft_edit_only_writes_md(pipeline_env):
     s.close()
 
 
+def test_retired_edit_only_writes_md(pipeline_env):
+    """§5.1：retired 同样不进 dist，编辑只写 md，不 build、不产生快照。"""
+    client, cases, dist, db = pipeline_env
+    retired = PIPE_CASE.replace("id: kr-0301", "id: kr-0305").replace(
+        "status: admitted", "status: retired")
+    (cases / "batch" / "kr-0305.md").write_text(retired, encoding="utf-8")
+    r = client.post("/api/case/kr-0305/edit", json={
+        "case_id": "kr-0305", "items": [{"id": "F1", "weight": 70}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] is None and r.json()["saved_md"] is True
+    md = (cases / "batch" / "kr-0305.md").read_text(encoding="utf-8")
+    assert "【权重：63.6364】" in md and "【权重：36.3636】" in md
+    assert list(dist.glob("evalset-*.jsonl")) == []
+    s = Store(db)
+    assert s.current_snapshot() is None
+    s.close()
+
+
 def test_case_page_use_slots_markup(pipeline_env):
     """用例页简要列表：前提/路径行也带用途角标（计分=权重%、参考=参考胶囊），
     详情卡计分行带 data-duse——case.js syncBars 随图例切换重写这三处。"""

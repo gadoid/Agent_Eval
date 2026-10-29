@@ -1351,7 +1351,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         """保存管线：内存校验（报错只针对被改用例，不通过不落盘）→ 写 md →
         build 新版本（锁内自动取号，dist 不可变兜底）→ 整批导入（设为当前快照）→
         同步 rescore → 报告待重判。build 因其余用例失败时 md 已落盘、无新快照。
-        build=False 用于 draft 用例（§5.1：只写 md，不产生快照、不导入）。"""
+        build=False 用于 draft / retired 用例（§5.1：只写 md，不产生快照、不导入）。"""
         m2c = _md2case()
         mapping = m2c.load_mapping()
         errors: list[str] = []
@@ -1365,7 +1365,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         if errors:
             return {"ok": False, "errors": errors, "warnings": warnings}
         md_path.write_text(new_md, encoding="utf-8")
-        if not build:                              # draft：只写 md（§5.1）
+        if not build:                              # draft / retired：只写 md（§5.1）
             return {"ok": True, "saved_md": True, "version": None, "warnings": warnings,
                     "rescored": 0, "pending_rejudge": 0}
         with _pipeline_lock:                       # 决定 16②：取号 → build → 导入
@@ -1473,7 +1473,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         m2c = _md2case()
         _write_weights_to_case(case, m2c.normalize_score_weights(m2c.score_units_of(case)))
         result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path,
-                                   build=case.get("status") != "draft")
+                                   build=case.get("status") not in ("draft", "retired"))
         if not result.get("ok"):
             return JSONResponse(result, status_code=400)
         return result
@@ -1515,7 +1515,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                 full = {iid: float(t["weights"].get(iid) or 0) for iid in m2c.score_units_of(case)}
                 _write_weights_to_case(case, full)
                 result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path,
-                                           build=case.get("status") != "draft")
+                                           build=case.get("status") not in ("draft", "retired"))
                 if result.get("ok"):
                     store.clear_temp_weights(case_id)
                     result["rescored"] += store.rescore_cases([case_id], rules, rules_sha)
