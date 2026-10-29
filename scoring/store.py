@@ -1380,7 +1380,7 @@ class Store:
 
     # ---------------------------------------------------------------- 复核队列与复核页（doc/10 §5.2/5.3）
 
-    REVIEW_TABS = ("undecided", "unjudged", "spot", "mismatch", "failed")
+    REVIEW_TABS = ("all", "undecided", "unjudged", "spot", "mismatch", "failed")
 
     def review_conversations(self, chain_sha: str, rules: Rules, rules_sha: str,
                              tab: str = "undecided", run_id: str | None = None, dim: str | None = None,
@@ -1432,8 +1432,9 @@ class Store:
             c["_mismatch"] = aid in mismatch_ids
             c["_failed"] = r["run_status"] not in ("ok", None)
             convs.append(c)
-        tabs = {t: sum(1 for c in convs if c[f"_{t}"]) for t in self.REVIEW_TABS}
-        selected = [c for c in convs if c[f"_{tab}"]]
+        tabs = {"all": len(convs), **{t: sum(1 for c in convs if c[f"_{t}"])
+                                     for t in self.REVIEW_TABS if t != "all"}}
+        selected = convs if tab == "all" else [c for c in convs if c[f"_{tab}"]]
         if tab == "spot" and spot_ratio < 1:
             selected = [c for c in selected if _spot_picked(c["answer_id"], spot_ratio)]
         if tab == "undecided":

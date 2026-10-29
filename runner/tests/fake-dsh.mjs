@@ -2,7 +2,9 @@
 // 假 dsh：按真实命令行与日志格式工作，用于不依赖模型的端到端测试。
 //   dsh --version
 //   dsh --profile <p> --patch <overlay> [--session-id <id>] "<prompt>"
-// 新会话在 overlay 指定的落盘根下写 session-<uuid>/session.v4.jsonl.zstd（header 帧 + 事件帧）；
+// 新会话在 overlay 指定的落盘根下模拟真实 dsh 的工作区层级
+// （workspace-fake/session-<uuid>/session.v4.jsonl.zstd，header 帧 + 事件帧），
+// 用于验证 runner 会话结束后压平该层级；
 // --session-id 续接时向同一文件追加一帧，回答中带上第 1 轮的用户消息，模拟上下文记忆。
 // prompt 中的标记控制行为：
 //   /<skill>     模拟用户显式调用：写一条注入事件，不调用 skill 工具
@@ -13,7 +15,7 @@
 //   [incomplete] 回合以 max-steps 结束
 //   [plain]      新会话写未压缩的 session.jsonl
 //   [noid]       新会话目录不带 session- 前缀、header 不带 id（会话 id 无法确定）
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { zstdCompressSync } from 'node:zlib'
@@ -32,6 +34,17 @@ const prompt = argv[argv.length - 1]
 if (prompt.includes('[hang]')) setInterval(() => {}, 1000)
 else main()
 
+function findSessionDir(base, name) {
+  for (const entry of readdirSync(base, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const p = join(base, entry.name)
+    if (entry.name === name) return p
+    const found = findSessionDir(p, name)
+    if (found) return found
+  }
+  return undefined
+}
+
 function main() {
   if (prompt.includes('[crash]')) {
     process.stderr.write('boom\n')
@@ -41,8 +54,8 @@ function main() {
   let dir
   let state
   if (resumeId) {
-    dir = join(root, resumeId)
-    if (!existsSync(join(dir, 'state.json'))) {
+    dir = findSessionDir(root, resumeId)
+    if (!dir || !existsSync(join(dir, 'state.json'))) {
       process.stderr.write(`dsh: session ${resumeId} not found\n`)
       process.exit(1)
     }
@@ -51,7 +64,7 @@ function main() {
     const uuid = randomUUID()
     const noid = prompt.includes('[noid]')
     const id = noid ? `raw-${uuid}` : `session-${uuid}`
-    dir = join(root, id)
+    dir = join(root, 'workspace-fake', id)
     mkdirSync(dir, { recursive: true })
     // 记录逐会话环境（bundled-copy 模式 e2e 断言 DSH_BUNDLED_SKILL_DIR 用；overlay 供模型覆盖断言用）
     state = { id, seq: 0, users: [], plain: prompt.includes('[plain]'), noid, bundledEnv: process.env.DSH_BUNDLED_SKILL_DIR ?? null, overlay }

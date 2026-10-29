@@ -628,15 +628,24 @@ PARSERS = {
 
 # ---------------------------------------------------------------- md → case
 
-def split_frontmatter(text: str, errors: list[str]):
+def split_frontmatter(text: str, errors: list[str], h1: list[str] | None = None):
+    """切元数据块。开头可先写一行「# 标题」（H1 在前、frontmatter 在后），
+    H1 收进 h1；也接受只有 frontmatter 的旧写法。"""
     lines = text.splitlines()
-    if not lines or lines[0].strip() != "---":
-        errors.append("第 1 行：文件应以 --- 开头的元数据块（frontmatter）开始")
-        return {}, text.splitlines(), 0
-    for i in range(1, len(lines)):
+    start = 0
+    if lines and H1.match(lines[0].strip()):
+        if h1 is not None:
+            h1.append(H1.match(lines[0].strip()).group(1))
+        start = 1
+        while start < len(lines) and not lines[start].strip():
+            start += 1
+    if start >= len(lines) or lines[start].strip() != "---":
+        errors.append("文件开头应为「# 标题」+ --- 元数据块（frontmatter）")
+        return {}, lines[start:], start
+    for i in range(start + 1, len(lines)):
         if lines[i].strip() == "---":
             try:
-                meta = yaml.safe_load("\n".join(lines[1:i])) or {}
+                meta = yaml.safe_load("\n".join(lines[start + 1:i])) or {}
             except yaml.YAMLError as e:
                 errors.append(f"元数据块格式错误：{e}")
                 meta = {}
@@ -645,7 +654,7 @@ def split_frontmatter(text: str, errors: list[str]):
                 meta = {}
             return meta, lines[i + 1:], i + 1
     errors.append("元数据块没有结束的 ---")
-    return {}, lines, 0
+    return {}, lines[start:], start
 
 
 def split_sections(body, offset, errors, h1=None):
@@ -681,12 +690,12 @@ def md_to_case(text: str, path: str = "<input>", mapping: dict | None = None) ->
     errors: list[str] = []
     warns: list[str] = []
 
-    meta, body, offset = split_frontmatter(text, errors)
+    h1: list[str] = []
+    meta, body, offset = split_frontmatter(text, errors, h1)
     case: dict = dict(meta)
     case.setdefault("answerable", True)
 
     group_owner: dict[str, str] = {}
-    h1: list[str] = []
     for title, no, lines in split_sections(body, offset, errors, h1):
         rule = mapping["sections"].get(title)
         if rule is None:
@@ -991,7 +1000,7 @@ def check_warnings(case, warns):
 # ---------------------------------------------------------------- --docs 校验
 
 def frontmatter_of(text: str) -> dict:
-    m = re.match(r"^---\s*\n(.*?)\n---\s*\n?", text, re.S)
+    m = re.match(r"^(?:#\s+[^\n]*\n(?:[ \t]*\n)?)?---\s*\n(.*?)\n---\s*\n?", text, re.S)
     if not m:
         return {}
     try:
@@ -1214,14 +1223,21 @@ def demote_case_file(path: Path, notes: list[str]) -> None:
     """重写用例 md 的 frontmatter：status → structured，status_note 追加原因；正文不动。"""
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
-    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
-    meta = yaml.safe_load("\n".join(lines[1:end])) or {}
+    start = 0
+    if lines and H1.match(lines[0].strip()):        # 新结构：H1 在 frontmatter 之前
+        start = 1
+        while start < len(lines) and not lines[start].strip():
+            start += 1
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "---")
+    meta = yaml.safe_load("\n".join(lines[start + 1:end])) or {}
     meta["status"] = "structured"
     note = meta.get("status_note") or ""
     add = "；".join(notes)
     meta["status_note"] = f"{note}；{add}" if note else add
     head = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip()
-    path.write_text("---\n" + head + "\n---\n" + "\n".join(lines[end + 1:]), encoding="utf-8")
+    prefix = "\n".join(lines[:start])
+    path.write_text((prefix + "\n" if prefix else "") + "---\n" + head + "\n\n---\n"
+                    + "\n".join(lines[end + 1:]), encoding="utf-8")
 
 
 def apply_rev_linkage(cases: list[dict], paths: dict[str, Path], points: dict,
@@ -1460,15 +1476,17 @@ META_KEYS = ("id", "title", "dim", "status", "status_note", "answerable", "histo
 
 def case_to_md(case: dict, mapping: dict | None = None) -> str:
     mapping = mapping or load_mapping()
-    meta = {k: case[k] for k in META_KEYS if case.get(k) not in (None, [])}
-    out = ["---", yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip(), "---", ""]
+    meta = {k: case[k] for k in META_KEYS
+            if case.get(k) not in (None, []) and str(case.get(k)).strip() != ""}
     _title = str(case.get("title") or "").strip()
-    if _title:
-        out += [f"# {_title}", ""]   # 正文 H1 与 frontmatter title 同源，方便人类直接读 md
+    out: list[str] = [f"# {_title}", ""] if _title else []   # H1 先、frontmatter 后
+    # 收尾 --- 前留空行：frontmatter 在 H1 之后时，CommonMark 会把紧贴 --- 的字段行
+    # 整块解析成 setext H2 标题
+    out += ["---", yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip(), "", "---", ""]
     turns = case.get("turns") or []
     refs = case.get("assistant_refs") or [None] * len(turns)
-    if len(turns) == 1:
-        out += ["## 问题", turns[0], ""]
+    if len(turns) <= 1:
+        out += ["## 问题", turns[0] if turns else "", ""]
     elif not any(refs) and all("\n" not in t for t in turns):
         out += ["## 对话", *[f"- {t}" for t in turns], ""]
     else:

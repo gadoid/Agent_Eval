@@ -756,7 +756,11 @@ def test_configs_and_runs_pages(served, tmp_path):
     assert runs.status_code == 200
     assert "执行记录" in runs.text and "重命名执行记录" in runs.text
     assert "demof" in runs.text                        # 两次执行各一行（run_id 短码）
+    assert "run_id=demof&tab=all" in runs.text         # 对话列直达该 run 的全部对话
     assert 'href="/runs"' in page.text                 # 两页互相有入口
+    allq = client.get("/review?run_id=demof&tab=all")
+    assert allq.status_code == 200 and "队列为空" not in allq.text
+    assert "全部" in allq.text
     # 首页已拆分：无配置选择器，有新建入口与配置管理链接
     home = client.get("/").text
     assert "用例管理" in home and "/case/new" in home and "/configs" in home
@@ -848,7 +852,7 @@ def test_case_new_title_and_refusal_type(served, tmp_path):
     data = prev.json()
     assert data["ok"], data["errors"]
     assert "title: 融资业务我司报关需提供的单据" in data["md"]
-    assert "\n# 融资业务我司报关需提供的单据\n" in data["md"]   # title 同步落正文 H1
+    assert data["md"].startswith("# 融资业务我司报关需提供的单据\n\n---\n")   # H1 在 frontmatter 之前
     assert "answerable: false" in data["md"] and "拒答权重: 100" in data["md"]
     ok = c2.post("/api/case/create", json=_kr_body(
         title="融资业务我司报关需提供的单据", answerable=False, refusal_weight=100, facts=[]))

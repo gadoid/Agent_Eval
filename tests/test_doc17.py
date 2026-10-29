@@ -346,9 +346,9 @@ def test_case_page_use_slots_markup(pipeline_env):
     r = client.post("/api/case/kr-0302/edit", json={
         "case_id": "kr-0302", "items": [{"id": "P1", "use": "score", "weight": 30}]})
     assert r.status_code == 200, r.text
-    # 保存管线整链回写：md 正文带 # H1 标题头（与 frontmatter title 同源）
+    # 保存管线整链回写：H1 标题头在最前、frontmatter 随其后（与 frontmatter title 同源）
     saved_md = (cases / "batch" / "kr-0302.md").read_text(encoding="utf-8")
-    assert "\n# 前提计分的保单号填写（路径与分组渲染测试）\n" in saved_md
+    assert saved_md.startswith("# 前提计分的保单号填写（路径与分组渲染测试）\n\n---\n")
     out = dist / f"evalset-{r.json()['version']}.jsonl"
     uids = set()
     for line in out.read_text(encoding="utf-8").splitlines():

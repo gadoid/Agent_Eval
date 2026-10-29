@@ -165,9 +165,9 @@ export function planEpisodes(
     if (topic !== '' && row.topic !== topic) continue
     if (method && (row.variant_index ?? 0) > 0) {
       // 测法管执行范围（doc/15 §3.10）：种子总跑；run_rewrites 之外的改写不跑（诱导默认不跑）
-      const rw = typeof row.rewrite === 'string' ? row.rewrite : undefined
+      const rw = typeof row.variant?.rewrite === 'string' ? row.variant.rewrite : undefined
       if (rw === undefined || !method.run_rewrites.includes(rw)) {
-        skipped.push({ uid: row.uid, mode: null, reason: `测法未纳入改写「${String(rw)}」不执行（run_rewrites）` })
+        skipped.push({ uid: row.uid, mode: null, reason: `测法未纳入改写「${rw ?? '未标注'}」不执行（run_rewrites）` })
         continue
       }
     }

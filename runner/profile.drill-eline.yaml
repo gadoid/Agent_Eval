@@ -1,0 +1,17 @@
+id: eline-drill-flash
+description: 演练用：ElineAI 内置 dsh 0.2.0-rc.6（eline.exe）+ 独立 .eline-drill home，deepseek-v4-flash
+model: deepseek-v4-flash
+reasoning_effort: low
+dsh:
+  bin: D:/elineai/eline.exe --expose-internals D:/elineai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js
+  profile: evalheadless
+  home: C:/Users/jiaoshouxiang/.eline-drill
+  env:
+    ELECTRON_RUN_AS_NODE: "1"
+    DSH_BUNDLED_SKILL_DIR: "D:/Agent_Eval/.eval-skills/base"
+  timeout_ms: 600000
+skills_mode: bundled-copy
+skills_roots: [D:/Agent_Eval/.eval-skills/base]
+skill_tool: skill
+routing:
+  进单资料审核: [trade-documents]

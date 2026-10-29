@@ -48,6 +48,8 @@ export interface EvalRow {
   granularity?: string | null
   /** 编译行解析后的注入操作；无注入的用例为空 */
   injections?: InjectionOp[]
+  /** 变体信息（编译行 variant 字段）；仅 variant_index>0 时给出 */
+  variant?: { id?: string; scope?: string; turn?: number | null; rewrite?: string | null }
   /** facts、preconditions、path、evidence 等其余字段留给打分，执行侧原样内嵌进结果行 */
   [key: string]: unknown
 }

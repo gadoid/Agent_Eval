@@ -25,7 +25,7 @@
       <td>{{ r.mode_part or '—' }}</td>
       <td>{{ r.evalset_version }}</td>
       <td>{{ r.skills_mode|join('、') if r.skills_mode else '—' }}</td>
-      <td class="rv-num"><a href="/review?run_id={{ r.run_id|urlencode }}" title="该执行的复核队列">{{ r.n }}</a></td>
+      <td class="rv-num"><a href="/review?run_id={{ r.run_id|urlencode }}&tab=all" title="该执行的全部对话">{{ r.n }}</a></td>
       <td>{% if r.undecided %}<span class="rv-state" data-s="need">{{ r.undecided }} 段</span>{% else %}<span class="rv-meta">—</span>{% endif %}</td>
       <td>{% if r.stale %}<span class="rv-flag">基底过期</span> {% endif %}{% if r.diagnostic %}<span class="rv-flag">诊断</span> {% endif %}{% if r.models_mismatch %}<span class="rv-flag">模型观测不一致</span>{% endif %}</td>
       <td class="rv-meta">{{ r.at }}</td>

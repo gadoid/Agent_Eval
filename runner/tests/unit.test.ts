@@ -7,7 +7,7 @@ import { listSessionDirs, waitForNewSessionDir, parseServiceUrl } from '../lib/a
 import { ScriptedDriver } from '../lib/drivers/scripted.js'
 import type { TurnRecord } from '../lib/domain.js'
 import { forced, natural } from '../lib/interventions/index.js'
-import { mirrorSessions } from '../lib/mirror.js'
+import { mirrorSessions, flattenSessionLog } from '../lib/mirror.js'
 import { parseEvalset, planEpisodes } from '../lib/planner.js'
 import { extractInjectionsObserved, extractLoadedSkills } from '../lib/probes/index.js'
 import { buildForcedPrompt, ConfigError, forcedSkillsFor, parseProfile } from '../lib/profile.js'
@@ -125,7 +125,7 @@ describe('驱动、干预、探针', () => {
 
   it('镜像：拷贝 session-<uuid> 到目标目录（跨 slug 层级），重复执行跳过，裸 UUID 子会话不拷', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mirror-'))
-    const slug = join(root, 'run', 'session', '--some-workspace--')
+    const slug = join(root, 'run', 'session', 'workspace-kr-0201')
     const sid = 'session-11111111-2222-3333-4444-555555555555'
     await mkdir(join(slug, sid), { recursive: true })
     await mkdir(join(slug, '99999999-2222-3333-4444-555555555555'), { recursive: true }) // 子会话（裸 UUID）
@@ -135,6 +135,22 @@ describe('驱动、干预、探针', () => {
     expect(await readdir(target)).toEqual([sid])
     expect(await mirrorSessions(join(root, 'run', 'session'), target)).toBe(1) // 幂等：已存在跳过
     expect(await mirrorSessions(join(root, 'no-such'), target)).toBe(0)
+  })
+
+  it('压平编码工作区层级：会话目录上提、空壳删除、返回新路径（幂等）', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'flatten-'))
+    const sessionRoot = join(root, 'session')
+    const slug = join(sessionRoot, 'workspace-kr-0201')
+    const sid = 'session-22222222-3333-4444-5555-666666666666'
+    const child = '77777777-3333-4444-5555-666666666666' // 子会话（裸 UUID）
+    await mkdir(join(slug, sid), { recursive: true })
+    await mkdir(join(slug, child), { recursive: true })
+    await writeFile(join(slug, sid, 'session.v4.jsonl.zstd'), 'log')
+
+    const flat = join(sessionRoot, sid, 'session.v4.jsonl.zstd')
+    expect(await flattenSessionLog(sessionRoot, join(slug, sid, 'session.v4.jsonl.zstd'))).toBe(flat)
+    expect((await readdir(sessionRoot)).sort()).toEqual([child, sid].sort())
+    expect(await flattenSessionLog(sessionRoot, flat)).toBe(flat)
   })
 
   it('web-ui：解析服务地址；发现新建的会话目录', async () => {
@@ -147,7 +163,7 @@ describe('驱动、干预、探针', () => {
     const sid = 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
     const appeared = waitForNewSessionDir(home, before, 5_000).then((p) => p.endsWith(sid))
     await new Promise((r) => setTimeout(r, 600))
-    await mkdir(join(home, 'sessions', '--ws--', sid), { recursive: true })
+    await mkdir(join(home, 'sessions', 'workspace-ec-0201', sid), { recursive: true })
     expect(await appeared).toBe(true)
     expect((await listSessionDirs(home)).size).toBe(1)
   })

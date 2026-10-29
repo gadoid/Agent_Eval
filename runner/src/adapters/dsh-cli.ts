@@ -7,6 +7,7 @@ import { buildModelOverlayEntries, buildSkillsOverlayEntries } from '../material
 import { buildDshArgs, buildOverlayYaml, findSessionFile, resolveDshCommand, runOne } from '../vendor/dsh-kernel.js'
 import type { DshCommand } from '../vendor/dsh-kernel.js'
 import { emptyTokenUsage } from '../vendor/types.js'
+import { flattenSessionLog } from '../mirror.js'
 import { decodeZstdLog } from '../vendor/zstd.js'
 
 /**
@@ -108,6 +109,7 @@ class DshSession implements AgentSession {
   }
 
   async close(): Promise<{ sessionLog: string | null; sessionId: string | null }> {
+    if (this.logPath) this.logPath = await flattenSessionLog(this.sessionRoot, this.logPath)
     return { sessionLog: this.logPath, sessionId: this.sessionId }
   }
 

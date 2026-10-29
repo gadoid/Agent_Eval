@@ -23,8 +23,8 @@ class FakeAdapter implements AgentAdapter {
   async open(ctx: SessionContext, prefill?: readonly PrefillTurn[]): Promise<AgentSession> {
     const s = { ctx, prefill, sent: [] as string[] }
     this.sessions.push(s)
-    // 模拟 dsh 在 runDir/session/<slug>/session-<uuid>/ 落盘日志
-    await mkdir(join(ctx.runDir, 'session', '--fake-ws--', 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'), { recursive: true })
+    // 模拟 dsh 在 runDir/session/<工作区slug>/session-<uuid>/ 落盘日志
+    await mkdir(join(ctx.runDir, 'session', 'workspace-kr-0201', 'session-aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'), { recursive: true })
     return {
       send: async (message: string) => {
         this.active++

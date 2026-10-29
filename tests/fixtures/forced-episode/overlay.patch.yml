@@ -2,4 +2,4 @@
 - id: session-persistence-jsonl
   name: '@deepseek-ai/dsh-session-persistence-jsonl'
   config:
-    root: "C:\\Users\\jiaoshouxiang\\Downloads\\evalcase\\evalcase\\runner\\out\\field-verify-eline\\.work\\0002-kr-0201-0-forced-t1\\session"
+    root: "tests/fixtures/forced-episode/session"

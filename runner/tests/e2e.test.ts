@@ -149,6 +149,8 @@ describe('命令行端到端：md 用例 → evalset.jsonl → results.jsonl', (
     // 强制加载只作用于第一轮
     expect(get('mt-0201#0', 'forced').turns.map((t) => t.input.startsWith('/order-intake '))).toEqual([true, false, false])
     expect(rows.every((r) => r.status === 'ok' && r.artifacts.session_log && existsSync(r.artifacts.session_log))).toBe(true)
+    // 会话日志落盘后压平工作区层级：新 run 的路径不再带 workspace-fake/
+    expect(rows.every((r) => !r.artifacts.session_log?.includes('workspace-fake'))).toBe(true)
     // 工作区在会话结束后删除
     expect(rows.every((r) => !existsSync(join(r.artifacts.run_dir, 'workspace')))).toBe(true)
 

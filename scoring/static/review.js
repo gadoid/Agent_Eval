@@ -171,7 +171,8 @@
     if (who === null) return;
     fetch(body.dataset.submitUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answer_id: ANSWER_ID, chain: CHAIN, entries: entries(),
+      body: JSON.stringify({ answer_id: ANSWER_ID, chain: CHAIN, tab: body.dataset.tab || '',
+                             entries: entries(),
                              total: DRAFT['@total'] || null, reviewer: reviewer })
     }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
       .then(function (res) {

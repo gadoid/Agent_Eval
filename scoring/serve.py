@@ -34,7 +34,7 @@ from .store import Store, StoreError
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-TAB_LABELS = {"undecided": "结论待定", "unjudged": "有未判条目", "spot": "模型抽检",
+TAB_LABELS = {"all": "全部", "undecided": "结论待定", "unjudged": "有未判条目", "spot": "模型抽检",
               "mismatch": "人工≠机器", "failed": "会话失败"}
 AXIS_LABELS = {"subject": "被测配置（subject）", "profile": "被测配置（subject）",
                "model": "被测模型（model）", "effort": "努力程度（effort）", "agent": "agent 版本",
@@ -82,7 +82,7 @@ def _md_frontmatter(path: Path) -> dict:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return {}
-    m = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
+    m = re.match(r"^(?:#\s+[^\n]*\r?\n(?:[ \t]*\r?\n)?)?---\r?\n(.*?)\r?\n---", text, re.S)
     if not m:
         return {}
     try:
@@ -145,6 +145,7 @@ class EntryIn(BaseModel):
 class ReviewBatchIn(BaseModel):
     answer_id: str
     chain: str | None = None
+    tab: str | None = None
     entries: list[EntryIn] = []
     total: dict | None = None
     reviewer: str = ""
@@ -979,7 +980,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         chain = chain_of(request)
         convs, meta = store.review_conversations(chain, rules, rules_sha, tab=tab,
                                                  run_id=run_id or None, dim=dim or None,
-                                                 spot_ratio=spot / 100, operator=op or None, page=page)
+                                                 spot_ratio=spot / 100, operator=op or None, page=page,
+                                                 first_input=(tab == "undecided"))
         operators = [r[0] for r in store.conn.execute(
             "SELECT DISTINCT operator FROM verdicts WHERE chain_sha=? AND operator IS NOT NULL"
             " ORDER BY operator", (chain,))]
@@ -1271,7 +1273,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
         _nav_cache.clear()
-        tab = "undecided"
+        tab = body.tab if body.tab in TAB_LABELS else "undecided"
         convs, _ = store.review_conversations(chain, rules, rules_sha, tab=tab, size=10 ** 6,
                                               first_input=False)
         ids = [x["answer_id"] for x in convs]
@@ -1285,7 +1287,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         return {**{k: c.get(k) for k in ("status", "reason", "score", "score_min", "score_max",
                                          "auto_score", "score_source")},
                 "detail": c.get("detail"),
-                "next": f"/review/{quote(rest[0], safe='/')}?tab={tab}" if rest else "/review?tab=undecided"}
+                "next": f"/review/{quote(rest[0], safe='/')}?tab={tab}" if rest else f"/review?tab={tab}"}
 
     @app.post("/api/review")
     async def review_compat(body: dict):

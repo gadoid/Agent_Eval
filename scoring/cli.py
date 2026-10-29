@@ -281,8 +281,12 @@ def cmd_judge(args) -> int:
     stats = judges.batch_judge(records, cfg, DbCache(store))
     print(f"模型评审 {args.run}：{stats['episodes']} 段会话 / {stats['items']} 条待判条目，"
           f"预填 {stats['filled']} 条（规则已判跳过 {stats['skipped']} 条）")
-    print(f"  下一步：python -m scoring score {args.run} --operators {args.operators} --db {args.db}"
-          if args.operators else "  下一步：python -m scoring score <run> --db <db>")
+    next_cmd = f"python -m scoring score {args.run}"
+    if args.operators:
+        next_cmd += f" --operators {args.operators}"
+    if args.db:
+        next_cmd += f" --db {args.db}"
+    print(f"  下一步：{next_cmd}")
     return 0
 
 

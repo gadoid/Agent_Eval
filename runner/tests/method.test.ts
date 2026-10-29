@@ -38,8 +38,8 @@ describe('测法执行（P2）', () => {
     const profile = parseProfile('id: p\nskills_mode: default-roots\nrouting:\n  进单资料审核: [s1]\n')
     const rows = [
       row(),
-      row({ uid: 'kr-1#1', variant_index: 1, rewrite: '口语', turns: ['口语变体'] }),
-      row({ uid: 'kr-1#2', variant_index: 1, rewrite: '诱导', turns: ['诱导变体'] }),
+      row({ uid: 'kr-1#1', variant_index: 1, variant: { id: 'V1', rewrite: '口语' }, turns: ['口语变体'] }),
+      row({ uid: 'kr-1#2', variant_index: 1, variant: { id: 'J1', rewrite: '诱导' }, turns: ['诱导变体'] }),
       row({ uid: 'ec-1#0', case_id: 'ec-1', dim: '错误知识纠正', topic: '进单资料审核' } as Partial<EvalRow>),
     ]
     const method = { modes: { default: 'natural', 错误知识纠正: 'forced' },

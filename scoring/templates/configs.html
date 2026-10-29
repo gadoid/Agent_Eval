@@ -32,7 +32,7 @@
       <td>{% if t.score is not none %}<b>{{ t.score|f1 }}</b>{% if t.provisional %} <span class="rv-meta">（临时）</span>{% endif %}
         {% if not t.complete %}<span class="rv-meta" title="已知 {{ known_dims|length }} 维中缺 {{ known_dims|length - t.dims_n }} 维">· 缺维</span>{% endif %}
         {% else %}<span class="rv-meta">—</span>{% endif %}</td>
-      <td class="rv-config-runs">{% for rid in t.run_ids %}<a href="/review?run_id={{ rid|urlencode }}" title="{{ rid }}">{{ run_labels.get(rid, rid) }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</td>
+      <td class="rv-config-runs">{% for rid in t.run_ids %}<a href="/review?run_id={{ rid|urlencode }}&tab=all" title="{{ rid }}">{{ run_labels.get(rid, rid) }}</a>{% if not loop.last %}、{% endif %}{% endfor %}</td>
     </tr>
     {% endfor %}
     </tbody>

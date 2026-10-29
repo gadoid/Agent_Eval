@@ -1,0 +1,31 @@
+# 演练用模型判定链：机器路径指向本机 ElineAI 内置 dsh（0.2.0-rc.6）与演练 home
+# .eline-drill，profile evalheadless 的默认模型即判定模型。语义同 operators-judge.yaml，
+# 路径属本机部署配置，换机器时改 dsh_bin / dsh_home 即可。
+schema: 1
+operators:
+  keyword:    {impl: keyword}
+  skill-path: {impl: skill-path}
+  llm-fact:
+    impl: "scoring.ext.judges:LlmFact"
+    model: deepseek-v4-flash
+    dsh_bin: [D:/elineai/eline.exe, --expose-internals, D:/elineai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js]
+    dsh_profile: evalheadless
+    dsh_home: C:/Users/jiaoshouxiang/.eline-drill
+    dsh_env: {ELECTRON_RUN_AS_NODE: "1"}
+    timeout: 600
+  llm-forbid:
+    impl: "scoring.ext.judges:LlmForbidden"
+    model: deepseek-v4-flash
+    dsh_bin: [D:/elineai/eline.exe, --expose-internals, D:/elineai/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js]
+    dsh_profile: evalheadless
+    dsh_home: C:/Users/jiaoshouxiang/.eline-drill
+    dsh_env: {ELECTRON_RUN_AS_NODE: "1"}
+    timeout: 600
+
+chains:
+  required:  [keyword, llm-fact]
+  expected:  [keyword, llm-fact]
+  forbidden: [llm-forbid]
+  precond:   []
+  path:      [skill-path]
+  refusal:   []

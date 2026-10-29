@@ -286,8 +286,10 @@ def test_title_roundtrip_and_missing_warn(env):
     assert case["title"] == "融资单据清单"
     md = md2case.case_to_md(case, md2case.load_mapping())
     assert "title: 融资单据清单" in md
-    # title 同步落成正文 H1（人类直接读 md 的标题头），且在首个 ## 段落之前
-    assert "\n# 融资单据清单\n" in md and md.index("# 融资单据清单") < md.index("## 问题")
+    # H1 在最前、frontmatter 随其后（人类直接读 md 的标题头），再是 ## 段落；
+    # 收尾 --- 前留空行，避免 CommonMark 把字段块解析成 setext H2
+    assert md.startswith("# 融资单据清单\n\n---\n")
+    assert "\n\n---\n\n## 问题" in md
     back = md2case.md_to_case(md, "kr-0001.md")            # 回写产物再解析，title 不丢
     assert back["title"] == "融资单据清单"
     rows = md2case.compile_case(case, {}, "vX")

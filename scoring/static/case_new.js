@@ -1,9 +1,11 @@
-/* 新建用例页：结构化表单 → /api/case/preview（校验+md 预览）→ /api/case/create（落盘 md）。
- * 动态行（轮次/条件/注入/前提/事实/路径/证据/变体）全部前端拼装、提交时按填写顺序重编号；
- * 维度联动：id 前缀建议、注入卡只对「错误知识纠正」开放、多轮维度提示。 */
+/* 新建用例页：按 markdown 文档结构填表 → /api/case/preview 实时预览 →
+ * /api/case/create 落盘 md。左栏是文档（frontmatter + ## 分节），右栏是
+ * 导出与 md 源码预览；动态行全部前端拼装，提交时按填写顺序重编号。 */
 ;(function () {
   var D = JSON.parse(document.getElementById('cn-data').textContent);
   var EC_DIM = '错误知识纠正';
+  var previewTimer = null, previewSeq = 0, lastMd = '', liveLocked = false;
+
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -16,118 +18,180 @@
       return '<option value="' + esc(o) + '"' + (o === cur ? ' selected' : '') + '>' + esc(o) + '</option>';
     }).join('');
   }
+  function f(sel, root) { return (root || document).querySelector(sel); }
+  function rowsOf(id) { return Array.prototype.slice.call($(id).children); }
   function row(html) {
     var d = document.createElement('div');
-    d.className = 'rv-cn-row';
+    d.className = 'cn-item';
     d.innerHTML = html;
     return d;
   }
-  function rmBtn() { return '<button class="rv-btn rv-btn--ghost" type="button" data-rm title="删除本行">✕</button>'; }
-  function badge(cls) { return '<span class="rv-cn-itemid ' + cls + '"></span>'; }
-  function f(sel, root) { return (root || document).querySelector(sel); }
+  function rmBtn() { return '<button class="cn-rm" type="button" data-rm title="删除本行" aria-label="删除本行">✕</button>'; }
+  function itemHead(left) { return '<div class="cn-item-head">' + (left || '') + rmBtn() + '</div>'; }
+  function badge(cls) { return '<span class="cn-badge ' + cls + '"></span>'; }
+  function micro(label, inner, cls) {
+    return '<label class="cn-micro' + (cls ? ' ' + cls : '') + '"><span>' + label + '</span>' + inner + '</label>';
+  }
   function wireRm(list) {
     list.querySelectorAll('[data-rm]').forEach(function (b) {
-      b.onclick = function () { b.closest('.rv-cn-row').remove(); renumber(); refreshEvOptions(); };
+      b.onclick = function () {
+        b.closest('.cn-item').remove();
+        renumber(); refreshEvOptions(); schedulePreview();
+      };
     });
   }
+  function turnData() {
+    var users = [], refs = [];
+    rowsOf('cn-turns').forEach(function (r) {
+      var u = val(f('[data-f=user]', r));
+      if (u) { users.push(u); refs.push(val(f('[data-f=assistant]', r))); }
+    });
+    return { users: users, refs: refs };
+  }
+  function updateDialogName() {
+    var t = turnData();
+    var name = t.users.length > 1 && !t.refs.some(Boolean) && !t.users.some(function (u) { return u.indexOf('\n') >= 0; })
+      ? '对话' : (t.users.length > 1 ? '对话记录' : '问题');
+    $('cn-dialog-name').textContent = name;
+  }
 
-  /* ---------------- 行模板 ---------------- */
+  /* ---------------- 条目模板 ---------------- */
   function addTurn() {
     if ($('cn-turns').children.length >= D.maxTurns) { alert('最多 ' + D.maxTurns + ' 轮'); return; }
-    var r = row(badge('cn-badge-turn') +
-      '<textarea class="rv-input rv-cn-user" data-f="user" rows="2" placeholder="第 N 轮用户消息"></textarea>' +
-      '<textarea class="rv-input rv-cn-ref" data-f="assistant" rows="2" placeholder="助手参考回复（可空；prefill 时前面各轮必填）"></textarea>' + rmBtn());
-    $('cn-turns').appendChild(r); wireRm($('cn-turns')); renumber();
+    var r = row(
+      itemHead(badge('cn-badge--turn') + '<span class="cn-item-k">用户 / 助手</span>') +
+      micro('用户消息', '<textarea class="rv-input" data-f="user" rows="2" placeholder="第 N 轮用户消息"></textarea>', 'cn-micro--area') +
+      micro('助手参考回复 <span class="cn-opt">prefill 必填</span>',
+        '<textarea class="rv-input" data-f="assistant" rows="2" placeholder="live 可留空"></textarea>', 'cn-micro--area'));
+    $('cn-turns').appendChild(r); wireRm($('cn-turns')); renumber(); schedulePreview();
   }
   function addCond() {
-    var r = row('<input class="rv-input" data-f="slot" style="width:130px" placeholder="槽位，如 业务类型">' +
-      '<input class="rv-input" data-f="value" style="flex:1;min-width:200px" placeholder="值，如 融资业务">' +
-      '<input class="rv-input" data-f="kw" style="width:180px" placeholder="关键词（/ 分隔，可空）">' +
-      '<input class="rv-input" data-f="turn" type="number" min="1" style="width:64px" placeholder="轮次">' + rmBtn());
-    $('cn-conds').appendChild(r); wireRm($('cn-conds'));
+    var r = row(
+      itemHead('<span class="cn-item-k">槽位条件</span>') +
+      '<div class="cn-metarow">' +
+        micro('槽位', '<input class="rv-input" data-f="slot" placeholder="如 业务类型">', 'cn-grow') +
+        micro('值', '<input class="rv-input" data-f="value" placeholder="如 融资业务">', 'cn-grow') +
+        micro('关键词 <span class="cn-opt">可空</span>', '<input class="rv-input" data-f="kw" placeholder="用 / 分隔">', 'cn-w210') +
+        micro('轮次', '<input class="rv-input" data-f="turn" type="number" min="1" placeholder="空">', 'cn-w72') +
+      '</div>');
+    $('cn-conds').appendChild(r); wireRm($('cn-conds')); schedulePreview();
   }
   function addInj() {
-    var r = row('<select class="rv-select" data-f="point" style="width:220px">' +
-      optHtml([''].concat(D.points.map(function (p) { return p.id; }))) + '</select>' +
-      '<select class="rv-select" data-f="option" style="width:160px"><option value="">选项</option></select>' + rmBtn());
+    var r = row(
+      itemHead(badge('cn-badge--inj') + '<span class="cn-item-k">注入</span>') +
+      '<div class="cn-metarow">' +
+        micro('注入点', '<select class="rv-select" data-f="point">' + optHtml([''].concat(D.points.map(function (p) { return p.id; }))) + '</select>', 'cn-grow') +
+        micro('选项', '<select class="rv-select" data-f="option"><option value="">选项</option></select>', 'cn-grow') +
+      '</div>');
     $('cn-injs').appendChild(r); wireRm($('cn-injs'));
     var ps = f('[data-f=point]', r);
     ps.onchange = function () {
       var p = D.points.filter(function (x) { return x.id === ps.value; })[0];
-      f('[data-f=option]', r).innerHTML = '<option value="">选项</option>' +
-        optHtml(p ? p.options : []);
+      f('[data-f=option]', r).innerHTML = '<option value="">选项</option>' + optHtml(p ? p.options : []);
     };
+    renumber();
+    schedulePreview();
   }
   function addPre() {
-    var r = row(badge('cn-badge-pre') +
-      '<textarea class="rv-input" data-f="text" rows="2" style="flex:1;min-width:260px" placeholder="前提内容（自包含，不用指代词）"></textarea>' +
-      '<input class="rv-input" data-f="turn" type="number" min="1" style="width:64px" placeholder="轮次">' +
-      '<input class="rv-input" data-f="inj" style="width:110px" placeholder="注入，如 J1">' + rmBtn());
-    $('cn-pres').appendChild(r); wireRm($('cn-pres')); renumber();
+    var r = row(
+      itemHead(badge('cn-badge--pre') + '<span class="cn-item-k">前提</span>') +
+      micro('前提内容 <span class="cn-opt">自包含，不用指代词</span>',
+        '<textarea class="rv-input" data-f="text" rows="2" placeholder="如 用户所在公司已开通融资业务"></textarea>', 'cn-micro--area') +
+      '<div class="cn-metarow">' +
+        micro('轮次', '<input class="rv-input" data-f="turn" type="number" min="1" placeholder="空">', 'cn-w72') +
+        micro('引用注入', '<input class="rv-input" data-f="inj" placeholder="如 J1（可空）">', 'cn-grow') +
+      '</div>');
+    $('cn-pres').appendChild(r); wireRm($('cn-pres')); renumber(); schedulePreview();
   }
   function factRow(kind, list, ph) {
-    var r = row(badge('cn-badge-' + (kind === 'required' ? 'f' : kind === 'expected' ? 'e' : 'x')) +
-      '<textarea class="rv-input" data-f="text" rows="2" style="flex:1;min-width:260px" placeholder="' + ph + '"></textarea>' +
-      (kind === 'forbidden' ? '' : '<input class="rv-input" data-f="kw" style="width:180px" placeholder="关键词（/ 分隔，可空）">') +
-      '<input class="rv-input" data-f="turn" type="number" min="1" style="width:64px" placeholder="轮次">' +
-      '<input class="rv-input" data-f="group" style="width:64px" placeholder="组">' +
-      '<select class="rv-select" data-f="evidence" style="width:80px">' + evOptions() + '</select>' +
-      '<input class="rv-input" data-f="weight" type="number" min="0" step="0.5" style="width:70px" placeholder="权重">' +
-      // 性质（doc/16 §3.7）：勾「主观」→ md 落【性质：主观】；部分判据输入框仅必要/期望提供
-      '<label class="rv-cn-check" title="合理表述不唯一的做法/建议（【性质：主观】，判「部分」以部分判据为准）">' +
-      '<input type="checkbox" data-f="subj">主观</label>' +
-      (kind === 'forbidden' ? '' :
-        '<input class="rv-input" data-f="prule" style="width:240px;display:none" placeholder="部分判据：如 只写甲未写乙算部分">') +
-      rmBtn());
-    var subj = f('[data-f=subj]', r), prule = f('[data-f=prule]', r);
-    subj.addEventListener('change', function () {
-      if (prule) { prule.style.display = subj.checked ? '' : 'none'; }
-    });
-    list.appendChild(r); wireRm(list); renumber();
+    var cls = kind === 'required' ? 'f' : kind === 'expected' ? 'e' : 'x';
+    var label = kind === 'required' ? '必要' : kind === 'expected' ? '期望' : '禁止';
+    var html = itemHead(badge('cn-badge--' + cls) + '<span class="cn-item-k">' + label + '事实</span>') +
+      micro('事实内容', '<textarea class="rv-input" data-f="text" rows="2" placeholder="' + esc(ph) + '"></textarea>', 'cn-micro--area') +
+      '<div class="cn-metarow">';
+    if (kind !== 'forbidden') {
+      html += micro('关键词', '<input class="rv-input" data-f="kw" placeholder="用 / 分隔，可空">', 'cn-w210');
+    }
+    html += micro('轮次', '<input class="rv-input" data-f="turn" type="number" min="1" placeholder="空">', 'cn-w72') +
+      micro('组', '<input class="rv-input" data-f="group" placeholder="空">', 'cn-w72') +
+      micro('证据', '<select class="rv-select" data-f="evidence">' + evOptions() + '</select>', 'cn-w96');
+    if (kind !== 'forbidden') {
+      html += micro('权重', '<input class="rv-input" data-f="weight" type="number" min="0" step="0.5" placeholder="空">', 'cn-w84');
+    }
+    html += '<label class="cn-subj" title="合理表述不唯一的做法 / 建议；判「部分」以部分判据为准">' +
+        '<input type="checkbox" data-f="subj">主观</label>' +
+      '</div>';
+    if (kind !== 'forbidden') {
+      html += micro('部分判据 <span class="cn-opt">仅主观条目，如 只写甲未写乙算部分</span>',
+        '<input class="rv-input" data-f="prule" placeholder="如 只写短期有效、未给具体期限算部分">', 'cn-micro--area');
+    }
+    var r = row(html);
+    if (kind !== 'forbidden') {
+      var prule = f('[data-f=prule]', r).closest('.cn-micro');
+      prule.hidden = true;
+      f('[data-f=subj]', r).addEventListener('change', function () {
+        prule.hidden = !this.checked;
+      });
+    }
+    list.appendChild(r); wireRm(list); renumber(); schedulePreview();
   }
   function addPath() {
-    var r = row('<select class="rv-select" data-f="ptype" style="width:80px"><option value="must">必须</option><option value="forbid">禁止</option></select>' +
-      '<input class="rv-input" data-f="skill" style="flex:1;min-width:180px" placeholder="skill 名称，如 trade-documents">' +
-      '<input class="rv-input" data-f="turn" type="number" min="1" style="width:64px" placeholder="轮次">' +
-      '<input class="rv-input" data-f="weight" type="number" min="0" step="0.5" style="width:70px" placeholder="权重">' + rmBtn());
-    $('cn-paths').appendChild(r); wireRm($('cn-paths'));
+    var r = row(
+      itemHead('<span class="cn-item-k">skill 路径</span>') +
+      '<div class="cn-metarow">' +
+        micro('类型', '<select class="rv-select" data-f="ptype"><option value="must">必须</option><option value="forbid">禁止</option></select>', 'cn-w96') +
+        micro('skill', '<input class="rv-input" data-f="skill" placeholder="如 trade-documents">', 'cn-grow') +
+        micro('轮次', '<input class="rv-input" data-f="turn" type="number" min="1" placeholder="空">', 'cn-w72') +
+      '</div>');
+    $('cn-paths').appendChild(r); wireRm($('cn-paths')); schedulePreview();
   }
   function addEv() {
-    var r = row(badge('cn-badge-ev') +
-      '<select class="rv-select" data-f="mode" style="width:90px"><option value="point">注入点</option><option value="inline">skill 原文</option></select>' +
-      '<select class="rv-select" data-f="point" style="width:200px">' + optHtml([''].concat(D.points.map(function (p) { return p.id; }))) + '</select>' +
-      '<span data-ev-inline style="display:none;flex:1;gap:6px">' +
-      '<input class="rv-input" data-f="skill" style="width:120px" placeholder="skill，如 trade-finance">' +
-      '<input class="rv-input" data-f="file" style="width:170px" placeholder="文件，如 trade-finance.md">' +
-      '<input class="rv-input" data-f="section" style="width:130px" placeholder="章节（可空）">' +
-      '<input class="rv-input" data-f="quote" style="flex:1;min-width:150px" placeholder="原文（可空）"></span>' + rmBtn());
+    var r = row(
+      itemHead(badge('cn-badge--ev')) +
+      '<div class="cn-metarow">' +
+        micro('方式', '<select class="rv-select" data-f="mode"><option value="point">注入点</option><option value="inline">skill 原文</option></select>', 'cn-w110') +
+        '<div class="cn-ev-point" data-ev-point>' +
+          micro('注入点', '<select class="rv-select" data-f="point">' + optHtml([''].concat(D.points.map(function (p) { return p.id; }))) + '</select>', 'cn-grow') +
+        '</div>' +
+        '<div class="cn-inlinefields" data-ev-inline hidden>' +
+          micro('skill', '<input class="rv-input" data-f="skill" placeholder="如 trade-finance">', 'cn-w120') +
+          micro('文件', '<input class="rv-input" data-f="file" placeholder="如 trade-finance.md">', 'cn-w160') +
+          micro('章节', '<input class="rv-input" data-f="section" placeholder="可空">', 'cn-w120') +
+          micro('原文', '<input class="rv-input" data-f="quote" placeholder="可空">', 'cn-grow') +
+        '</div>' +
+      '</div>');
     $('cn-evs').appendChild(r); wireRm($('cn-evs')); renumber(); refreshEvOptions();
-    var mode = f('[data-f=mode]', r), pt = f('[data-f=point]', r), inl = f('[data-ev-inline]', r);
-    function sync() {
+    var mode = f('[data-f=mode]', r), pt = f('[data-ev-point]', r), inl = f('[data-ev-inline]', r);
+    mode.onchange = function () {
       var isPoint = mode.value === 'point';
-      pt.style.display = isPoint ? '' : 'none';
-      inl.style.display = isPoint ? 'none' : '';
-    }
-    mode.onchange = sync; sync();
+      pt.hidden = !isPoint;
+      inl.hidden = isPoint;
+    };
+    schedulePreview();
   }
   function addVar() {
-    var r = row(badge('cn-badge-var') +
-      '<textarea class="rv-input" data-f="text" rows="2" style="flex:1;min-width:260px" placeholder="替换后的用户消息"></textarea>' +
-      '<input class="rv-input" data-f="turn" type="number" min="1" style="width:64px" placeholder="轮次（空=末轮）">' +
-      '<select class="rv-select" data-f="rewrite" style="width:90px">' + optHtml([''].concat(D.rewrites)) + '</select>' + rmBtn());
-    $('cn-vars').appendChild(r); wireRm($('cn-vars')); renumber();
+    var r = row(
+      itemHead(badge('cn-badge--var')) +
+      micro('替换后的用户消息', '<textarea class="rv-input" data-f="text" rows="2" placeholder="用于生成对照变体"></textarea>', 'cn-micro--area') +
+      '<div class="cn-metarow">' +
+        micro('轮次 <span class="cn-opt">空 = 末轮</span>', '<input class="rv-input" data-f="turn" type="number" min="1" placeholder="空">', 'cn-w84') +
+        micro('改写词', '<select class="rv-select" data-f="rewrite">' + optHtml([''].concat(D.rewrites)) + '</select>', 'cn-w110') +
+      '</div>');
+    $('cn-vars').appendChild(r); wireRm($('cn-vars')); renumber(); schedulePreview();
   }
 
   /* ---------------- 编号徽标 / 证据选项联动 ---------------- */
   function renumber() {
     var ts = $('cn-turns').children;
-    for (var i = 0; i < ts.length; i++) { f('.cn-badge-turn', ts[i]).textContent = '轮 ' + (i + 1); }
-    [['cn-pres', 'cn-badge-pre', 'P'], ['cn-facts-req', 'cn-badge-f', 'F'],
-     ['cn-facts-exp', 'cn-badge-e', 'E'], ['cn-facts-x', 'cn-badge-x', 'X'],
-     ['cn-evs', 'cn-badge-ev', 'R'], ['cn-vars', 'cn-badge-var', 'V']].forEach(function (cfg) {
-      var rows_ = $(cfg[0]).children;
-      for (var i = 0; i < rows_.length; i++) { f('.' + cfg[1], rows_[i]).textContent = cfg[2] + (i + 1); }
+    for (var i = 0; i < ts.length; i++) { f('.cn-badge--turn', ts[i]).textContent = '轮 ' + (i + 1); }
+    [['cn-pres', 'cn-badge--pre', 'P'], ['cn-facts-req', 'cn-badge--f', 'F'],
+     ['cn-facts-exp', 'cn-badge--e', 'E'], ['cn-facts-x', 'cn-badge--x', 'X'],
+     ['cn-evs', 'cn-badge--ev', 'R'], ['cn-vars', 'cn-badge--var', 'V'],
+     ['cn-injs', 'cn-badge--inj', 'J']].forEach(function (cfg) {
+      var rs = $(cfg[0]).children;
+      for (var j = 0; j < rs.length; j++) { f('.' + cfg[1], rs[j]).textContent = cfg[2] + (j + 1); }
     });
+    updateDialogName();
   }
   function evOptions() {
     var n = $('cn-evs').children.length, list = ['', '外部'];
@@ -140,29 +204,45 @@
       $(id).querySelectorAll('[data-f=evidence]').forEach(function (s) {
         var cur = s.value;
         s.innerHTML = html;
-        if (Array.prototype.indexOf.call(s.options, s.querySelector('option[value="' + cur + '"]')) >= 0 && cur) {
+        if (cur && Array.prototype.indexOf.call(s.options, s.querySelector('option[value="' + cur + '"]')) >= 0) {
           s.value = cur;
         }
       });
     });
   }
 
-  /* ---------------- 维度联动 ---------------- */
+  /* ---------------- 维度 / 目录 / 文档路径联动 ---------------- */
+  function suggestedId() {
+    var prefix = D.dims[val($('cn-dim'))];
+    return D.suggested[prefix] || (prefix + '-0001');
+  }
+  function docDir() {
+    var d = $('cn-dir').value;
+    if (d === '__new__') { d = val($('cn-dir-new')); }
+    return d || '…';
+  }
+  function updateDocPath() {
+    $('cn-doc-dir').textContent = docDir();
+    $('cn-doc-id').textContent = val($('cn-id')) || suggestedId();
+    updateDialogName();
+  }
+  function syncDirRow() {
+    $('cn-dir-new-row').hidden = $('cn-dir').value !== '__new__';
+    updateDocPath();
+  }
   function dimChanged(init) {
     var dim = val($('cn-dim'));
-    var prefix = D.dims[dim];
-    if (!init && !val($('cn-id'))) { $('cn-id').placeholder = '如 ' + (D.suggested[prefix] || prefix + '-0001'); }
+    if (!init && !val($('cn-id'))) { $('cn-id').placeholder = '如 ' + suggestedId(); }
     $('cn-inj-card').hidden = dim !== EC_DIM;
     if (dim !== EC_DIM && $('cn-injs').children.length) { $('cn-injs').innerHTML = ''; }
     var hints = [];
     if (D.multiTurnDims.indexOf(dim) >= 0) { hints.push('该维度至少 2 轮'); }
     if (dim === EC_DIM) { hints.push('必须写「注入」与「禁止事实」'); }
     $('cn-dim-hint').textContent = hints.length ? hints.join('；') : '单轮填一条；最多 ' + D.maxTurns + ' 轮';
+    updateDocPath();
   }
-  $('cn-dim').addEventListener('change', function () { dimChanged(false); });
 
   /* ---------------- 收集表单 ---------------- */
-  function rowsOf(id) { return Array.prototype.slice.call($(id).children); }
   function collect() {
     var dim = val($('cn-dim'));
     var users = [], refs = [];
@@ -227,36 +307,96 @@
     };
   }
 
-  /* ---------------- 结果渲染 ---------------- */
-  function notice(tone, lines) {
-    return '<div class="rv-notice" data-tone="' + tone + '" style="margin-bottom:8px">' +
-      lines.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') + '</div>';
+  /* ---------------- md 源码预览（逐行着色，纯文本写入） ---------------- */
+  function appendLine(frag, text, cls) {
+    var s = document.createElement('span');
+    s.className = 'cn-md-line' + (cls ? ' ' + cls : '');
+    s.textContent = text;
+    frag.appendChild(s);
   }
-  function cmdSpan(cmd) {
-    return '<div><span class="rv-cmd">' + esc(cmd) + '<button type="button">复制</button></span></div>';
+  function renderMd(md) {
+    lastMd = md || '';
+    var pre = $('cn-md-preview');
+    var keep = pre.scrollTop;
+    pre.textContent = '';
+    if (!lastMd) {
+      pre.textContent = '填写左侧内容后自动生成 md 预览';
+      $('cn-md-lines').textContent = '';
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    var inFm = false;
+    lastMd.split('\n').forEach(function (line) {
+      if (/^---\s*$/.test(line)) {
+        inFm = !inFm;
+        appendLine(frag, line, 'l-rule');
+        return;
+      }
+      if (inFm) {
+        var i = line.indexOf(':');
+        if (i > 0) {
+          var w = document.createElement('span');
+          w.className = 'cn-md-line l-fmline';
+          var ks = document.createElement('span'), vs = document.createElement('span');
+          ks.className = 'l-key'; vs.className = 'l-val';
+          ks.textContent = line.slice(0, i + 1);
+          vs.textContent = line.slice(i + 1);
+          w.appendChild(ks); w.appendChild(vs); frag.appendChild(w);
+          return;
+        }
+        appendLine(frag, line, 'l-fm');
+        return;
+      }
+      var m = /^(#{1,6})\s/.exec(line);
+      if (m) { appendLine(frag, line, 'l-h l-h' + m[1].length); return; }
+      if (/^\s*-\s/.test(line)) { appendLine(frag, line, 'l-li'); return; }
+      appendLine(frag, line, '');
+    });
+    pre.appendChild(frag);
+    pre.scrollTop = keep;
+    $('cn-md-lines').textContent = lastMd.split('\n').length + ' 行';
   }
-  function renderResult(data, saved) {
+
+  /* ---------------- 校验结果 / 状态 ---------------- */
+  function notice(tone, head, items) {
+    var html = '<div class="cn-notice" data-tone="' + tone + '"><div class="cn-notice-head">' + head + '</div>';
+    if (items && items.length) {
+      html += '<ul>' + items.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul>';
+    }
+    return html + '</div>';
+  }
+  function problemsHtml(data) {
     var html = '';
-    if (data.errors && data.errors.length) {
-      html += notice('error', ['<b>校验未通过（' + data.errors.length + ' 条）</b>'].concat(data.errors));
-    } else if (data.error) {
-      html += notice('error', ['<b>' + esc(data.error) + '</b>'].concat(data.errors || []));
+    if (data.error) {
+      html += notice('error', '<b>' + esc(data.error) + '</b>', data.errors || []);
+    } else if (data.errors && data.errors.length) {
+      html += notice('error', '<b>校验未通过（' + data.errors.length + ' 条）</b>', data.errors);
     }
     if (data.warnings && data.warnings.length) {
-      html += notice('notice', ['<b>提示（' + data.warnings.length + ' 条，不阻断保存）</b>'].concat(data.warnings));
+      html += notice('notice', '<b>提示（' + data.warnings.length + ' 条，不阻断保存）</b>', data.warnings);
     }
-    if (saved && data.path) {
-      html += notice('pass', ['已保存：<b>' + esc(data.path) + '</b>（status: structured）',
-        '后续三步（check 已通过、build 编译新版本、执行后导入）：']);
-      (data.hint || []).forEach(function (cmd) { html += cmdSpan(cmd); });
-    }
-    if (data.md) {
-      html += '<div class="rv-cn-head" style="margin-top:8px"><b>md 预览</b>' +
-        '<span class="rv-meta">' + (data.ok === false ? '当前表单产出的 md（先修上面的错误）' : '落盘内容与预览一致') + '</span></div>' +
-        '<pre class="rv-cn-md">' + esc(data.md) + '</pre>';
-    }
-    $('cn-result').innerHTML = html;
-    $('cn-result').querySelectorAll('.rv-cmd button').forEach(function (b) {
+    return html;
+  }
+  function setStatus(tone, text) {
+    var el = $('cn-status');
+    el.dataset.tone = tone;
+    el.textContent = text;
+  }
+  function statusOf(data) {
+    var errs = (data.errors || []).length + (data.error ? 1 : 0);
+    var warns = (data.warnings || []).length;
+    if (errs) { setStatus('fail', errs + ' 条错误'); }
+    else if (warns) { setStatus('notice', '通过 · ' + warns + ' 条提示'); }
+    else { setStatus('pass', '✓ 校验通过'); }
+  }
+  function renderLive(data) {
+    renderMd(data.md || '');
+    if (liveLocked) { return; }        // 保存后的提示不被晚到的实时预览覆盖
+    statusOf(data);
+    $('cn-result').innerHTML = problemsHtml(data);
+  }
+  function wireCopyCommands(root) {
+    (root || document).querySelectorAll('.cn-cmdline .rv-cmd button').forEach(function (b) {
       b.addEventListener('click', function () {
         var text = b.parentNode.firstChild.textContent.trim();
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -265,29 +405,81 @@
       });
     });
   }
-  function post(url, body, onOk) {
-    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                 body: JSON.stringify(body) })
+
+  /* ---------------- 网络 ---------------- */
+  function schedulePreview() {
+    liveLocked = false;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(fetchPreview, 350);
+  }
+  function fetchPreview() {
+    var seq = ++previewSeq;
+    fetch('/api/case/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                 body: JSON.stringify(collect()) })
       .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (res) { onOk(res); })
-      .catch(function (e) { $('cn-result').innerHTML = notice('error', ['请求失败：' + e.message]); });
+      .then(function (res) { if (seq === previewSeq) { renderLive(res.j); } })
+      .catch(function (e) {
+        if (seq !== previewSeq) { return; }
+        setStatus('fail', '预览失败');
+        $('cn-result').innerHTML = notice('error', '<b>请求失败</b>', [e.message]);
+      });
   }
 
-  $('cn-preview-btn').addEventListener('click', function () {
-    post('/api/case/preview', collect(), function (res) { renderResult(res.j, false); });
-  });
   $('cn-save-btn').addEventListener('click', function () {
-    post('/api/case/create', collect(), function (res) {
-      renderResult(res.j, res.ok);
-      if (res.ok) { window.scrollTo({ top: 0, behavior: 'smooth' }); }
-    });
-  });
-  $('cn-dir').addEventListener('change', function () { $('cn-dir-new-row').hidden = $('cn-dir').value !== '__new__'; });
-  $('cn-refusal').addEventListener('change', function () {
-    $('cn-refusal-w-field').hidden = !$('cn-refusal').checked;
+    var btn = this;
+    btn.disabled = true;
+    liveLocked = true;
+    clearTimeout(previewTimer);
+    previewSeq++;
+    fetch('/api/case/create', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(collect()) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        if (!res.ok) {
+          statusOf(res.j);
+          $('cn-result').innerHTML = problemsHtml(res.j);
+          return;
+        }
+        renderMd(res.j.md || lastMd);
+        setStatus('pass', '✓ 已保存');
+        var html = problemsHtml(res.j) +
+          notice('pass', '已保存：<b>' + esc(res.j.path) + '</b>（status: structured）', []);
+        html += '<div class="cn-hints"><div class="rv-meta">后续三步（check → build → 执行后导入）：</div>';
+        (res.j.hint || []).forEach(function (cmd) {
+          html += '<div class="cn-cmdline"><span class="rv-cmd">' + esc(cmd) +
+            '<button type="button">复制</button></span></div>';
+        });
+        $('cn-result').innerHTML = html + '</div>';
+        wireCopyCommands($('cn-result'));
+      })
+      .catch(function (e) {
+        btn.disabled = false;
+        setStatus('fail', '保存失败');
+        $('cn-result').innerHTML = notice('error', '<b>请求失败</b>', [e.message]);
+      });
   });
 
-  /* ---------------- 初始：一轮空对话 + 默认目录 ---------------- */
+  $('cn-copy-btn').addEventListener('click', function () {
+    var b = this;
+    if (!lastMd || !navigator.clipboard || !navigator.clipboard.writeText) { return; }
+    navigator.clipboard.writeText(lastMd).then(function () {
+      b.textContent = '已复制';
+      setTimeout(function () { b.textContent = '复制'; }, 1200);
+    });
+  });
+
+  /* ---------------- 事件 ---------------- */
+  var form = $('cn-form');
+  form.addEventListener('input', function () { updateDocPath(); schedulePreview(); });
+  form.addEventListener('change', function (e) {
+    if (e.target.id === 'cn-dim') { dimChanged(false); }
+    if (e.target.id === 'cn-dir') { syncDirRow(); }
+    if (e.target.id === 'cn-refusal') { $('cn-refusal-w-field').hidden = !e.target.checked; }
+    updateDocPath();
+    schedulePreview();
+  });
+
   $('cn-add-turn').onclick = addTurn;
   $('cn-add-cond').onclick = addCond;
   $('cn-add-inj').onclick = addInj;
@@ -298,6 +490,12 @@
   $('cn-add-path').onclick = addPath;
   $('cn-add-ev').onclick = addEv;
   $('cn-add-var').onclick = addVar;
+
+  /* ---------------- 初始化 ---------------- */
   addTurn(); addCond();
+  syncDirRow();
   dimChanged(true);
+  updateDocPath();
+  renderMd('');
+  schedulePreview();
 })();
