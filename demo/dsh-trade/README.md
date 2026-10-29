@@ -30,7 +30,7 @@ python -m scoring serve --db demo/dsh-trade/eval.db \
 
 | 路径 | 内容 |
 | --- | --- |
-| `evalset/` | 历史快照 v20261028-dsh（6 题：知识召回×3 / 错误知识纠正×2 含注入 / 多轮×1）及测法 sidecar（v9 演示库改用仓库 evalset/dist/evalset-v20261029-1.jsonl） |
+| `evalset/` | 历史快照 v20261028-dsh（6 题：知识召回×3 / 错误知识纠正×2 含注入 / 多轮×1）及测法 sidecar（v9 演示库已导入 v20261029-1 快照；该 dist 文件不进仓库，演示用库内数据即可） |
 | `run/` | 会话执行产物 results.jsonl + run.json（runner `out/dsh-trade-01` 的核心文件） |
 | `eval.db` | 评测库（v9）：快照 v20261029-1、run、迁移的模型判定、结论与计分；`eval-v8-backup-20261029.db` 为重建前旧库留档 |
 | `agent/trade-documents.md` | 被测技能（安装于 `~/.dsh/skills`，单证与放单规则） |

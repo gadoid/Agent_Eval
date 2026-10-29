@@ -10,7 +10,9 @@ runner/out/
 # 评测库：判定与人工改判含真实业务对话，不进仓库（改造方案 §14；backup/export 另存）
 archive/
 
-# 编译产物：每个快照一个版本文件，可由 md 重建（md2case build），不进仓库
+# 编译产物：每个快照一个版本文件，可由 md 重建（md2case build），不进仓库。
+# 重建历史快照要先 checkout 当时的提交再 build；--prev 差异文件要求上一版仍在本地；
+# 版本号取号会同时看评测库 snapshots 表，清空本目录不会重号。
 evalset/dist/
 
 # 产品 asar 导出的技能根与机制验证脚本产物（产品内容拷贝，不进仓库；tools/export-skills.mjs 可重建）
