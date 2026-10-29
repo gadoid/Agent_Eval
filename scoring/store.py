@@ -458,9 +458,11 @@ class Store:
                 (version, snap_sha, method_js, method_sha, include, None, now()))
         return snap_sha
 
-    def _snapshot_parts(self, rows: list[dict]) -> tuple[list[list], dict[str, dict]]:
+    def _snapshot_parts(self, rows: list[dict]) -> tuple[list[list], dict[str, dict],
+                                                         dict[str, dict]]:
         """导入行的快照载荷（doc/15 §1）：rows = [uid, input_fp, standard_fp]，
-        scoring = dist 行原样的计分配置。冲突检查与 _register_snapshot 共用此结果。"""
+        scoring = dist 行原样的计分配置，seeds = 每用例的变体 0 行（导入登记也用它，
+        避免种子题规则写两份）。冲突检查与 _register_snapshot 共用前两项。"""
         row_map: dict[str, list] = {}
         seeds: dict[str, dict] = {}
         for case in rows:
@@ -470,7 +472,7 @@ class Store:
             if (case.get("variant_index") or 0) == 0 or cid not in seeds:
                 seeds[cid] = case
         smap = {cid: seed["scoring"] for cid, seed in seeds.items() if seed.get("scoring")}
-        return sorted(row_map.values()), smap
+        return sorted(row_map.values()), smap, seeds
 
     def import_evalset(self, rows: list[dict], version: str, method: dict | None = None,
                        include: str | None = None) -> dict:
@@ -478,11 +480,10 @@ class Store:
         标记非活跃。计分配置（scoring 块）按用例覆盖写 case_scoring、刷新缓存列；
         报告未分配（计分权重合计 0，评测将跳过，doc/17 §4）的用例。
         版本不可变：同版本已登记且 snapshot_sha 不同 → 报错，绝不覆盖旧快照。"""
-        rows_v, smap = self._snapshot_parts(rows)
+        rows_v, smap, seeds = self._snapshot_parts(rows)
         _, method_sha = self._load_method(method)
         new_sha = canonical_sha({"rows": rows_v, "scoring": smap, "method_sha": method_sha})
         qkeys: dict[str, str] = {}
-        seeds: dict[str, dict] = {}
         with self.lock, self.conn:
             existing = self.snapshot(version)          # 检查与写入同锁：避免并发行导入竞态
             if existing is not None and existing["snapshot_sha"] != new_sha:
@@ -495,9 +496,6 @@ class Store:
                 self.upsert_question(case)
                 self.register_spec(qkey, fp, case, version)
                 qkeys[qkey] = fp
-                cid = case.get("case_id") or case.get("id") or "?"
-                if (case.get("variant_index") or 0) == 0 or cid not in seeds:
-                    seeds[cid] = case
             self.conn.execute("UPDATE questions SET active=0")
             for qkey, fp in qkeys.items():
                 self.conn.execute("UPDATE questions SET active=1, current_standard_fp=?, off_snapshot=0"
