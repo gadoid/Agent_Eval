@@ -346,6 +346,9 @@ def test_case_page_use_slots_markup(pipeline_env):
     r = client.post("/api/case/kr-0302/edit", json={
         "case_id": "kr-0302", "items": [{"id": "P1", "use": "score", "weight": 30}]})
     assert r.status_code == 200, r.text
+    # 保存管线整链回写：md 正文带 # H1 标题头（与 frontmatter title 同源）
+    saved_md = (cases / "batch" / "kr-0302.md").read_text(encoding="utf-8")
+    assert "\n# 前提计分的保单号填写（路径与分组渲染测试）\n" in saved_md
     out = dist / f"evalset-{r.json()['version']}.jsonl"
     uids = set()
     for line in out.read_text(encoding="utf-8").splitlines():
@@ -364,6 +367,10 @@ def test_case_page_use_slots_markup(pipeline_env):
         return m.groups() if m else (None, None)
     assert slot("P1") == ("rv-weight rv-wpct-chip", "30%")     # 计分前提 → 权重角标
     assert slot("path#1") == ("rv-pill", "参考")                 # 缺省参考路径 → 参考胶囊
+    # 计分/参考两组容器：参考组（标题+列表）初始隐藏，case.js classifyRows 随用途
+    # 归位行；计分组带空态提示（全部切参考时由 JS 显出）
+    assert 'id="item-ref-list" hidden' in page and 'id="rv-ref-head" hidden' in page
+    assert "判定条目 · 计分" in page and 'id="item-score-empty"' in page
     # 标题位：h1 显 title，id 以小字缀后；概览展示真正的关键条件（槽位：值）而非前提/路径
     assert "<h1>前提计分的保单号填写" in page and 'class="rv-h1-id">kr-0302' in page
     assert "问点：保单号填写" in page and "关键词" in page

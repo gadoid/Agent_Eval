@@ -87,7 +87,7 @@
         {% for r in spec.assistant_refs %}{% if r %}<div class="rv-expect-q rv-assist-ref"><b>第 {{ loop.index }} 轮</b>{{ r }}</div>{% endif %}{% endfor %}
       </div>
       {% endif %}
-      <div class="rv-eyebrow">判定条目（简要，点「详情」或饼图扇区查看全文）</div>
+      <div class="rv-eyebrow">判定条目 · 计分 <span class="rv-eyebrow-n" id="rv-score-count"></span>（简要，点「详情」或饼图扇区查看全文；点行角标切为参考）</div>
       <div class="rv-expect-grid">
         <div class="rv-items-col">
           <ul class="rv-facts rv-facts-brief" id="item-list">
@@ -132,7 +132,10 @@
               <button class="rv-btn rv-detail-btn" type="button" data-id="refusal">详情</button>
             </li>
             {% endif %}
+            <li class="rv-facts-empty" id="item-score-empty" hidden>（无计分条目：全部条目已切为参考，本用例不计分）</li>
           </ul>
+          <div class="rv-eyebrow rv-ref-eyebrow" id="rv-ref-head" hidden>参考条目 <span class="rv-eyebrow-n" id="rv-ref-count"></span>（判卷时核对但不计分；点行角标切回计分）</div>
+          <ul class="rv-facts rv-facts-brief" id="item-ref-list" hidden></ul>
           <div id="item-detail" class="rv-item-detail" hidden>
             {% for d in item_details %}
             <div class="rv-detail-card" data-detail="{{ d.id }}" hidden>

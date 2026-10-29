@@ -774,14 +774,22 @@ span.sc-use-pill { cursor: default; opacity: .75; }
 .rv-assist-ref { color: var(--ink-2); }
 .rv-assist-ref b { color: var(--ink-2); font-weight: 500; }
 
-/* 判定条目简要行随图例用途同步置灰（data-refrow 由 case.js 在 syncBars 里维护） */
+/* 判定条目简要行随图例用途同步置灰（data-refrow 由 case.js 在 syncBars 里维护）；
+   参考行归位到 #item-ref-list 后整组同置灰 */
 #item-list .rv-item[data-refrow="1"] .rv-kind,
-#item-list .rv-item[data-refrow="1"] .rv-fact-text { opacity: .55; }
+#item-list .rv-item[data-refrow="1"] .rv-fact-text,
+#item-ref-list .rv-item .rv-kind,
+#item-ref-list .rv-item .rv-fact-text { opacity: .55; }
 /* 简要列表角标与图例胶囊同语义：可点击切换用途（拒答 data-fixed 固定计分，点击下钻详情） */
-#item-list [data-use-slot] { cursor: pointer; }
-#item-list [data-use-slot]:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
-#item-list [data-use-slot][data-fixed="1"] { cursor: default; }
-#item-list [data-use-slot][data-fixed="1"]:hover { outline: none; }
+#item-list [data-use-slot], #item-ref-list [data-use-slot] { cursor: pointer; }
+#item-list [data-use-slot]:hover, #item-ref-list [data-use-slot]:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+#item-list [data-use-slot][data-fixed="1"], #item-ref-list [data-use-slot][data-fixed="1"] { cursor: default; }
+#item-list [data-use-slot][data-fixed="1"]:hover, #item-ref-list [data-use-slot][data-fixed="1"]:hover { outline: none; }
+/* 计分组/参考组标题后的条目计数（case.js classifyRows 维护） */
+.rv-eyebrow-n { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--ink-3); margin: 0 2px; }
+/* 参考组标题与空态提示 */
+.rv-ref-eyebrow { margin-top: var(--space-3); }
+.rv-facts-empty { color: var(--ink-3); font-size: 12px; padding: 6px 2px; }
 
 /* ---------------- 新建用例表单（用例管理 → 新建用例） */
 

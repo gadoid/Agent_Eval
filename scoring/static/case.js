@@ -396,7 +396,7 @@
     if (sumEl) sumEl.textContent = fmt(total()) + '%';
     if (leftEl) leftEl.textContent = fmt(rest.pct) + '%';
     // 简要列表与详情卡随图例同步（图例是唯一编辑入口）：参考 → 换「参考」胶囊并置灰行；
-    // 计分 → 权重角标。拒答没有列表行，只同步详情卡。
+    // 计分 → 权重角标；随后 classifyRows 把行归位到 计分组/参考组。
     items.forEach(function (it) {
       var slot = document.querySelector('[data-use-slot="' + it.id + '"]');
       if (slot) {
@@ -412,6 +412,32 @@
         else { d.className = 'rv-weight'; d.textContent = '计分 · 权重 ' + fmt(it.pct) + '%'; }
       }
     });
+    classifyRows();
+  }
+
+  // 简要列表按用途分组归位：计分条目留 #item-list，参考条目挪 #item-ref-list；
+  // 切换用途后 syncBars 会再跑一遍，行自动在两组间移动。拒答 fixed 恒计分。
+  var refListBox = document.getElementById('item-ref-list');
+  function classifyRows() {
+    var scoreList = document.getElementById('item-list');
+    if (!scoreList || !refListBox) return;
+    var refCount = 0;
+    items.forEach(function (it) {
+      var li = document.querySelector('#item-list .rv-item[data-id="' + it.id + '"],' +
+                                     ' #item-ref-list .rv-item[data-id="' + it.id + '"]');
+      if (!li) return;
+      if (it.use === 'ref') { refListBox.appendChild(li); refCount++; }
+      else { scoreList.appendChild(li); }
+    });
+    var refHead = document.getElementById('rv-ref-head');
+    var hideRef = refCount === 0;
+    if (refHead) refHead.hidden = hideRef;
+    refListBox.hidden = hideRef;
+    var scEmpty = document.getElementById('item-score-empty');
+    if (scEmpty) scEmpty.hidden = (items.length - refCount) > 0;
+    var sc = document.getElementById('rv-score-count'), rc = document.getElementById('rv-ref-count');
+    if (sc) sc.textContent = '· ' + (items.length - refCount);
+    if (rc) rc.textContent = '· ' + refCount;
   }
 
   // 用途切换（doc/17）：转参考即去权重（恢复值从未分配里出，无未分配则压到可得额度）。
@@ -428,15 +454,19 @@
     var it = item(b.dataset.use);
     if (it && !it.fixed) toggleUse(it);
   });
-  // 简要列表角标：点击与图例胶囊同效切换用途；拒答固定计分，点角标改为下钻详情
-  var listBox = document.getElementById('item-list');
-  if (listBox) listBox.addEventListener('click', function (e) {
+  // 简要列表角标：点击与图例胶囊同效切换用途；拒答固定计分，点角标改为下钻详情。
+  // 行会在计分组/参考组之间移动，委托挂在两个列表上而不是某个列表。
+  function slotClick(e) {
     var slot = e.target.closest('[data-use-slot]');
     if (!slot) return;
     var it = item(slot.dataset.useSlot);
     if (!it) return;
     if (it.fixed) { showDetail(it.id); return; }
     toggleUse(it);
+  }
+  ['item-list', 'item-ref-list'].forEach(function (id) {
+    var box = document.getElementById(id);
+    if (box) box.addEventListener('click', slotClick);
   });
 
   // 点扇区 = 下钻详情（扇区可能是 path 或整圆 circle）

@@ -286,6 +286,8 @@ def test_title_roundtrip_and_missing_warn(env):
     assert case["title"] == "融资单据清单"
     md = md2case.case_to_md(case, md2case.load_mapping())
     assert "title: 融资单据清单" in md
+    # title 同步落成正文 H1（人类直接读 md 的标题头），且在首个 ## 段落之前
+    assert "\n# 融资单据清单\n" in md and md.index("# 融资单据清单") < md.index("## 问题")
     back = md2case.md_to_case(md, "kr-0001.md")            # 回写产物再解析，title 不丢
     assert back["title"] == "融资单据清单"
     rows = md2case.compile_case(case, {}, "vX")
@@ -293,6 +295,23 @@ def test_title_roundtrip_and_missing_warn(env):
     no = parse_ok(env, "---\nid: kr-0002\ndim: 知识召回\nstatus: draft\n---\n" + body, "kr-0002")
     assert no.get("title") is None
     assert any("缺 title" in w for w in no["_warnings"])
+
+
+def test_title_h1_parse_fallback_and_mismatch(env):
+    """正文 H1 与 frontmatter title 对账：只有 H1 时兜底成 title；两者不一致以 frontmatter
+    为准并提示；第二个 H1 直接报错（正文只应有一个标题头）。"""
+    head = "---\nid: kr-0001\ndim: 知识召回\nstatus: draft\n---\n"
+    body = "\n## 问题\n保单号后三位填多少？\n\n## 关键条件\n- 槽：值\n\n## 必要事实\n- F1：事实内容 【外部】\n"
+    only_h1 = parse_ok(env, head + "\n# 只有正文标题\n" + body, "kr-0001")
+    assert only_h1["title"] == "只有正文标题"                 # frontmatter 缺 title 时由 H1 兜底
+    assert not any("缺 title" in w for w in only_h1["_warnings"])
+    mismatch = parse_ok(env, head.replace(
+        "status: draft", "status: draft\ntitle: 配置标题") + "\n# 正文标题\n" + body, "kr-0001")
+    assert mismatch["title"] == "配置标题"                    # frontmatter 为准
+    assert any("不一致" in w for w in mismatch["_warnings"])
+    with pytest.raises(md2case.CaseError) as ei:
+        md2case.md_to_case(head + "\n# 标题一\n" + body + "\n# 标题二\n", "kr-0001.md")
+    assert "只应有一个" in str(ei.value)
 
 
 # ---------------------------------------------------------------- --docs

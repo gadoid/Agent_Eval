@@ -52,6 +52,7 @@ def nodes_table() -> dict:
             _NODES = mod.NODES
     return _NODES
 
+H1 = re.compile(r"^#\s+(.+?)\s*$")
 H2 = re.compile(r"^##\s+(.+?)\s*$")
 BULLET = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 COLONS = (":", "：")
@@ -647,10 +648,18 @@ def split_frontmatter(text: str, errors: list[str]):
     return {}, lines, 0
 
 
-def split_sections(body, offset, errors):
+def split_sections(body, offset, errors, h1=None):
+    """切「## 标题」段落；开头的「# 标题」H1 收进 h1（正文标题，与 frontmatter title 对应）。"""
     sections, current = [], None
     for idx, text in enumerate(body):
         no = offset + idx + 1
+        m = H1.match(text)
+        if m:
+            if h1 is not None and h1:
+                errors.append(f"第 {no} 行：正文只应有一个「# 标题」（放在开头）")
+            elif h1 is not None:
+                h1.append(m.group(1))
+            continue
         m = H2.match(text)
         if m:
             current = (m.group(1), no, [])
@@ -677,7 +686,8 @@ def md_to_case(text: str, path: str = "<input>", mapping: dict | None = None) ->
     case.setdefault("answerable", True)
 
     group_owner: dict[str, str] = {}
-    for title, no, lines in split_sections(body, offset, errors):
+    h1: list[str] = []
+    for title, no, lines in split_sections(body, offset, errors, h1):
         rule = mapping["sections"].get(title)
         if rule is None:
             errors.append(f"第 {no} 行：未知标题「{title}」。可用标题：{'、'.join(mapping['sections'])}")
@@ -695,6 +705,13 @@ def md_to_case(text: str, path: str = "<input>", mapping: dict | None = None) ->
             case.setdefault(field, []).extend(value or [])
         else:
             case[field] = value
+
+    if h1:                                       # 正文 H1 与 frontmatter title 对账（frontmatter 为准）
+        fm_title = str(case.get("title") or "").strip()
+        if not fm_title:
+            case["title"] = h1[0]
+        elif fm_title != h1[0]:
+            warns.append(f"正文 H1「{h1[0]}」与 frontmatter title「{fm_title}」不一致，以 frontmatter 为准（保存时回写对齐）")
 
     if "input" in case and case["input"]:
         case["turns"] = case["input"]["turns"]
@@ -1445,6 +1462,9 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
     mapping = mapping or load_mapping()
     meta = {k: case[k] for k in META_KEYS if case.get(k) not in (None, [])}
     out = ["---", yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip(), "---", ""]
+    _title = str(case.get("title") or "").strip()
+    if _title:
+        out += [f"# {_title}", ""]   # 正文 H1 与 frontmatter title 同源，方便人类直接读 md
     turns = case.get("turns") or []
     refs = case.get("assistant_refs") or [None] * len(turns)
     if len(turns) == 1:
