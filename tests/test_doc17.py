@@ -65,6 +65,38 @@ def test_veto_mode_cap():
     assert v.status == "fail" and v.score == 40 and "禁止事实被采信" in v.vetoes
 
 
+def test_refusal_forbidden_adopted_display():
+    """拒答型会话采信禁止事实：vetoes 与 forbidden_adopted 都要有（展示字段，不改结论）。"""
+    case = dict(mk_record()["case"])
+    case.pop("scoring", None)
+    case["answerable"] = False
+    case["facts"] = [fact("X1", "forbidden", "禁止内容")]
+    rec = mk_record(case=case)
+    scoring = resolve_plan(case, {"items": {"X1": {"use": "ref"},
+                                            "refusal": {"use": "score", "weight": 100.0}},
+                                  "unassigned": False})
+    eff = {"X1": Verdict("采信", "judge", "f@1"), "refusal": Verdict("拒答", "judge", "f@1")}
+    v = _conclude(rec, eff, scoring=scoring)
+    assert v.status == "fail" and "禁止事实被采信" in v.vetoes
+    assert v.forbidden_adopted == {"X1": True}
+
+
+def test_error_keeps_veto_display_fields():
+    """计分单位为空（路径计分 + forced）记 error 时，否决的展示字段仍要保留。"""
+    case = dict(mk_record()["case"])
+    case.pop("scoring", None)
+    case["facts"] = [fact("X1", "forbidden", "禁止内容")]
+    case["path"] = [{"type": "must", "action": {"kind": "load_skill", "skill": "trade-documents"}}]
+    rec = mk_record(case=case, mode="forced")
+    scoring = resolve_plan(case, {"items": {"X1": {"use": "ref"},
+                                            "path#1": {"use": "score", "weight": 100.0}},
+                                  "unassigned": False})
+    eff = {"X1": Verdict("采信", "judge", "f@1")}
+    v = _conclude(rec, eff, scoring=scoring)
+    assert v.status == "error" and "计分条目全部不适用" in v.error
+    assert "禁止事实被采信" in v.vetoes and v.forbidden_adopted == {"X1": True}
+
+
 def test_required_as_ref_still_vetoes():
     """必要事实设为参考后不再计分，但判「错」仍触发否决（默认规则与用途无关）。"""
     facts = [fact("F1", text="甲", use="ref"), fact("F9", text="乙"),

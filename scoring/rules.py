@@ -383,14 +383,16 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
 
     stage_open = (all(i.id in decided for i in preconds)
                   and (forced or all(i.id in decided for i in paths)))
+    # 展示字段：禁止事实的采信结论按实际判定值填，拒答型会话同样要能看出是哪条触发否决
+    if stage_open and (not answerable or facts_live):
+        for item in forbids:
+            if item.id in decided:
+                v.forbidden_adopted[item.id] = decided[item.id] == "采信"
     if stage_open and not answerable and refusal is not None and refusal.id in decided:
         count(refusal)                                # 拒答判定计入 by_*
     elif stage_open and facts_live:
         for item in forbids + requireds:
             count(item)                               # 期望事实不计入 by_*（沿旧口径，展示统计）
-        for item in forbids:
-            if item.id in decided:
-                v.forbidden_adopted[item.id] = decided[item.id] == "采信"
         for item in requireds:
             if item.id in decided:
                 v.facts[item.id] = decided[item.id]
@@ -466,6 +468,8 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
 
     fav, unf = evaluate(True), evaluate(False)
     v.undecided_items = undecided
+    # 否决原因先落：error / invalid 早退时也要能显示是哪条否决（展示字段，不影响分）
+    v.vetoes = [VETO_REASONS[k] for k in fav.get("vetoes") or []]
     if fav["invalid"]:                                   # 前提实际不成立
         v.status, v.invalid_reason = "invalid", fav["reason"]
         return v
@@ -473,7 +477,6 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
         v.status, v.error = "error", fav["error"]
         return v
     v.parts = fav["parts"]
-    v.vetoes = [VETO_REASONS[k] for k in fav["vetoes"]]   # 有利一次的否决只来自实际判定值
     v.score_max = fav["score"]
     v.score_min = None if unf["invalid"] else unf["score"]
     if not unf["invalid"] and unf["auto"] == fav["auto"]:
