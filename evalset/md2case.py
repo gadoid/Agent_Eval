@@ -965,7 +965,7 @@ def check_scoring(case, errors, warns):
         brief = "、".join(f"{i}={w / total * 100:.4f}".rstrip("0").rstrip(".") + "%"
                           for i, w in unit_w.items() if w > 0)
         warns.append(f"计分条目名义权重合计 {total:g}（≠100），编译按比例归一：{brief}")
-    if total > 0 and all(i.startswith("path#") for i in unit_w):
+    if total > 0 and all(i.startswith("path#") for i, w in unit_w.items() if w > 0):
         warns.append("计分条目全部是路径：路径只在非 forced 会话判定，forced 会话没有计分单位，"
                      "会被记为 error（「计分条目全部不适用」）；建议保留至少一个非路径的计分条目")
     if total <= 0 and case.get("status") in DEFAULT_INCLUDE.split(","):

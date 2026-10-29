@@ -492,6 +492,14 @@ def test_warn_score_items_all_paths(env):
     assert set(md2case.score_units_of(case)) == {"path#1"}
     assert any("计分条目全部是路径" in w and "forced" in w for w in case["_warnings"])
     assert not any("计分条目全部是路径" in w for w in parse_ok(env, EC_CASE, "ec-0106")["_warnings"])
+    # 权重 0 的计分条目不构成计分单位：路径 100 + F1 计分但 0% 仍然只有路径计分
+    text0 = (EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】",
+                             "保单号后三位应填 400 【轮次：2】【外部】【计分】【权重：0】")
+                    .replace("必须：加载 skill trade-company 【轮次：1】",
+                             "必须：加载 skill trade-company 【轮次：1】【计分】【权重：100】"))
+    case0 = parse_ok(env, text0, "ec-0107")
+    assert md2case.score_units_of(case0) == {"F1": 0.0, "path#1": 100.0}
+    assert any("计分条目全部是路径" in w for w in case0["_warnings"])
 
 
 def test_error_bad_weight(env):
