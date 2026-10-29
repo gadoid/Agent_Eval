@@ -444,23 +444,28 @@ class Store:
 
     def _register_snapshot(self, version: str, qkeys: list[str], method: dict | None = None,
                            include: str | None = None,
-                           scoring_by_case: dict[str, dict] | None = None) -> str:
+                           payload: tuple[list[list], dict[str, dict]] | None = None) -> str:
         """登记/刷新快照（snapshot_sha 单一算法，S2：doc/15 §1 + doc/17 §8.2 的
-        scoring 分量）。scoring_by_case：导入原始行的计分配置（specs 表已剥除）。"""
+        scoring 分量）。payload：导入时由 _snapshot_parts 预先算好的（rows, scoring），
+        冲突检查与登记共用同一份，避免两处算法分叉；缺省（snapshot_use 补登记）
+        才按 specs/questions 从库里重建。"""
         method_js, method_sha = self._load_method(method)
-        rows_v, smap = [], dict(scoring_by_case or {})
-        for qkey in qkeys:
-            q = self.question(qkey) or {}
-            sv = self.conn.execute(
-                "SELECT standard_fp, spec_json FROM specs WHERE qkey=? AND evalset_version=?",
-                (qkey, version)).fetchone()
-            if sv is None:
-                continue
-            rows_v.append([q.get("uid") or "?", q.get("input_fp") or "", sv["standard_fp"]])
-            if not smap and (q.get("variant_index") or 0) == 0:
-                sc = self.case_scoring(q.get("case_id") or "?")
-                if sc:
-                    smap[q.get("case_id") or "?"] = sc
+        if payload is not None:
+            rows_v, smap = payload
+        else:
+            rows_v, smap = [], {}
+            for qkey in qkeys:
+                q = self.question(qkey) or {}
+                sv = self.conn.execute(
+                    "SELECT standard_fp FROM specs WHERE qkey=? AND evalset_version=?",
+                    (qkey, version)).fetchone()
+                if sv is None:
+                    continue
+                rows_v.append([q.get("uid") or "?", q.get("input_fp") or "", sv["standard_fp"]])
+                if not smap and (q.get("variant_index") or 0) == 0:
+                    sc = self.case_scoring(q.get("case_id") or "?")
+                    if sc:
+                        smap[q.get("case_id") or "?"] = sc
         snap_sha = canonical_sha({"rows": sorted(rows_v), "scoring": smap, "method_sha": method_sha})
         with self.lock, self.conn:
             self.conn.execute(
@@ -472,8 +477,8 @@ class Store:
         return snap_sha
 
     def _snapshot_parts(self, rows: list[dict]) -> tuple[list[list], dict[str, dict]]:
-        """导入行的快照载荷（与 _register_snapshot 的算法一致）：先算 snapshot_sha，
-        才能在不写库的前提下判断版本冲突。"""
+        """导入行的快照载荷（doc/15 §1）：rows = [uid, input_fp, standard_fp]，
+        scoring = dist 行原样的计分配置。冲突检查与 _register_snapshot 共用此结果。"""
         row_map: dict[str, list] = {}
         seeds: dict[str, dict] = {}
         for case in rows:
@@ -483,13 +488,6 @@ class Store:
             if (case.get("variant_index") or 0) == 0 or cid not in seeds:
                 seeds[cid] = case
         smap = {cid: seed["scoring"] for cid, seed in seeds.items() if seed.get("scoring")}
-        if not smap:                       # 旧 dist 无 scoring 块：沿用库内已有计分配置
-            for cid, seed in seeds.items():
-                if (seed.get("variant_index") or 0) != 0:
-                    continue
-                sc = self.case_scoring(cid)
-                if sc:
-                    smap[cid] = sc
         return sorted(row_map.values()), smap
 
     def import_evalset(self, rows: list[dict], version: str, method: dict | None = None,
@@ -498,7 +496,8 @@ class Store:
         标记非活跃。计分配置（scoring 块）按用例覆盖写 case_scoring、刷新缓存列；
         报告未分配（计分权重合计 0，评测将跳过，doc/17 §4）的用例。
         版本不可变：同版本已登记且 snapshot_sha 不同 → 报错，绝不覆盖旧快照。"""
-        rows_v, smap = self._snapshot_parts(rows)
+        payload = self._snapshot_parts(rows)
+        rows_v, smap = payload
         _, method_sha = self._load_method(method)
         new_sha = canonical_sha({"rows": rows_v, "scoring": smap, "method_sha": method_sha})
         existing = self.snapshot(version)
@@ -522,15 +521,12 @@ class Store:
             for qkey, fp in qkeys.items():
                 self.conn.execute("UPDATE questions SET active=1, current_standard_fp=?, off_snapshot=0"
                                   " WHERE qkey=?", (fp, qkey))
-            scoring_by_case = {}
             for cid, seed in seeds.items():
                 self._register_case_scoring(cid, seed.get("scoring"))
-                if seed.get("scoring"):
-                    scoring_by_case[cid] = seed["scoring"]
             for cid in seeds:
                 self._refresh_scoring_fp(cid)
             self._register_snapshot(version, list(qkeys), method, include=include,
-                                    scoring_by_case=scoring_by_case)
+                                    payload=payload)
             self.conn.execute("INSERT OR REPLACE INTO meta VALUES('current_snapshot', ?)", (version,))
         unassigned = [cid for cid, seed in seeds.items()
                       if resolve_plan(seed, seed.get("scoring"))["unassigned"]]

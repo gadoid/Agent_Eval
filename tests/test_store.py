@@ -168,6 +168,21 @@ def test_import_records_actual_include(store):
     assert store.snapshot("v1")["include"] == "structured,reviewed,admitted"
 
 
+def test_snapshot_sha_from_single_algorithm(store):
+    """冲突检查与登记共用 _snapshot_parts：两处算出的 sha 必须一致，同内容重复导入
+    不能被误判为冲突。旧 dist 无 scoring 块（登记时走库内兜底读）是最易分叉的路径。"""
+    from scoring.rules import canonical_sha
+    rows_no_scoring = [{k: v for k, v in _dist_rows("v2")[0].items() if k != "scoring"}]
+    for version, rows in (("v1", _dist_rows("v1")), ("v2", rows_no_scoring)):
+        payload = store._snapshot_parts(rows)
+        _, method_sha = store._load_method(None)
+        expected = canonical_sha({"rows": payload[0], "scoring": payload[1],
+                                  "method_sha": method_sha})
+        store.import_evalset(rows, version)
+        assert store.snapshot(version)["snapshot_sha"] == expected
+        store.import_evalset(rows, version)      # 同内容重复导入照常通过（不误判冲突）
+
+
 def test_missing_question_marked_inactive(store, tmp_path):
     ingest(store, tmp_path, "demo", [mk_record()])
     store.import_evalset(_dist_rows("v1"), "v1")
