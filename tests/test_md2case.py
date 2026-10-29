@@ -482,6 +482,18 @@ def test_scoring_normalize_and_unassigned(env):
     assert not any("未分配" in w for w in case4["_warnings"])
 
 
+def test_warn_score_items_all_paths(env):
+    """计分条目全是路径：非 forced 才能判路径，forced 会话没有计分单位会记 error；check 提示。"""
+    text = (EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】",
+                            "保单号后三位应填 400 【轮次：2】【外部】【参考】")
+                   .replace("必须：加载 skill trade-company 【轮次：1】",
+                            "必须：加载 skill trade-company 【轮次：1】【计分】【权重：100】"))
+    case = parse_ok(env, text, "ec-0105")
+    assert set(md2case.score_units_of(case)) == {"path#1"}
+    assert any("计分条目全部是路径" in w and "forced" in w for w in case["_warnings"])
+    assert not any("计分条目全部是路径" in w for w in parse_ok(env, EC_CASE, "ec-0106")["_warnings"])
+
+
 def test_error_bad_weight(env):
     for bad_w in ("-1", "两", "1.23456", "101"):
         bad = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
