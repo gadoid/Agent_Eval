@@ -183,6 +183,17 @@ def test_snapshot_sha_from_single_algorithm(store):
         store.import_evalset(rows, version)      # 同内容重复导入照常通过（不误判冲突）
 
 
+def test_snapshot_use_requires_registered_snapshot(store):
+    """快照未登记时不再按库内最新配置兜底重建 sha（会与导入口径分叉）：
+    snapshot_use 直接报错，要求重新导入该版本。"""
+    store.import_evalset(_dist_rows("v1"), "v1")
+    store.conn.execute("DELETE FROM snapshots")
+    with pytest.raises(StoreError, match="需重新导入"):
+        store.snapshot_use("v1")
+    store.import_evalset(_dist_rows("v1"), "v1")      # 重新导入后恢复正常
+    assert store.snapshot_use("v1") == 1
+
+
 def test_missing_question_marked_inactive(store, tmp_path):
     ingest(store, tmp_path, "demo", [mk_record()])
     store.import_evalset(_dist_rows("v1"), "v1")

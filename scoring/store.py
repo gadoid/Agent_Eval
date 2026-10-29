@@ -442,30 +442,12 @@ class Store:
         js = json.dumps(method, ensure_ascii=False, sort_keys=True)
         return js, canonical_sha(method)
 
-    def _register_snapshot(self, version: str, qkeys: list[str], method: dict | None = None,
-                           include: str | None = None,
-                           payload: tuple[list[list], dict[str, dict]] | None = None) -> str:
+    def _register_snapshot(self, version: str, rows_v: list[list], smap: dict[str, dict],
+                           method: dict | None = None, include: str | None = None) -> str:
         """登记/刷新快照（snapshot_sha 单一算法，S2：doc/15 §1 + doc/17 §8.2 的
-        scoring 分量）。payload：导入时由 _snapshot_parts 预先算好的（rows, scoring），
-        冲突检查与登记共用同一份，避免两处算法分叉；缺省（snapshot_use 补登记）
-        才按 specs/questions 从库里重建。"""
+        scoring 分量）。载荷由 import_evalset 用 _snapshot_parts 一次算出，与冲突
+        检查共用；未登记的版本不做兜底重建（会与导入口径分叉，需重新导入）。"""
         method_js, method_sha = self._load_method(method)
-        if payload is not None:
-            rows_v, smap = payload
-        else:
-            rows_v, smap = [], {}
-            for qkey in qkeys:
-                q = self.question(qkey) or {}
-                sv = self.conn.execute(
-                    "SELECT standard_fp FROM specs WHERE qkey=? AND evalset_version=?",
-                    (qkey, version)).fetchone()
-                if sv is None:
-                    continue
-                rows_v.append([q.get("uid") or "?", q.get("input_fp") or "", sv["standard_fp"]])
-                if not smap and (q.get("variant_index") or 0) == 0:
-                    sc = self.case_scoring(q.get("case_id") or "?")
-                    if sc:
-                        smap[q.get("case_id") or "?"] = sc
         snap_sha = canonical_sha({"rows": sorted(rows_v), "scoring": smap, "method_sha": method_sha})
         with self.lock, self.conn:
             self.conn.execute(
@@ -496,18 +478,17 @@ class Store:
         标记非活跃。计分配置（scoring 块）按用例覆盖写 case_scoring、刷新缓存列；
         报告未分配（计分权重合计 0，评测将跳过，doc/17 §4）的用例。
         版本不可变：同版本已登记且 snapshot_sha 不同 → 报错，绝不覆盖旧快照。"""
-        payload = self._snapshot_parts(rows)
-        rows_v, smap = payload
+        rows_v, smap = self._snapshot_parts(rows)
         _, method_sha = self._load_method(method)
         new_sha = canonical_sha({"rows": rows_v, "scoring": smap, "method_sha": method_sha})
-        existing = self.snapshot(version)
-        if existing is not None and existing["snapshot_sha"] != new_sha:
-            raise StoreError(
-                f"快照 {version} 已存在且内容不同（库内 {existing['snapshot_sha'][:8]}，"
-                f"本次 {new_sha[:8]}）：dist 按版本不可变，请换版本号重新 build")
         qkeys: dict[str, str] = {}
         seeds: dict[str, dict] = {}
         with self.lock, self.conn:
+            existing = self.snapshot(version)          # 检查与写入同锁：避免并发行导入竞态
+            if existing is not None and existing["snapshot_sha"] != new_sha:
+                raise StoreError(
+                    f"快照 {version} 已存在且内容不同（库内 {existing['snapshot_sha'][:8]}，"
+                    f"本次 {new_sha[:8]}）：dist 按版本不可变，请换版本号重新 build")
             for case in rows:
                 qkey = qkey_of(case)
                 fp = standard_fp_of(case)
@@ -525,8 +506,7 @@ class Store:
                 self._register_case_scoring(cid, seed.get("scoring"))
             for cid in seeds:
                 self._refresh_scoring_fp(cid)
-            self._register_snapshot(version, list(qkeys), method, include=include,
-                                    payload=payload)
+            self._register_snapshot(version, rows_v, smap, method, include=include)
             self.conn.execute("INSERT OR REPLACE INTO meta VALUES('current_snapshot', ?)", (version,))
         unassigned = [cid for cid, seed in seeds.items()
                       if resolve_plan(seed, seed.get("scoring"))["unassigned"]]
@@ -562,7 +542,7 @@ class Store:
             snap = self.conn.execute("SELECT 1 FROM snapshots WHERE evalset_version=?",
                                      (version,)).fetchone()
             if snap is None:
-                self._register_snapshot(version, [r["qkey"] for r in rows])
+                raise StoreError(f"快照未登记：{version}（需重新导入该版本）")
             self.conn.execute("UPDATE questions SET active=0, off_snapshot=0")
             for r in rows:
                 self.conn.execute("UPDATE questions SET active=1, current_standard_fp=? WHERE qkey=?",
