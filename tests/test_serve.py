@@ -836,6 +836,28 @@ def test_case_create_and_roundtrip(served, tmp_path):
     assert any("注入" in e for e in ec.json()["errors"])
 
 
+def test_case_new_title_and_refusal_type(served, tmp_path):
+    """新建表单：title 落 frontmatter；拒答型（answerable false + 拒答权重）可建且
+    不要求必要事实；拒答型写必要/期望事实 → 服务端校验拒绝。"""
+    client, db, _, _ = served
+    cases = tmp_path / "cases"
+    cases.mkdir()
+    c2 = TestClient(create_app(db, cases_dir=str(cases)))
+    prev = c2.post("/api/case/preview", json=_kr_body(
+        title="融资业务我司报关需提供的单据", answerable=False, refusal_weight=100, facts=[]))
+    data = prev.json()
+    assert data["ok"], data["errors"]
+    assert "title: 融资业务我司报关需提供的单据" in data["md"]
+    assert "answerable: false" in data["md"] and "拒答权重: 100" in data["md"]
+    ok = c2.post("/api/case/create", json=_kr_body(
+        title="融资业务我司报关需提供的单据", answerable=False, refusal_weight=100, facts=[]))
+    assert ok.status_code == 200, ok.text
+    saved = (cases / "batch-a" / "kr-9001.md").read_text(encoding="utf-8")
+    assert "answerable: false" in saved and "拒答权重: 100" in saved
+    bad = c2.post("/api/case/preview", json=_kr_body(answerable=False, refusal_weight=100))
+    assert not bad.json()["ok"] and any("拒答用例" in e for e in bad.json()["errors"])
+
+
 def test_case_new_nature_and_partial_rule(served, tmp_path):
     """表单性质/部分判据（doc/16 §3.7）：主观落【性质：主观】、部分判据随行；
     落盘 md 可重新解析出性质；禁止事实带部分判据 → 服务端校验拒绝。"""

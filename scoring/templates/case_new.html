@@ -15,6 +15,8 @@
   <section class="rv-card" style="margin-bottom:12px">
     <div class="rv-cn-head"><b>基本信息</b><span class="rv-meta">id 前缀必须与维度对应</span></div>
     <div class="rv-cn-grid">
+      <div class="rv-field"><label>标题 <span class="rv-meta">人类可读</span></label>
+        <input class="rv-input" id="cn-title" maxlength="60" placeholder="如 融资业务我司报关需提供的单据"></div>
       <div class="rv-field"><label>用例 id</label>
         <input class="rv-input" id="cn-id" maxlength="10" placeholder="如 kr-0211（按维度自动建议）"></div>
       <div class="rv-field"><label>维度</label>
@@ -36,6 +38,13 @@
           <option value="live">live（对话真实发生）</option>
           <option value="prefill">prefill（前几轮预填助手回复）</option>
         </select></div>
+      <div class="rv-field"><label>可回答</label>
+        <div style="display:flex;gap:12px;align-items:center;height:32px">
+          <label style="display:inline-flex;gap:6px;align-items:center;font-weight:400">
+            <input type="checkbox" id="cn-refusal"> 拒答型（资料中无此规定，期望说明无法回答；不能写必要/期望事实）</label>
+        </div></div>
+      <div class="rv-field" id="cn-refusal-w-field" hidden><label>拒答权重 %</label>
+        <input class="rv-input" id="cn-refusal-w" type="number" min="0" max="100" step="0.5" placeholder="如 100"></div>
     </div>
     <div class="rv-cn-tags">
       <span class="rv-cn-tag-k">标签</span>

@@ -402,6 +402,7 @@
       if (slot) {
         if (it.use === 'ref') { slot.className = 'rv-pill'; slot.textContent = '参考'; }
         else { slot.className = 'rv-weight rv-wpct-chip'; slot.textContent = fmt(it.pct) + '%'; }
+        slot.title = it.fixed ? '拒答固定计分；权重回写 md「拒答权重」' : '点击切换 计分/参考';
         var li = slot.closest('.rv-item');
         if (li) { if (it.use === 'ref') li.dataset.refrow = '1'; else delete li.dataset.refrow; }
       }
@@ -413,16 +414,29 @@
     });
   }
 
-  // 用途切换（doc/17）：转参考即去权重（恢复值从未分配里出，无未分配则压到可得额度）
-  barBox.addEventListener('click', function (e) {
-    var b = e.target.closest('button.sc-use-pill[data-use]');
-    if (!b) return;
-    var it = item(b.dataset.use);
-    if (!it) return;
+  // 用途切换（doc/17）：转参考即去权重（恢复值从未分配里出，无未分配则压到可得额度）。
+  // 图例胶囊与简要列表角标是同一编辑语义，共用这一个函数（拒答 fixed 不走这里）。
+  function toggleUse(it) {
     if (it.use === 'score') { it.use = 'ref'; it.last = it.pct; it.pct = 0; }
     else { it.use = 'score'; it.pct = Math.min(it.last, it.pct + rest.pct); }
     drawSlices();          // 先更新未分配（rest.pct），再重建图例（内部 syncBars 读它写合计行）
     buildBars();
+  }
+  barBox.addEventListener('click', function (e) {
+    var b = e.target.closest('button.sc-use-pill[data-use]');
+    if (!b) return;
+    var it = item(b.dataset.use);
+    if (it && !it.fixed) toggleUse(it);
+  });
+  // 简要列表角标：点击与图例胶囊同效切换用途；拒答固定计分，点角标改为下钻详情
+  var listBox = document.getElementById('item-list');
+  if (listBox) listBox.addEventListener('click', function (e) {
+    var slot = e.target.closest('[data-use-slot]');
+    if (!slot) return;
+    var it = item(slot.dataset.useSlot);
+    if (!it) return;
+    if (it.fixed) { showDetail(it.id); return; }
+    toggleUse(it);
   });
 
   // 点扇区 = 下钻详情（扇区可能是 path 或整圆 circle）

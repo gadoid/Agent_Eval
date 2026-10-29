@@ -218,6 +218,7 @@ tags: [来源/人工构造]
 
 PIPE_CASE2 = """---
 id: kr-0302
+title: 前提计分的保单号填写（路径与分组渲染测试）
 dim: 知识召回
 status: admitted
 topic: 测试
@@ -337,9 +338,23 @@ def test_case_page_use_slots_markup(pipeline_env):
     详情卡计分行带 data-duse——case.js syncBars 随图例切换重写这三处。"""
     client, cases, dist, db = pipeline_env
     (cases / "batch" / "kr-0302.md").write_text(PIPE_CASE2, encoding="utf-8")
+    # structured 用例也在 cases 里：保存管线 build 显式带 --include，不能被默认
+    # admitted 口径挤出新快照（整批导入会把它设为当前）
+    (cases / "batch" / "kr-0303.md").write_text(
+        PIPE_CASE2.replace("id: kr-0302", "id: kr-0303").replace("status: admitted", "status: structured"),
+        encoding="utf-8")
     r = client.post("/api/case/kr-0302/edit", json={
         "case_id": "kr-0302", "items": [{"id": "P1", "use": "score", "weight": 30}]})
     assert r.status_code == 200, r.text
+    out = dist / f"evalset-{r.json()['version']}.jsonl"
+    uids = set()
+    for line in out.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)                      # dist 里有非用例行（无 uid），跳过
+        if row.get("uid"):
+            uids.add(row["uid"].split("#")[0])
+    assert {"kr-0301", "kr-0302", "kr-0303"} <= uids
     page = client.get("/case/kr-0302").text
     assert 'data-use-slot="P1"' in page and 'data-use-slot="path#1"' in page
     assert 'data-use-slot="F1"' in page and 'data-duse="P1"' in page
@@ -349,6 +364,14 @@ def test_case_page_use_slots_markup(pipeline_env):
         return m.groups() if m else (None, None)
     assert slot("P1") == ("rv-weight rv-wpct-chip", "30%")     # 计分前提 → 权重角标
     assert slot("path#1") == ("rv-pill", "参考")                 # 缺省参考路径 → 参考胶囊
+    # 标题位：h1 显 title，id 以小字缀后；概览展示真正的关键条件（槽位：值）而非前提/路径
+    assert "<h1>前提计分的保单号填写" in page and 'class="rv-h1-id">kr-0302' in page
+    assert "问点：保单号填写" in page and "关键词" in page
+    # 列表页：标题做主链接、id 副标；标签可筛（kr-0302 带 来源/人工构造）
+    lst = client.get("/", params={"tag": "来源/人工构造"}).text
+    assert "前提计分的保单号填写" in lst and 'rv-case-id-sub">kr-0302' in lst
+    lst_none = client.get("/", params={"tag": "来源/现场记录"}).text
+    assert "kr-0302" not in lst_none
 
 
 REF_CASE = """---
@@ -395,3 +418,7 @@ def test_save_pipeline_refusal_weight(pipeline_env):
     s = Store(db)
     assert s.case_scoring("kr-0401")["items"]["refusal"]["weight"] == 100.0
     s.close()
+    # 拒答行进判定条目列表：角标显示权重、data-fixed 标记固定计分不可切
+    page = client.get("/case/kr-0401").text
+    assert 'data-use-slot="refusal" data-fixed="1"' in page
+    assert ">拒答</span>" in page and "100%" in page

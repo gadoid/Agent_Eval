@@ -762,9 +762,26 @@ span.sc-use-pill { cursor: default; opacity: .75; }
 #scoring-editor .rv-wbar-row[data-ref="1"] .rv-wbar,
 #scoring-editor .rv-wbar-row[data-ref="1"] .rv-lg-dot { opacity: .35; }
 #scoring-editor .rv-wbar-row[data-ref="1"] .rv-bar-pct { color: var(--ink-2); font-weight: 400; }
+/* 用例标题（frontmatter title）：h1 显标题，id 以等宽小字缀后；缺标题时 h1 就是 id */
+.rv-h1-id { font-family: var(--font-mono); font-size: 13px; font-weight: 400; color: var(--ink-2); margin-left: 10px; }
+/* 用例列表：标题做主链接，id 以等宽小字缀下 */
+.rv-case-id-sub { display: block; font-family: var(--font-mono); font-size: 11px; font-weight: 400; color: var(--ink-2); }
+/* 标签按命名空间分组展示（场景/难点/来源/业务…） */
+.rv-tag-ns { font-size: 11px; color: var(--ink-2); margin: 0 6px 0 0; }
+.rv-tagrow .rv-tag-ns + .rv-kind { margin-left: 0; }
+.rv-tagrow .rv-kind { margin-right: 4px; }
+/* 逐轮参考回复（assistant_refs）：比提问弱一档 */
+.rv-assist-ref { color: var(--ink-2); }
+.rv-assist-ref b { color: var(--ink-2); font-weight: 500; }
+
 /* 判定条目简要行随图例用途同步置灰（data-refrow 由 case.js 在 syncBars 里维护） */
 #item-list .rv-item[data-refrow="1"] .rv-kind,
 #item-list .rv-item[data-refrow="1"] .rv-fact-text { opacity: .55; }
+/* 简要列表角标与图例胶囊同语义：可点击切换用途（拒答 data-fixed 固定计分，点击下钻详情） */
+#item-list [data-use-slot] { cursor: pointer; }
+#item-list [data-use-slot]:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+#item-list [data-use-slot][data-fixed="1"] { cursor: default; }
+#item-list [data-use-slot][data-fixed="1"]:hover { outline: none; }
 
 /* ---------------- 新建用例表单（用例管理 → 新建用例） */
 

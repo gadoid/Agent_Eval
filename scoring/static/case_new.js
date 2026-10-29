@@ -192,10 +192,12 @@
       }
     });
     return {
-      id: val($('cn-id')), dim: dim, topic: val($('cn-topic')),
+      id: val($('cn-id')), title: val($('cn-title')), dim: dim, topic: val($('cn-topic')),
       granularity: val($('cn-granularity')), source: val($('cn-source')), owner: val($('cn-owner')),
       tags: Array.prototype.map.call(document.querySelectorAll('input[name=cn-tag]:checked'), function (c) { return c.value; }),
       history: val($('cn-history')) || 'live',
+      answerable: !$('cn-refusal').checked,
+      refusal_weight: $('cn-refusal').checked ? flt($('cn-refusal-w')) : null,
       turns: users, assistant_refs: refs,
       conditions: rowsOf('cn-conds').filter(function (r) {
         return val(f('[data-f=slot]', r)) && val(f('[data-f=value]', r));
@@ -281,6 +283,9 @@
     });
   });
   $('cn-dir').addEventListener('change', function () { $('cn-dir-new-row').hidden = $('cn-dir').value !== '__new__'; });
+  $('cn-refusal').addEventListener('change', function () {
+    $('cn-refusal-w-field').hidden = !$('cn-refusal').checked;
+  });
 
   /* ---------------- 初始：一轮空对话 + 默认目录 ---------------- */
   $('cn-add-turn').onclick = addTurn;

@@ -731,6 +731,8 @@ def check_frontmatter(case, mapping, errors, warns=None):
             errors.append(f"拒答权重应为 0–100 的百分比数值，当前为 {rw!r}")
         elif case.get("answerable", True) is not False:
             warns.append("拒答权重只在 answerable: false 的用例上有效（拒答节点不存在的用例写了会被忽略）")
+    if not str(case.get("title") or "").strip():
+        warns.append("frontmatter 缺 title（人类可读标题，页面标题位与用例列表用它展示）")
     dim, cid = case.get("dim"), case.get("id")
     prefix_of = {v: k for k, v in mapping["dims"].items()}
     m = re.fullmatch(r"([a-z]{2})-([0-9]{4})", cid or "")
@@ -1115,9 +1117,10 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
         return {"items": entries, "unassigned": total <= 0}
 
     base = {
-        "schema": SCHEMA, "id": cid, "dim": case["dim"], "status": case["status"],
+        "schema": SCHEMA, "id": cid, "title": case.get("title"), "dim": case["dim"], "status": case["status"],
         "answerable": case.get("answerable", True), "history": case.get("history", "live"),
         "topic": case.get("topic"), "granularity": case.get("granularity"),
+        "source": case.get("source"), "owner": case.get("owner"),
         "pair": case.get("pair"), "tags": tags,
         "injections": inj_rows,
         "conditions": [{"slot": c["slot"], "value": c["value"], "object": c.get("object"),
@@ -1434,7 +1437,7 @@ def cmd_build(args) -> int:
 
 # ---------------------------------------------------------------- case → md（render）
 
-META_KEYS = ("id", "dim", "status", "status_note", "answerable", "history", "topic",
+META_KEYS = ("id", "title", "dim", "status", "status_note", "answerable", "history", "topic",
              "granularity", "pair", "tags", "source", "owner", "拒答权重")
 
 

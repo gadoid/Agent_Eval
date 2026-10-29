@@ -278,6 +278,23 @@ def test_warnings_leak_and_relative_date(env):
     assert any("相对日期" in w for w in case["_warnings"])
 
 
+def test_title_roundtrip_and_missing_warn(env):
+    """title：进 case_to_md 的 META_KEYS（回写不丢）、编译行带 title、缺省只提示不报错。"""
+    head = "---\nid: kr-0001\ndim: 知识召回\ntitle: 融资单据清单\nstatus: draft\n---\n"
+    body = "\n## 问题\n保单号后三位填多少？\n\n## 关键条件\n- 槽：值\n\n## 必要事实\n- F1：事实内容 【外部】\n"
+    case = parse_ok(env, head + body, "kr-0001")
+    assert case["title"] == "融资单据清单"
+    md = md2case.case_to_md(case, md2case.load_mapping())
+    assert "title: 融资单据清单" in md
+    back = md2case.md_to_case(md, "kr-0001.md")            # 回写产物再解析，title 不丢
+    assert back["title"] == "融资单据清单"
+    rows = md2case.compile_case(case, {}, "vX")
+    assert rows[0]["title"] == "融资单据清单" and rows[0]["source"] is None
+    no = parse_ok(env, "---\nid: kr-0002\ndim: 知识召回\nstatus: draft\n---\n" + body, "kr-0002")
+    assert no.get("title") is None
+    assert any("缺 title" in w for w in no["_warnings"])
+
+
 # ---------------------------------------------------------------- --docs
 
 def _docs_env(env):

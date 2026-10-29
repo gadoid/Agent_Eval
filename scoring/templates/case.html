@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m with context %}
-{% block title %}{{ case_id }} · Agent_Eval 复核{% endblock %}
+{% block title %}{{ (title ~ ' · ' ~ case_id) if title else case_id }} · Agent_Eval 复核{% endblock %}
 {% block body %}
 <main class="rv-page rv-case" data-case-page
       data-focus-variant="{{ focus_variant }}" data-show-all="{{ 1 if show_all else 0 }}">
@@ -8,7 +8,7 @@
     <div class="rv-case-hero-main">
       <div class="rv-crumb"><a href="/">用例</a> / {{ case_id }}</div>
       <div class="rv-case-title">
-        <h1>{{ case_id }}</h1>
+        <h1>{{ title or case_id }}{% if title %}<span class="rv-h1-id">{{ case_id }}</span>{% endif %}</h1>
         {% if seed.dim %}<span class="rv-pill">{{ seed.dim }}</span>{% endif %}
         {% if seed.topic %}<span class="rv-pill">{{ seed.topic }}</span>{% endif %}
         {% if seed.granularity %}<span class="rv-pill">{{ seed.granularity }}</span>{% endif %}
@@ -31,20 +31,30 @@
       <div><dt>维度</dt><dd>{{ seed.dim or '?' }}</dd></div>
       <div><dt>主题</dt><dd>{{ seed.topic or '—' }}</dd></div>
       <div><dt>粒度</dt><dd>{{ seed.granularity or '—' }}</dd></div>
+      <div><dt>状态</dt><dd>{{ spec.status or '—' }}</dd></div>
+      <div><dt>来源</dt><dd>{{ spec.source or '—' }}</dd></div>
+      {% if spec.owner %}<div><dt>负责人</dt><dd>{{ spec.owner }}</dd></div>{% endif %}
       <div><dt>变体数</dt><dd>{{ members|length }}</dd></div>
       <div><dt>可回答</dt><dd>{{ '否（拒答型）' if spec.answerable == false else '是' }}</dd></div>
       <div><dt>对话方式</dt><dd>{{ spec.history if spec.history else 'live（逐轮实时）' }}</dd></div>
-      {% if spec.preconditions or spec.path %}
+      {% if spec.conditions %}
       <div class="rv-wide"><dt>关键条件</dt><dd>
-        {% for p in spec.preconditions or [] %}{{ p.text }}{% if p.turn %}（第 {{ p.turn }} 轮）{% endif %} · {% endfor %}
-        {% for p in spec.path or [] %}必须加载 {{ (p.action or {}).skill or p.text }}{% endfor %}</dd></div>
+        {% for c in spec.conditions %}<span>{{ c.slot }}：{{ c.value }}{% if c.keywords %}（关键词 {{ c.keywords|join('、') }}）{% endif %}{% if c.turn %} · 第 {{ c.turn }} 轮{% endif %}</span>{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
+      {% endif %}
+      {% if spec.evidence %}
+      <div class="rv-wide"><dt>证据</dt><dd>
+        {% for r in spec.evidence %}{{ r.id }}：{{ (r.doc or {}).skill or '?' }}:{{ (r.doc or {}).file or '?' }}{% if r.section %} / {{ r.section }}{% endif %}{% if r.quote %} ｜ 锚点 {{ r.quote }}{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
       {% endif %}
       {% if injections %}
       <div class="rv-wide"><dt>知识注入</dt><dd>
         {% for i in injections %}<span class="rv-inj" data-s="na">{{ i.point }}</span> {{ i.option }}（{{ i.rev or '' }}）{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
       {% endif %}
-      {% if tags %}
-      <div class="rv-wide"><dt>标签</dt><dd class="rv-tagrow">{% for t in tags %}<span class="rv-kind">{{ t }}</span>{% endfor %}</dd></div>
+      {% if tag_groups %}
+      <div class="rv-wide"><dt>标签</dt><dd class="rv-tagrow">
+        {% for g in tag_groups %}<span class="rv-tag-ns">{{ g['ns'] }}</span>{% for v in g['values'] %}<span class="rv-kind">{{ v }}</span>{% endfor %}{% endfor %}</dd></div>
+      {% endif %}
+      {% if spec.note %}
+      <div class="rv-wide"><dt>备注</dt><dd>{{ spec.note }}</dd></div>
       {% endif %}
       <div class="rv-wide"><dt>用例体检</dt><dd class="rv-tagrow">
         {% for f in health %}<span class="rv-flag">{{ f }}</span>{% else %}<span class="rv-meta">正常，无提示项</span>{% endfor %}</dd></div>
@@ -71,6 +81,12 @@
           {% if t.role == 'user' %}<div class="rv-expect-q"><b>第 {{ loop.index }} 轮</b>{{ t.content }}</div>{% endif %}
         {% else %}<span class="rv-meta">（当前期望没有提问文本）</span>{% endfor %}
       </div>
+      {% if spec.assistant_refs %}
+      <div class="rv-eyebrow" style="margin-top:8px">逐轮参考回复</div>
+      <div class="rv-expect-qs">
+        {% for r in spec.assistant_refs %}{% if r %}<div class="rv-expect-q rv-assist-ref"><b>第 {{ loop.index }} 轮</b>{{ r }}</div>{% endif %}{% endfor %}
+      </div>
+      {% endif %}
       <div class="rv-eyebrow">判定条目（简要，点「详情」或饼图扇区查看全文）</div>
       <div class="rv-expect-grid">
         <div class="rv-items-col">
@@ -106,6 +122,16 @@
               <button class="rv-btn rv-detail-btn" type="button" data-id="{{ f.id }}">详情</button>
             </li>
             {% endfor %}
+            {% if spec.answerable == false %}
+            {% set rsr = scoring_by_id.get('refusal') %}
+            <li class="rv-fact rv-item" data-id="refusal">
+              <span class="rv-kind">拒答</span>
+              <span class="rv-fact-text">应说明依据资料无法回答，而非编造或泛泛拒答</span>
+              {% if rsr %}<span class="rv-weight rv-wpct-chip" data-use-slot="refusal" data-fixed="1"
+                title="拒答条目固定计分；权重回写 md「拒答权重」">{{ (rsr.weight or 0)|round|int }}%</span>{% endif %}
+              <button class="rv-btn rv-detail-btn" type="button" data-id="refusal">详情</button>
+            </li>
+            {% endif %}
           </ul>
           <div id="item-detail" class="rv-item-detail" hidden>
             {% for d in item_details %}

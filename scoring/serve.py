@@ -67,6 +67,31 @@ KIND_LABELS = {"precond": "前提", "path": "路径", "forbidden": "禁止", "re
                "expected": "期望", "refusal": "拒答"}
 
 
+def _tag_groups(tags: list[str]) -> list[dict]:
+    """「命名空间/值」标签 → 按命名空间分组（页面分组展示；存储仍是扁平字符串列表）。"""
+    tg: dict[str, list[str]] = {}
+    for t in tags or []:
+        ns, _, v = str(t).partition("/")
+        tg.setdefault(ns, []).append(v or str(t))
+    return [{"ns": k, "values": vs} for k, vs in tg.items()]
+
+
+def _md_frontmatter(path: Path) -> dict:
+    """只读 md 的 frontmatter 块（轻量，不做整篇校验）；无块/解析失败返回空 dict。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    m = re.match(r"^---\r?\n(.*?)\r?\n---", text, re.S)
+    if not m:
+        return {}
+    try:
+        import yaml
+        return yaml.safe_load(m.group(1)) or {}
+    except Exception:
+        return {}
+
+
 # ---------------------------------------------------------------- 渲染过滤器（净化后渲染）
 
 try:
@@ -225,6 +250,7 @@ class CaseNewVariant(BaseModel):
 
 class CaseNewIn(BaseModel):
     id: str = ""
+    title: str = ""                  # 人类可读标题（frontmatter title，页面标题位展示）
     dim: str
     topic: str = ""
     granularity: str = ""
@@ -232,6 +258,8 @@ class CaseNewIn(BaseModel):
     owner: str = ""
     tags: list[str] = []
     history: str = "live"
+    answerable: bool = True          # false = 拒答型（不能写必要/期望事实）
+    refusal_weight: float | None = None   # 拒答型才有意义，写 frontmatter 拒答权重
     turns: list[str] = []
     assistant_refs: list[str] = []
     conditions: list[CaseNewCondition] = []
@@ -405,7 +433,8 @@ def _case_from_form(b: CaseNewIn) -> dict:
         variants.append(item)
 
     return {
-        "id": b.id.strip(), "dim": b.dim.strip(), "status": "structured", "answerable": True,
+        "id": b.id.strip(), "title": b.title.strip() or None,
+        "dim": b.dim.strip(), "status": "structured", "answerable": b.answerable,
         "history": b.history if b.history in ("live", "prefill") else "live",
         "topic": b.topic.strip() or None, "granularity": b.granularity.strip() or None,
         "source": b.source.strip() or None, "owner": b.owner.strip() or None,
@@ -416,6 +445,7 @@ def _case_from_form(b: CaseNewIn) -> dict:
         "evidence_ref": evidences, "variants": variants,
         "reference_answer": b.reference_answer.strip() or None,
         "note": b.note.strip() or None,
+        **({"拒答权重": b.refusal_weight} if not b.answerable and b.refusal_weight is not None else {}),
     }
 
 
@@ -622,13 +652,16 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
     # ---------------- 用例管理页（首页；跨配置汇总，按配置的分数在配置管理页）
     @app.get("/")
     async def cases(request: Request, dim: str = "", topic: str = "",
-                    granularity: str = "", sort: str = "pending", flag_only: str = "", page: int = 0):
+                    granularity: str = "", sort: str = "pending", flag_only: str = "",
+                    tag: str = "", page: int = 0):
         all_rows = rows(request, snapshot=snapshot_of(request))
         summary = views.score_summary(all_rows, rules, method_of(snapshot_of(request)))
         known_dims = {r["dim"] for r in all_rows if r["dim"]}
         comp = views.composite(summary["dims"], rules, known_dims=known_dims)
         stats = views.question_stats(all_rows)
         qs = store.questions()
+        md_titles = _all_case_titles()
+        all_tags = sorted({t for q in qs for t in json.loads(q["tags_json"] or "[]")})
         by_case: dict[str, list] = {}
         for q in qs:
             if dim and (q["dim"] or "") != dim:
@@ -636,6 +669,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
             if topic and (q["topic"] or "") != topic:
                 continue
             if granularity and (q["granularity"] or "") != granularity:
+                continue
+            if tag and tag not in json.loads(q["tags_json"] or "[]"):
                 continue
             by_case.setdefault(q["case_id"] or q["uid"], []).append(q)
         conv_counts: dict[str, dict] = {}
@@ -653,7 +688,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
             discs = [s["discrimination"] for s in member_stats if s.get("discrimination") is not None]
             st = member_stats[0] if member_stats else {}
             table.append({
-                "case_id": case, "dim": members[0]["dim"], "topic": members[0]["topic"],
+                "case_id": case, "title": md_titles.get(case, ""), "dim": members[0]["dim"],
+                "topic": members[0]["topic"],
                 "variants": len(members), "convs": conv_counts.get(case, {"n": 0})["n"],
                 "undecided": conv_counts.get(case, {}).get("undecided", 0),
                 "score": cs.get("score"), "score_n": cs.get("n"),
@@ -677,7 +713,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                       dims=sorted({q["dim"] for q in qs if q["dim"]}),
                       topics=sorted({q["topic"] for q in qs if q["topic"]}),
                       granularities=sorted({q["granularity"] for q in qs if q["granularity"]}),
-                      f_dim=dim, f_topic=topic, f_granularity=granularity, sort=sort,
+                      all_tags=all_tags,
+                      f_dim=dim, f_topic=topic, f_granularity=granularity, f_tag=tag, sort=sort,
                       flag_only=flag_only)
 
     # ---------------- 配置管理页（被测配置；执行记录在 /runs）
@@ -793,6 +830,11 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         cur = store.current_spec(seed["qkey"])
         fp = standard_fp or (cur[0] if cur else None)
         spec = store.spec_of(seed["qkey"], fp) if fp else {}
+        # 展示层元数据（title/source/owner）：旧 spec 行按指纹不可变、不带这些新键，
+        # 从 md frontmatter 补（md 是唯一数据源；不改动判内容）
+        _fm = _md_frontmatter(p) if (p := _case_md_path(case_id)) else {}
+        if _fm:
+            spec = {**spec, **{k: spec.get(k) or _fm.get(k) for k in ("title", "source", "owner")}}
         history = [dict(r) for r in store.conn.execute(
             "SELECT standard_fp AS fp, evalset_version, imported_at FROM specs"
             " WHERE qkey=? ORDER BY imported_at",
@@ -910,7 +952,10 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                                  "weight": row["weight"], "note": row["node_hint"]})
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
                       standard_fp=fp or "", history=history, convs=convs, axis=axis,
-                      axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
+                      axis_values=axis_values,
+                      tags=json.loads(seed["tags_json"] or "[]"),
+                      tag_groups=_tag_groups(json.loads(seed["tags_json"] or "[]")),
+                      title=(_case_title(case_id) or spec.get("title") or ""),
                       injections=injections, health=health, variant_cards=variant_cards,
                       scoring_rows=scoring_rows, scoring_by_id={r["id"]: r for r in scoring_rows},
                       scoring_plan=plan, scoring_fp=case_sfp,
@@ -1266,6 +1311,40 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         p = _existing_case_ids(cases_root).get(case_id)
         return Path(p) if p else None
 
+    _title_cache: dict[str, tuple[float, str]] = {}   # case_id → (md mtime, title)
+
+    def _case_title(case_id: str) -> str:
+        """标题读 md frontmatter（md 是唯一数据源；specs 行按指纹不可变，回填 title
+        不会体现在旧 spec_json 里）。按 mtime 缓存，md 改动即失效。"""
+        p = _case_md_path(case_id)
+        if p is None:
+            return ""
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            return ""
+        hit = _title_cache.get(case_id)
+        if hit and hit[0] == mtime:
+            return hit[1]
+        t = str(_md_frontmatter(p).get("title") or "").strip()
+        _title_cache[case_id] = (mtime, t)
+        return t
+
+    def _all_case_titles() -> dict[str, str]:
+        """列表页用：一次扫描建 {case_id: title}（逐行调 _case_title 会全目录扫描 N 次）。"""
+        out: dict[str, str] = {}
+        for p in _iter_case_md(cases_root):
+            meta = _md_frontmatter(p)
+            cid = str(meta.get("id") or "").strip() or p.stem
+            t = str(meta.get("title") or "").strip()
+            if t:
+                out[cid] = t
+                try:
+                    _title_cache[cid] = (p.stat().st_mtime, t)
+                except OSError:
+                    pass
+        return out
+
     def run_save_pipeline(new_md: str, md_path: Path) -> dict:
         """保存管线：内存校验（报错只针对被改用例，不通过不落盘）→ 写 md →
         build 新版本（锁内自动取号，dist 不可变兜底）→ 整批导入（设为当前快照）→
@@ -1285,8 +1364,10 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         md_path.write_text(new_md, encoding="utf-8")
         with _pipeline_lock:                       # 决定 16②：取号 → build → 导入
             version = m2c.next_version(dist_root)
+            # --include 显式对齐仓库口径（含 structured）：build 缺省只收 admitted，
+            # 漏带会让 structured 用例从新快照（整批导入设为当前）里消失
             rc = m2c.main(["build", str(cases_root), "-o", str(dist_root / f"evalset-{version}.jsonl"),
-                          "--version", version])
+                          "--version", version, "--include", "structured,reviewed,admitted"])
             if rc != 0:
                 return {"ok": False, "saved_md": True, "version": None, "warnings": warnings,
                         "errors": ["build 失败：其余用例有解析错误（本次修改已写入 md，未产生新快照；"

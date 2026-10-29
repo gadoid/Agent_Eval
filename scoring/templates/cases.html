@@ -40,6 +40,10 @@
       <option value="">全部主题</option>{% for t in topics %}<option value="{{ t }}" {% if t == f_topic %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
     <div class="rv-field"><label>粒度</label><select class="rv-select" onchange="f('granularity',this.value)">
       <option value="">全部粒度</option>{% for g in granularities %}<option value="{{ g }}" {% if g == f_granularity %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></div>
+    {% if all_tags %}
+    <div class="rv-field"><label>标签</label><select class="rv-select" onchange="f('tag',this.value)">
+      <option value="">全部标签</option>{% for t in all_tags %}<option value="{{ t }}" {% if t == f_tag %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></div>
+    {% endif %}
     <div class="rv-field"><label>排序</label><select class="rv-select" onchange="f('sort',this.value)">
       {% for k, label in [('pending','结论待定多的在前'),('score','用例分低的在前'),('difficulty','难度')] %}
       <option value="{{ k }}" {% if k == sort %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
@@ -54,7 +58,8 @@
       <th class="rv-num" title="同一配置多次 trial 结论一致的比例">稳定性</th><th class="rv-num" title="种子与非诱导变体结论一致的比例">题组一致</th><th>体检</th></tr></thead>
     <tbody>
     {% for t in table %}
-    <tr><th scope="row" class="rv-sticky-col"><a href="/case/{{ t.case_id }}">{{ t.case_id }}</a></th>
+    <tr><th scope="row" class="rv-sticky-col"><a href="/case/{{ t.case_id }}">{{ t.title or t.case_id }}</a>
+      {% if t.title %}<span class="rv-case-id-sub">{{ t.case_id }}</span>{% endif %}</th>
       <td>{{ t.dim or '?' }}</td><td>{{ t.topic or '—' }}</td>
       <td class="rv-num">{{ t.variants }}</td><td class="rv-num">{{ t.convs }}</td>
       <td>{% if t.undecided %}<span class="rv-state" data-s="need">{{ t.undecided }} 段</span>{% else %}<span class="rv-meta">—</span>{% endif %}</td>
@@ -68,7 +73,7 @@
     </tbody>
   </table>
   </div>
-  {{ m.pager(page, pages, '/?dim=' + (f_dim or '') + '&topic=' + (f_topic or '') + '&sort=' + sort + '&flag_only=' + (flag_only or '') + '&') }}
+  {{ m.pager(page, pages, '/?dim=' + (f_dim or '') + '&topic=' + (f_topic or '') + '&granularity=' + (f_granularity or '') + '&tag=' + (f_tag or '') + '&sort=' + sort + '&flag_only=' + (flag_only or '') + '&') }}
 </main>
 {% endblock %}
 {% block scripts %}
