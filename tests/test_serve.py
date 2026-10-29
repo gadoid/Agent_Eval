@@ -89,7 +89,7 @@ def test_config_detail_pages(served):
 
 def test_temp_weights_api_and_scoring_editor(served):
     """临时权重接口（doc/17 §5.2）：save 保存并启用（重算本用例）、use 切口径、
-    clear 删除；用例页渲染计分配置表（用途下拉 + md 权重 + 临时权重列）。"""
+    clear 删除；用例页渲染饼图计分配置（scoring-data JSON + 用途切换滑杠 + 保存按钮）。"""
     client, db, tmp_path, ops = served
     st = Store(db)
     save = client.post("/api/case/ec-1/temp-weights",
@@ -98,9 +98,9 @@ def test_temp_weights_api_and_scoring_editor(served):
     plan, sfp, is_temp = st.scoring_plan("ec-1")
     assert is_temp and plan["weights"] == {"F1": 100.0}       # 唯一计分条目 → 归一 100
     page = client.get("/case/ec-1").text
-    assert 'id="scoring-editor"' in page and 'id="scoring-table"' in page
-    assert 'data-tw="F1"' in page and 'id="sc-save-md"' in page    # 临时列 + 保存按钮
-    assert 'id="sc-temp-toggle"' in page and "临时权重转正" in page
+    assert 'id="scoring-editor"' in page and 'id="w-pie"' in page    # 饼图编辑器
+    assert 'id="scoring-data"' in page and 'id="w-legend"' in page   # 条目 JSON + 滑杠图例
+    assert 'id="sc-save-md"' in page and "临时权重转正" in page
 
     use = client.post("/api/case/ec-1/temp-weights",
                       json={"case_id": "ec-1", "action": "use", "on": False})
@@ -700,16 +700,18 @@ def test_synthetic_scale_performance(tmp_path):
 
 
 def test_case_scoring_editor_renders(served):
-    """用例详情计分配置区（doc/17 §5.2）：全部条目列出（含缺省用途）、用途下拉、
-    默认规则文案来自节点表；saved 提示条。"""
+    """用例详情计分配置区（doc/17 §5.2）：饼图 + 滑杠，条目 JSON 带全部条目
+    （含缺省用途与节点表默认规则文案，供 JS 渲染图例）；saved 提示条。"""
     client, db, _, _ = served
     s = Store(db)
     case_id = s.questions()[0]["case_id"]
     s.close()
     page = client.get(f"/case/{case_id}").text
     assert 'id="scoring-editor"' in page and ('data-case="%s"' % case_id) in page
-    assert 'data-w="F1"' in page and 'data-use="X1"' in page     # 计分条目 + 用途下拉
-    assert "默认规则" in page and "不成立 → 会话无效" not in page  # 该用例无前提
+    assert 'id="w-pie"' in page and 'id="scoring-data"' in page          # 饼图 + 条目 JSON
+    assert 'data-wchip="F1"' in page                                    # 计分条目百分比徽章
+    assert '"kind": "forbidden"' in page and '"node_hint"' in page       # 条目 JSON 含禁止事实与默认规则
+    assert "不成立 → 会话无效" not in page                               # 该用例无前提
     page2 = client.get(f"/case/{case_id}?saved=1")
     assert "计分配置已保存" in page2.text
 

@@ -83,10 +83,10 @@
             </li>
             {% endfor %}
             {% for p in spec.path or [] %}
-            <li class="rv-fact rv-item" data-id="path">
+            <li class="rv-fact rv-item" data-id="path#{{ loop.index }}">
               <span class="rv-kind">路径</span>
               <span class="rv-fact-text">必须加载技能 {{ (p.action or {}).skill }}</span>
-              <button class="rv-btn rv-detail-btn" type="button" data-id="path">详情</button>
+              <button class="rv-btn rv-detail-btn" type="button" data-id="path#{{ loop.index }}">详情</button>
             </li>
             {% endfor %}
             {% for f in spec.facts or [] %}
@@ -123,39 +123,18 @@
         </div>
         <div class="rv-pie-col" id="scoring-editor" data-case="{{ case_id }}"
              data-temp-in-use="{{ 1 if scoring_is_temp else 0 }}">
+          <script type="application/json" id="scoring-data">{{ scoring_rows|tojson }}</script>
           <div class="rv-eyebrow">计分配置（md 是唯一数据源；临时权重只覆盖权重）</div>
           {% if scoring_plan.unassigned %}
           <div class="rv-notice" data-tone="error" style="margin-bottom:8px">
             <b>权重未分配</b><span>计分条目合计 0%，评测时将跳过本用例；补齐权重后自动恢复（不用重跑）</span></div>
           {% endif %}
-          <div class="rv-table-wrap">
-          <table class="rv-table" id="scoring-table">
-            <thead><tr><th>条目</th><th>用途</th><th>md 权重%</th>{% if temp %}<th>临时%</th>{% endif %}<th>默认规则</th></tr></thead>
-            <tbody>
-            {% for r in scoring_rows %}
-            <tr data-row="{{ r.id }}" data-kind="{{ r.kind }}">
-              <td><span class="rv-kind">{{ r.label }} {{ r.id }}</span>
-                {% if r.group %}<span class="rv-meta">组 {{ r.group }}</span>{% endif %}</td>
-              <td>{% if r.kind == 'refusal' %}<span class="rv-meta">计分（固定）</span>
-                  {% else %}<select class="rv-input sc-use" data-use="{{ r.id }}" style="width:auto">
-                    <option value="score"{% if r.use == 'score' %} selected{% endif %}>计分</option>
-                    <option value="ref"{% if r.use == 'ref' %} selected{% endif %}>参考</option>
-                  </select>{% endif %}</td>
-              <td><input class="rv-input sc-w" data-w="{{ r.id }}" type="number" min="0" max="100" step="0.0001"
-                         style="width:90px" value="{{ r.weight if r.weight is not none else '' }}"
-                         {% if r.use != 'score' %}disabled{% endif %} placeholder="0"></td>
-              {% if temp %}<td><input class="rv-input sc-tw" data-tw="{{ r.id }}" type="number" min="0" max="100" step="0.0001"
-                         style="width:90px" value="{{ r.temp_weight if r.temp_weight is not none else '' }}"
-                         {% if r.use != 'score' %}disabled{% endif %} placeholder="0"></td>{% endif %}
-              <td class="rv-meta">{{ r.node_hint }}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-          </div>
-          <div class="rv-wsum">md 合计 <b data-md-sum>—</b>{% if temp %} · 临时合计 <b data-temp-sum>—</b>{% endif %}
-            · 评测口径 <b>{{ '临时权重' if scoring_is_temp else 'md 权重' }}</b>
-            <span class="rv-meta">scoring_fp {{ scoring_fp[:8] }}{% if scoring_is_temp %}（临时）{% endif %}</span></div>
+          <svg id="w-pie" viewBox="0 0 200 200" role="img" aria-label="权重分布饼图"></svg>
+          <div class="rv-pie-legend" id="w-legend"></div>
+          <div class="rv-wsum">已分配 <b id="w-sum"></b> · 未分配 <b id="w-left"></b>
+            {% if temp %}<span class="rv-meta">临时合计 {{ temp_sum|f1 }}%</span>{% endif %}
+            <span class="rv-meta">评测口径 {{ '临时权重' if scoring_is_temp else 'md 权重' }} ·
+              scoring_fp {{ scoring_fp[:8] }}{% if scoring_is_temp %}（临时）{% endif %}</span></div>
           {% if temp and (temp.unknown or temp.missing) %}
           <div class="rv-notice" data-tone="warn" style="margin:8px 0"><b>临时权重与当前条目不一致</b>
             {% if temp.unknown %}<span>已不存在的条目被忽略：{{ temp.unknown|join('、') }}</span>{% endif %}
@@ -171,8 +150,10 @@
             {% endif %}
           </div>
           <div class="rv-meta" style="margin-top:6px" data-sc-msg>
-            「保存到用例」回写 md 并生成新快照（设为当前、覆盖此前的快照选择与逐题偏离）；
-            只改用途/权重不触发重判；名义合计 ≠100 会在保存时按比例归一。临时权重只重算本用例、不动 md。</div>
+            拖滑杠圆钮调整（减少→未分配，有未分配才能增加）；双击百分比值可直接输入；
+            「计分/参考」切换条目用途（转参考即去权重）。「保存到用例」回写 md 并生成新快照
+            （设为当前、覆盖此前的快照选择与逐题偏离）；只改用途/权重不触发重判；
+            名义合计 ≠100 会在保存时按比例归一。临时权重只重算本用例、不动 md。</div>
         </div>
       </div>
       {% if spec.reference_answer %}
