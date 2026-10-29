@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -29,6 +30,8 @@ HERE = Path(__file__).resolve().parent
 MAPPING_PATH = HERE / "mapping.yaml"
 KNOWLEDGE_DIR = HERE / "knowledge"
 REV_STATE_PATH = HERE / ".knowledge-state.json"
+DIST_DIR = HERE / "dist"
+DB_ENV = "AGENT_EVAL_DB"                 # 自动取号读哪个评测库（覆盖仓库约定路径）
 SCHEMA = 2
 # 进入快照的缺省状态（doc/17 §4/决定 14）：一期没有准入流程，structured 是工作状态；
 # CLI build 与页面保存管线共用这一口径，避免「上次是 CLI 还是页面」产出不同快照。
@@ -1411,11 +1414,21 @@ def next_version(dist_dir: Path, today=None, reserved=()) -> str:
 
 
 def snapshot_versions_in_db(db_path: Path) -> list[str]:
-    """build --db：读评测库已登记的版本（自动取号用）。库不存在或缺表直接抛错。"""
+    """build 自动取号：读评测库已登记的版本。库不存在或缺表直接抛错。"""
     if not db_path.exists():
         raise FileNotFoundError(f"评测库不存在：{db_path}")
     with sqlite3.connect(str(db_path)) as conn:
         return [r[0] for r in conn.execute("SELECT evalset_version FROM snapshots")]
+
+
+def default_db_path() -> Path | None:
+    """自动取号用的评测库：AGENT_EVAL_DB 优先，其次仓库约定 archive/eval.db（存在才用）。
+    找不到返回 None——退回只看本地 dist（并给提示）。"""
+    env = os.environ.get(DB_ENV)
+    if env:
+        return Path(env)
+    p = HERE.parent / "archive" / "eval.db"
+    return p if p.exists() else None
 
 
 def cmd_build(args) -> int:
@@ -1431,15 +1444,22 @@ def cmd_build(args) -> int:
     include = set(args.include.split(","))
     picked = [c for c in cases if c["status"] in include]
     out = Path(args.output) if args.output else None
-    dist_dir = out.parent if out else Path("dist")
+    dist_dir = out.parent if out else DIST_DIR     # 缺省相对 md2case.py，不看 cwd
     if not args.version:                                  # 决定 16：缺省自动取号
+        db = Path(args.db) if args.db else default_db_path()
         reserved = ()
-        if args.db:
+        if db is not None:
             try:
-                reserved = snapshot_versions_in_db(Path(args.db))
+                reserved = snapshot_versions_in_db(db)
             except (OSError, sqlite3.Error) as e:
-                print(f"构建中止：读取评测库版本失败（{args.db}）：{e}", file=sys.stderr)
-                return 1
+                if args.db:                       # 显式指定的库不可读 → 中止
+                    print(f"构建中止：读取评测库版本失败（{db}）：{e}", file=sys.stderr)
+                    return 1
+                print(f"提示：默认评测库不可读（{db}）：{e}；版本号仅按本地 dist 取号",
+                      file=sys.stderr)
+        else:
+            print(f"提示：未找到评测库（可用 --db 或 {DB_ENV} 指定）；"
+                  "版本号仅按本地 dist 取号，可能撞上库内已登记的版本", file=sys.stderr)
         args.version = next_version(dist_dir, reserved=reserved)
     if out is None:                                       # -o 可省略：按版本号命名
         out = dist_dir / f"evalset-{args.version}.jsonl"
@@ -1636,9 +1656,10 @@ def main(argv=None) -> int:
     p = sub.add_parser("build", help="编译为运行用 JSONL（首行快照头 + 同名 .snapshot.json 测法）")
     p.add_argument("paths", nargs="+")
     p.add_argument("-o", "--output",
-                   help="输出文件（缺省 dist/evalset-<版本号>.jsonl）")
+                   help="输出文件（缺省 <evalset>/dist/evalset-<版本号>.jsonl）")
     p.add_argument("--version", help="版本号（缺省自动取号 vYYYYMMDD-N，doc/17 决定 16）")
-    p.add_argument("--db", help="可选：读评测库 snapshots 表参与自动取号，避开已登记版本")
+    p.add_argument("--db", help=f"评测库路径（缺省读 {DB_ENV} 或仓库 archive/eval.db，"
+                                "参与自动取号、避开已登记版本）")
     p.add_argument("--method", help="测法文件（缺省 evalset/method.yaml）")
     p.add_argument("--prev", help="上一版 dist，用于生成自动 diff")
     p.add_argument("--include", default=DEFAULT_INCLUDE)
