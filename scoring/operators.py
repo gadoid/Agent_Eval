@@ -14,7 +14,7 @@ class Verdict:
     operator: str        # 算子 id@版本，如 keyword@1；人工覆盖为 review
     reason: str = ""     # 命中片段或模型理由，给人看
     abstain: bool = False
-    score: float | None = None   # 显式分 0–100（模型算子或人工自定）；None 时按 policy.score.map[value]
+    score: float | None = None   # 显式分 0–100（模型算子或人工自定）；None 时按 rules.score.map[value]
 
     def as_dict(self) -> dict[str, Any]:
         d = {"value": self.value, "source": self.source, "operator": self.operator, "reason": self.reason}

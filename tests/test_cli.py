@@ -8,7 +8,6 @@ from scoring import cli
 from scoring.chain import judge_episode, load_operator_config, load_verdicts, write_verdicts
 from scoring.effective import Review, append_review, load_reviews
 from scoring.items import standard_fp_of
-from scoring.policy import default_policy_path, load_policy
 from scoring.rules import load_rules as _lr, default_rules_path as _drp
 RULES, RULES_SHA = _lr(_drp())
 from scoring.store import Store
@@ -170,7 +169,7 @@ def test_import_legacy_matches_file_pipeline(tmp_path, db):
     run_dir = make_run(tmp_path, "demo", records)
     ops = ops_yaml(tmp_path)
     cfg = load_operator_config(ops)
-    rules_sha = RULES_SHA          # v8：CLI --policy 缺省走 rules.yaml（sha 与旧 policy 转换一致）
+    rules_sha = RULES_SHA          # CLI 缺省走 rules.yaml
     rows = []
     for r in records:
         rows.extend(judge_episode(r, cfg, "demo").rows)

@@ -2,16 +2,18 @@
 
 除注明外全部为现行 scoring.py（v2 单文件版）行为的迁移，出处见各函数；
 唯一扩展：会话无效或失败时后续条目仍拆出（仍判定、仍落盘，但不参与会话
-结论，见 policy.session_conclusion 的短路顺序）。
+结论，见 rules.session_conclusion 的短路顺序）。
 
 题目指纹（评测结果管理改造方案 §4.1）也在本模块计算：
 - 输入指纹 input_fp：history + 用户消息序列 + 注入（point/option/rev/file/key/value）
 - 标准指纹 standard_fp：answerable + 前提 + 事实（id/kind/text/keywords/turn/group/nature/partial_rule）+ 路径约束
-- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组、权重不进入；性质与部分判据
+- 条目指纹 item_sha：条目对人判断的实质内容（关键词、组、用途、权重不进入；性质与部分判据
   仅在主观条目上写键——doc/16 §3.6，保证存量指纹与人工改判零变化）
 参考答案、备注、证据、标签、状态、关键条件的改动不影响任何指纹。
-权重自 v8 起移出标准（doc/15 §3.2）：md 的【权重】导入时换算落 item_weights，
-改权重只改计分（rescore），不再改变标准、不再触发重判。
+
+条目计分配置（doc/17 §2/§3）：用途（计分/参考）与权重都不进标准，md 编译进 dist
+顶层 scoring 块，导入后落 case_scoring 表；改用途或权重只改计分（rescore），
+不产生新标准、不触发重判。节点缺省与默认规则见表 NODES（全仓唯一来源）。
 
 判据表 CRITERIA 与推导 verdict_from_criteria（doc/16 §4）是判定契约的一部分：
 P1 的模型算子/复核导读只产出判据结果，结论一律由推导函数得出，不在 prompt 里复述逻辑。
@@ -32,6 +34,31 @@ SCALES: dict[str, tuple[str, ...]] = {
     "path": ("满足", "违反", "不适用"),
     "refusal": ("拒答", "未拒答"),
 }
+
+# ---------------------------------------------------------------- 节点表（doc/17 §2.1）
+# 全仓唯一来源：节点缺省用途、默认规则与展示文案都从这里生成（复核队列与会话结论
+# 的门控口径也只有一份实现，rules.live_items）。
+#   use   缺省用途（score 计分 / ref 参考），条目可显式改写（拒答固定计分）
+#   veto  默认规则：该结论词触发否决（None = 无否决规则）；与用途、性质均无关
+#   gate  门控：该结论词 → 会话无效（仅前提）
+NODES: dict[str, dict[str, Any]] = {
+    "precond":   {"label": "前提",     "use": "ref",   "veto": None,    "gate": "不成立"},
+    "path":      {"label": "路径",     "use": "ref",   "veto": "违反",  "gate": None},
+    "refusal":   {"label": "拒答",     "use": "score", "veto": None,    "gate": None},
+    "required":  {"label": "必要事实", "use": "score", "veto": "错",    "gate": None},
+    "expected":  {"label": "期望事实", "use": "score", "veto": None,    "gate": None},
+    "forbidden": {"label": "禁止事实", "use": "ref",   "veto": "采信",  "gate": None},
+}
+
+
+def node_hint(kind: str) -> str:
+    """节点说明文案（页面/复核页共用，替代原先写死的多处字符串）。"""
+    n = NODES[kind]
+    if n["gate"]:
+        return "不成立 → 会话无效"
+    if n["veto"]:
+        return f"「{n['veto']}」→ 否决"
+    return "无默认规则"
 
 # ---------------------------------------------------------------- 判据表（doc/16 §4）
 # 判定契约：按 类型 × 性质 固定要看的几个角度，与 SCALES 一样随代码版本走，不做配置文件。
@@ -222,78 +249,41 @@ def standard_fp_of(case: dict) -> str:
     })
 
 
-def weight_of(item: Item, default: float = 1) -> float:
-    """条目权重（兼容路径）：条目 attrs 里带 weight 时用它（迁移前的旧 spec），
-    否则 default。v8 后标准里无权重，计分权重一律走 store.effective_weights。"""
-    w = item.attrs.get("weight")
-    return default if w is None else float(w)
-
-
-def strip_spec_weights(spec: dict) -> dict:
-    """spec 去权重（v8）：facts/path 条目上的 weight 键剥除，返回新 dict。"""
+def strip_scoring(spec: dict) -> dict:
+    """spec 去计分配置（doc/17 §3.2）：顶层 scoring 键剥除，返回新 dict。
+    specs 表落库与标准指纹计算前调用——standard_fp 不含计分，同指纹不同计分
+    配置的 spec 行不可变，计分配置只能从 case_scoring 表读。"""
     out = dict(spec)
-    if out.get("facts"):
-        out["facts"] = [{k: v for k, v in f.items() if k != "weight"} for f in out["facts"]]
-    if out.get("path"):
-        out["path"] = [{k: v for k, v in p.items() if k != "weight"} for p in out["path"]]
+    out.pop("scoring", None)
     return out
 
 
-def spec_weights_to_percent(spec: dict, default_weight: float = 1) -> dict[str, float]:
-    """spec 里的相对权重 → 百分制（doc/15 §2.4，全精度不取整）。
-
-    - 计分条目（required/expected）之间换算：w_i / Σw × 100，未写权重的先按
-      default_weight 参与换算；
-    - 禁止/路径条目单独换算（只在 veto=weight 时参与计分），基数同样取各自全组；
-    - 一个权重都没有时返回 {}（该用例视为无权重，等权计分）。
-    """
-    def convert(items: list[dict], only_explicit: bool = False) -> dict[str, float]:
-        if only_explicit:      # 禁止/路径：只有写了权重的条目参与换算（veto=weight 时才计分）
-            items = [f for f in items if "weight" in f]
-        vals = {f["id"]: float(f.get("weight", default_weight)) for f in items if f.get("id")}
-        total = sum(vals.values())
-        if not items or not vals or total <= 0:
-            return {}
-        return {i: w / total * 100 for i, w in vals.items()}
-
-    facts = spec.get("facts") or []
-    scored = [f for f in facts if f.get("kind") in ("required", "expected")]
-    others = [f for f in facts if f.get("kind") not in ("required", "expected")]
-    if not any("weight" in f for f in facts + (spec.get("path") or [])):
-        return {}
-    out = convert(scored)
-    out.update(convert(others, only_explicit=True))
-    out.update(convert(spec.get("path") or [], only_explicit=True))
+def spec_items(spec: dict) -> list[tuple[str, str]]:
+    """spec 的 (条目 id, kind) 清单，与 extract_items 的拆条一致（含拒答伪条目）。
+    复核队列等不需要 record 的路径用它构造轻量条目。"""
+    out = [(p.get("id"), "precond") for p in spec.get("preconditions") or [] if p.get("id")]
+    out += [(f"path#{i}", "path") for i in range(1, len(spec.get("path") or []) + 1)]
+    out += [(f.get("id"), f.get("kind", "required")) for f in spec.get("facts") or [] if f.get("id")]
+    if spec.get("answerable") is False:
+        out.append(("refusal", "refusal"))
     return out
 
 
-def weights_map_to_percent(weights: dict, spec: dict, default_weight: float = 1) -> dict[str, float]:
-    """新 dist 格式（doc/15 §3.9）：行顶层 weights={item_id: md 原值（相对值）} → 百分制。
-    语义与 spec_weights_to_percent 一致：计分条目全参与（未写者按 default），禁止/路径
-    只算显式写的；路径条目以 path#i 为键。空表 → {}（等权）。"""
-    if not weights:
-        return {}
-    facts = []
-    for f in spec.get("facts") or []:
-        nf = dict(f)
-        if f.get("id") in weights:
-            nf["weight"] = weights[f["id"]]
-        facts.append(nf)
-    path = []
-    for i, p_ in enumerate(spec.get("path") or [], 1):
-        np_ = dict(p_)
-        np_["id"] = f"path#{i}"
-        if np_["id"] in weights:
-            np_["weight"] = weights[np_["id"]]
-        path.append(np_)
-    return spec_weights_to_percent({**spec, "facts": facts, "path": path}, default_weight)
-
-
-def spec_weights_any(spec: dict) -> dict[str, float]:
-    """兼容两种 dist：新格式顶层 weights 优先；旧格式 facts/path 内联权重。"""
-    if spec.get("weights"):
-        return weights_map_to_percent(spec.get("weights") or {}, spec)
-    return spec_weights_to_percent(spec)
+def resolve_plan(spec: dict, scoring: dict | None = None) -> dict:
+    """scoring 块 → 计分方案（doc/17 §2/§3）：按 spec 条目解析，显式用途优先、
+    缺省取节点表；权重只落计分条目（缺 0）。返回 {"uses": {id: 用途},
+    "weights": {id: 权重}, "unassigned": 计分权重合计是否为 0}。
+    已不存在的条目忽略；新增条目按缺省用途、权重 0（标准变化后的过渡态）。"""
+    entries = (scoring or {}).get("items") or {}
+    uses: dict[str, str] = {}
+    weights: dict[str, float] = {}
+    for item_id, kind in spec_items(spec):
+        e = entries.get(item_id) or {}
+        use = e.get("use") if e.get("use") in ("score", "ref") else NODES[kind]["use"]
+        uses[item_id] = use
+        if use == "score":
+            weights[item_id] = round(float(e.get("weight") or 0), 4)
+    return {"uses": uses, "weights": weights, "unassigned": sum(weights.values()) <= 0}
 
 
 # 人工会话分（doc/10 §4.2）挂在这个伪条目 id 上：item_sha 存 standard_fp，

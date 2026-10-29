@@ -19,14 +19,17 @@ from scoring import cli  # noqa: E402
 RULES, RULES_SHA = load_rules(default_rules_path())
 
 
-def _new_dist(path: Path, version: str, weights=None, rewrite=False) -> Path:
-    """新格式 dist（P2）：首行快照头 + 行顶层 weights + 同名 sidecar。"""
+def _new_dist(path: Path, version: str, scoring=None, rewrite=False) -> Path:
+    """新格式 dist（P2 + doc/17 §3.2）：首行快照头 + 行顶层 scoring + 同名 sidecar。"""
     case = dict(mk_record()["case"])
     case["facts"] = [fact("F1", text="甲"), fact("X1", "forbidden", "禁止")]
+    from tests.helpers import scoring_block_for
+    if "scoring" not in case:                 # case 未带计分块时按缺省补（F1 计分、X1 参考）
+        case["scoring"] = scoring_block_for(case)
     rows = [dict(case, uid="ec-1#0", variant_index=0, variant=None,
                  evalset_version=version)]      # 其余字段沿用 mk_record 的 case：qkey 与答案侧一致
-    if weights:
-        rows[0]["weights"] = weights
+    if scoring:
+        rows[0]["scoring"] = scoring
     if rewrite:
         rows.append(dict(rows[0], uid="ec-1#1", variant_index=1,
                          variant={"id": "V1", "rewrite": "诱导"},
@@ -42,20 +45,23 @@ def _new_dist(path: Path, version: str, weights=None, rewrite=False) -> Path:
     return path
 
 
-def test_import_new_dist_header_weights_and_sidecar_method(tmp_path):
-    """新 dist 导入：跳过快照头；顶层 weights 落 item_weights；sidecar 测法进快照表。"""
+def test_import_new_dist_header_scoring_and_sidecar_method(tmp_path):
+    """新 dist 导入：跳过快照头；顶层 scoring 落 case_scoring；sidecar 测法进快照表。"""
     db = str(tmp_path / "p2.db")
     store = Store(db)
-    dist = _new_dist(tmp_path / "dist.jsonl", "vp2", weights={"F1": 3, "X1": 1})
+    dist = _new_dist(tmp_path / "dist.jsonl", "vp2",
+                     scoring={"items": {"F1": {"use": "score", "weight": 60.0},
+                                        "X1": {"use": "score", "weight": 40.0}},
+                              "unassigned": False})
     assert cli.main(["specs", "import", str(dist), "--db", db]) == 0
     assert store.current_snapshot() == "vp2"                       # 版本从快照头取
     snap = store.snapshot("vp2")
     assert snap["method"]["modes"].get("错误知识纠正") == "forced"  # 测法来自 sidecar（非仓库默认）
-    w, wfp, inc = store.effective_weights("ec-1")
-    assert w == {"F1": 100.0, "X1": 100.0}      # 计分组与禁止组各自换算（组内单成员 → 100%）
+    plan, sfp, _ = store.scoring_plan("ec-1")
+    assert plan["weights"] == {"F1": 60.0, "X1": 40.0}             # 计分配置原样落库生效
     spec = store.spec_of(store.questions()[0]["qkey"],
                          store.questions()[0]["current_standard_fp"])
-    assert "weights" not in spec and all("weight" not in f for f in spec["facts"])
+    assert "scoring" not in spec and "weights" not in spec         and all("weight" not in f for f in spec["facts"])
     store.close()
 
 

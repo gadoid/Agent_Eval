@@ -29,6 +29,29 @@ KNOWLEDGE_DIR = HERE / "knowledge"
 REV_STATE_PATH = HERE / ".knowledge-state.json"
 SCHEMA = 2
 
+_NODES = None
+
+
+def nodes_table() -> dict:
+    """节点表（scoring/items.NODES，全仓唯一来源）：节点缺省用途（计分/参考）。
+    md2case 独立运行（python evalset/md2case.py），直接 import 不到 scoring 包，
+    按文件位置加载并缓存。"""
+    global _NODES
+    if _NODES is None:
+        try:
+            from scoring.items import NODES
+            _NODES = NODES
+        except ImportError:
+            import importlib.util
+            import sys
+            p = HERE.parent / "scoring" / "items.py"
+            spec = importlib.util.spec_from_file_location("_agent_eval_scoring_items", p)
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod      # dataclass 解析字符串注解时要在 sys.modules 里
+            spec.loader.exec_module(mod)
+            _NODES = mod.NODES
+    return _NODES
+
 H2 = re.compile(r"^##\s+(.+?)\s*$")
 BULLET = re.compile(r"^(\s*)[-*+]\s+(.*)$")
 COLONS = (":", "：")
@@ -138,19 +161,44 @@ H3 = re.compile(r"^###\s+(.+?)\s*$")
 FENCE = re.compile(r"^\s*```\s*([A-Za-z]*)\s*$")
 
 
-WEIGHT_RE = re.compile(r"[0-9]+(?:\.[0-9])?")
+WEIGHT_RE = re.compile(r"[0-9]+(?:\.[0-9]{1,4})?")
 
 
 def parse_weight_attr(attrs, no, errors):
-    """【权重：N】：N ≥ 0、至多一位小数；0 = 只记录不计分（打分口径见 doc/10 §4.2）。"""
+    """【权重：N】（doc/17 决定 12）：0–100 的名义百分比，至多四位小数；
+    编译时统一归一（§3），合计不为 100 按比例折算。"""
     raw = attrs.get("权重")
     if raw is None:
         return None
     if not WEIGHT_RE.fullmatch(raw.strip()):
-        errors.append(f"第 {no} 行：权重应为非负数、至多一位小数，如「【权重：2】」「【权重：0.5】」")
+        errors.append(f"第 {no} 行：权重应为 0–100 的百分比、至多四位小数，如「【权重：30】」「【权重：12.5】」")
         return None
     w = float(raw)
-    return int(w) if w.is_integer() else w
+    if not 0 <= w <= 100:
+        errors.append(f"第 {no} 行：权重应在 0–100 之间，当前为 {w}")
+        return None
+    return int(w) if w.is_integer() else round(w, 4)
+
+
+def parse_use_attr(attrs, no, errors):
+    """【计分】/【参考】（doc/17 §2.2）：显式用途；同写报错。返回 score/ref/None。"""
+    if "计分" in attrs and "参考" in attrs:
+        errors.append(f"第 {no} 行：【计分】与【参考】不能同时写")
+        return None
+    if "计分" in attrs:
+        return "score"
+    if "参考" in attrs:
+        return "ref"
+    return None
+
+
+def _use_weight_attrs(attrs, kind, ident, no, errors) -> tuple[str | None, float | int | None]:
+    """解析【计分】/【参考】与【权重】；用途（显式或节点缺省）为参考时带权重即报错（§2.3）。"""
+    use = parse_use_attr(attrs, no, errors)
+    weight = parse_weight_attr(attrs, no, errors)
+    if weight is not None and (use or nodes_table()[kind]["use"]) == "ref":
+        errors.append(f"第 {no} 行：{ident} 用途为参考，不能写【权重】；要计分先写【计分】")
+    return use, weight
 
 
 def p_text(lines, rule, errors):
@@ -331,11 +379,16 @@ def p_injections(lines, rule, errors):
 
 def p_preconditions(lines, rule, errors):
     out, seen = [], set()
+    allowed = rule.get("attrs", [])
     for no, _, t in bullets(lines, errors):
         t, attrs = split_attrs(t)
+        bad = [k for k in attrs if k not in allowed]
+        if bad:
+            errors.append(f"第 {no} 行：不支持的属性「{'、'.join(bad)}」，可用：{'、'.join(allowed) or '无'}")
+            continue
         kv = split_once(t, COLONS)
         if not kv or not re.fullmatch(rf"{rule['prefix']}[0-9]+", kv[0] or "") or not kv[1]:
-            errors.append(f"第 {no} 行：应写成「{rule['prefix']}1：内容 【轮次：1】【注入：J1】」")
+            errors.append(f"第 {no} 行：应写成「{rule['prefix']}1：内容 【轮次：1】【注入：J1】【计分】【权重：30】」")
             continue
         if kv[0] in seen:
             errors.append(f"第 {no} 行：编号 {kv[0]} 重复")
@@ -346,6 +399,14 @@ def p_preconditions(lines, rule, errors):
             item["turn"] = turn
         if attrs.get("注入") is not None:
             item["injections"] = [j.strip() for j in KEYWORD_SEPS.split(attrs["注入"]) if j.strip()]
+        use = parse_use_attr(attrs, no, errors)
+        weight = parse_weight_attr(attrs, no, errors)
+        if weight is not None and (use or nodes_table()["precond"]["use"]) == "ref":
+            errors.append(f"第 {no} 行：{kv[0]} 用途为参考（前提缺省），不能写【权重】；要计分先写【计分】")
+        if use:
+            item["use"] = use
+        if weight is not None:
+            item["weight"] = weight
         out.append(item)
     return out
 
@@ -404,8 +465,11 @@ def p_facts(lines, rule, errors):
             item["turn"] = turn
         if (grp := attrs.get("组")) is not None:
             item["group"] = grp
-        if (w := parse_weight_attr(attrs, no, errors)) is not None:
-            item["weight"] = w
+        use, weight = _use_weight_attrs(attrs, kind, kv[0], no, errors)
+        if use:
+            item["use"] = use
+        if weight is not None:
+            item["weight"] = weight
         if attrs.get("证据") is not None and "外部" in attrs:
             errors.append(f"第 {no} 行：{kv[0]} 【证据】与【外部】不能同时出现")
             continue
@@ -419,8 +483,13 @@ def p_facts(lines, rule, errors):
 
 def p_path(lines, rule, errors):
     out = []
+    allowed = rule.get("attrs", [])
     for no, _, t in bullets(lines, errors):
         t, attrs = split_attrs(t)
+        bad = [k for k in attrs if k not in allowed]
+        if bad:
+            errors.append(f"第 {no} 行：不支持的属性「{'、'.join(bad)}」，可用：{'、'.join(allowed) or '无'}")
+            continue
         kv = split_once(t, COLONS)
         if not kv or kv[0] not in ("必须", "禁止") or not kv[1]:
             errors.append(f"第 {no} 行：应写成「必须：加载 skill 名称」或「禁止：加载 skill 名称」")
@@ -433,8 +502,11 @@ def p_path(lines, rule, errors):
                 "action": {"kind": "load_skill", "skill": m.group(1)}}
         if (turn := parse_turn_attr(attrs, no, errors)) is not None:
             item["turn"] = turn
-        if (w := parse_weight_attr(attrs, no, errors)) is not None:
-            item["weight"] = w
+        use, weight = _use_weight_attrs(attrs, "path", kv[0], no, errors)
+        if use:
+            item["use"] = use
+        if weight is not None:
+            item["weight"] = weight
         out.append(item)
     return out
 
@@ -629,9 +701,10 @@ def md_to_case(text: str, path: str = "<input>", mapping: dict | None = None) ->
         case["assistant_refs"] = case["input"]["assistant_refs"]
     case.pop("input", None)
 
-    check_frontmatter(case, mapping, errors)
+    check_frontmatter(case, mapping, errors, warns)
     check_required(case, mapping, errors)
     check_cross(case, mapping, errors, warns)
+    check_scoring(case, errors, warns)
     check_warnings(case, warns)
     case["_warnings"] = warns          # 成功时提示挂在返回值上；失败时挂在 CaseError
 
@@ -640,7 +713,8 @@ def md_to_case(text: str, path: str = "<input>", mapping: dict | None = None) ->
     return case
 
 
-def check_frontmatter(case, mapping, errors):
+def check_frontmatter(case, mapping, errors, warns=None):
+    warns = warns if warns is not None else []
     statuses = mapping.get("statuses", [])
     if case.get("status") not in statuses:
         errors.append(f"status 应为 {'/'.join(statuses)} 之一，当前为 {case.get('status')!r}")
@@ -650,6 +724,13 @@ def check_frontmatter(case, mapping, errors):
         errors.append("granularity 只能是 环节 或 细节")
     if not isinstance(case.get("answerable", True), bool):
         errors.append("answerable 应为布尔值")
+    rw = case.get("拒答权重")
+    if rw is not None:
+        ok = isinstance(rw, (int, float)) and not isinstance(rw, bool) and 0 <= float(rw) <= 100
+        if not ok:
+            errors.append(f"拒答权重应为 0–100 的百分比数值，当前为 {rw!r}")
+        elif case.get("answerable", True) is not False:
+            warns.append("拒答权重只在 answerable: false 的用例上有效（拒答节点不存在的用例写了会被忽略）")
     dim, cid = case.get("dim"), case.get("id")
     prefix_of = {v: k for k, v in mapping["dims"].items()}
     m = re.fullmatch(r"([a-z]{2})-([0-9]{4})", cid or "")
@@ -673,12 +754,13 @@ def check_frontmatter(case, mapping, errors):
 
 def check_required(case, mapping, errors):
     dim = case.get("dim")
+    answerable = case.get("answerable", True) is not False
     have = lambda f: case.get(f) not in (None, [], "")
     if not have("turns"):
         errors.append("缺少「问题/对话/对话记录」段落（三选一）")
     if not have("conditions"):
         errors.append("缺少「关键条件」段落")
-    if not any(f.get("kind") == "required" for f in case.get("facts") or []):
+    if answerable and not any(f.get("kind") == "required" for f in case.get("facts") or []):
         errors.append("缺少「必要事实」段落")
     if dim == "错误知识纠正" and not any(f.get("kind") == "forbidden" for f in case.get("facts") or []):
         errors.append("维度「错误知识纠正」必须写「禁止事实」段落")
@@ -751,9 +833,9 @@ def check_cross(case, mapping, errors, warns):
     for g, members in groups.items():
         if len(members) == 1:
             errors.append(f"组 {g} 只有一个成员，要么再补同组事实，要么去掉【组】")
-        weights_in_g = {m.get("weight", 1) for m in members}
+        weights_in_g = {m.get("weight", 0) for m in members}
         if len(weights_in_g) > 1:
-            warns.append(f"组 {g} 成员权重不一致（{'、'.join(str(w) for w in sorted(weights_in_g))}），计分取最大值")
+            warns.append(f"组 {g} 成员权重不一致（{'、'.join(str(w) for w in sorted(weights_in_g))}），计分单位取组内最大值参与归一")
         turns_in_g = {m.get("turn") for m in members}
         if len(turns_in_g) > 1:
             errors.append(f"组 {g} 内事实的轮次必须相同，当前为 {'、'.join(str(t) for t in sorted(turns_in_g, key=str))}")
@@ -790,8 +872,77 @@ def check_cross(case, mapping, errors, warns):
             warns.append(f"变体 {v['id']}：包含了更早轮次条件的关键词（{'、'.join(leaked)}），疑似泄露")
 
 
+def score_units_of(case: dict) -> dict[str, float]:
+    """用例计分条目的名义权重单位表（doc/17 §3.1；check 提示与页面保存写回共用）：
+    只含用途为计分的条目（含拒答）；组按一个计分单位（名义取组内最大，成员记同值）。"""
+    nodes = nodes_table()
+    unit_w: dict[str, float] = {}
+    group_w: dict[tuple, float] = {}
+    group_of: dict[str, tuple] = {}
+    for f in case.get("facts") or []:
+        if (f.get("use") or nodes[f.get("kind", "required")]["use"]) != "score":
+            continue
+        w = float(f.get("weight") or 0)
+        if f.get("group"):
+            key = (f.get("kind"), f["group"])
+            group_of[f["id"]] = key
+            group_w[key] = max(group_w.get(key, 0), w)
+        else:
+            unit_w[f["id"]] = w
+    for p in case.get("preconditions") or []:
+        if (p.get("use") or nodes["precond"]["use"]) == "score":
+            unit_w[p["id"]] = float(p.get("weight") or 0)
+    for i, p in enumerate(case.get("path") or [], 1):
+        if (p.get("use") or nodes["path"]["use"]) == "score":
+            unit_w[f"path#{i}"] = float(p.get("weight") or 0)
+    if case.get("answerable") is False:
+        rw = case.get("拒答权重")
+        unit_w["refusal"] = float(rw) if isinstance(rw, (int, float)) and not isinstance(rw, bool) else 0.0
+    for fid, key in group_of.items():
+        unit_w[fid] = group_w[key]
+    return unit_w
+
+
+def normalize_score_weights(units: dict[str, float]) -> dict[str, float]:
+    """名义百分比 → 归一（doc/17 §3.1）：wᵢ/Σw×100 落四位小数；Σw≤0 时全 0（未分配）。"""
+    total = sum(units.values())
+    if total <= 0:
+        return {k: 0.0 for k in units}
+    return {k: round(v / total * 100, 4) for k, v in units.items()}
+
+
 ANAPHORA = re.compile(r"前文|上述|第[0-9一二三四五]+轮|按.{0,8}作答")
 RELATIVE_DATE = re.compile(r"去年|前年|今年|上年|上个月|上月|本月|下个月|下月|下周|下周[一二三四五六日天]?|上周|昨天|明天|后天|前天")
+
+
+def check_scoring(case, errors, warns):
+    """条目计分配置的 check（doc/17 §2.3）。行级报错（【计分】【参考】同写、参考带
+    【权重】、数值非法）已在解析器给出；这里给跨条目的：拒答用例不得写必要/期望
+    事实；提示：部分计分条目没写权重、名义百分比合计 ≠ 100（告知归一结果）、
+    未分配（仅 admitted，决定 14）。"""
+    nodes = nodes_table()
+    answerable = case.get("answerable", True) is not False
+    if not answerable:
+        bad = [f["id"] for f in case.get("facts") or [] if f.get("kind") in ("required", "expected")]
+        if bad:
+            errors.append(f"拒答用例（answerable: false）不能写必要/期望事实：{'、'.join(bad)}"
+                          "——拒答是唯一计分节点，「说明资料中无此规定」的导向并入拒答的复核导读")
+    # 计分条目清单（含拒答；组按一个计分单位，名义权重取组内最大）
+    unit_w = score_units_of(case)
+    if not unit_w:
+        return
+    total = sum(unit_w.values())
+    if 0 < total and len([w for w in unit_w.values() if w > 0]) < len(unit_w):
+        warns.append(f"计分条目未写权重（按 0% 计）：{'、'.join(i for i, w in unit_w.items() if w <= 0)}")
+    if total > 0 and abs(total - 100) > 1e-9:
+        brief = "、".join(f"{i}={w / total * 100:.4f}".rstrip("0").rstrip(".") + "%"
+                          for i, w in unit_w.items() if w > 0)
+        warns.append(f"计分条目名义权重合计 {total:g}（≠100），编译按比例归一：{brief}")
+    if total <= 0 and case.get("status") == "admitted":
+        if not answerable:
+            warns.append("拒答用例未写「拒答权重」，评测时将跳过（权重未分配）")
+        else:
+            warns.append("计分条目未分配权重，评测时将跳过")
 
 
 def check_warnings(case, warns):
@@ -924,15 +1075,44 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
             out.append(row)          # v8 起权重不进标准（doc/15 §3.9）：行顶层 weights 带 md 原值
         return out
 
-    def weights_of():
-        w = {}
-        for f in case.get("facts") or []:
-            if "weight" in f and f.get("id"):
-                w[f["id"]] = f["weight"]
+    def scoring_of():
+        """计分块（doc/17 §3.2）：全部条目的用途（显式或节点缺省）+ 归一后的百分制
+        权重。归一在编译时完成（决定 12、§3.1）：计分条目（含拒答）wᵢ/Σw×100 落
+        四位小数；组按一个计分单位（名义取组内最大），归一后成员记同一百分比；
+        没写的权重为 0；Σw = 0 → unassigned。"""
+        nodes = nodes_table()
+        rows: list[tuple[str, str, str | None, float, tuple | None]] = []
+        for p in case.get("preconditions") or []:
+            rows.append((p["id"], "precond", p.get("use"), float(p.get("weight") or 0), None))
         for i, p in enumerate(case.get("path") or [], 1):
-            if "weight" in p:
-                w[f"path#{i}"] = p["weight"]
-        return w
+            rows.append((f"path#{i}", "path", p.get("use"), float(p.get("weight") or 0), None))
+        for f in case.get("facts") or []:
+            g = (f.get("kind"), f["group"]) if f.get("group") else None
+            rows.append((f["id"], f.get("kind", "required"), f.get("use"),
+                         float(f.get("weight") or 0), g))
+        if case.get("answerable") is False:
+            rw = case.get("拒答权重")
+            rows.append(("refusal", "refusal", None,
+                         float(rw) if isinstance(rw, (int, float)) and not isinstance(rw, bool) else 0.0,
+                         None))
+        entries: dict[str, dict] = {}
+        singles: dict[str, float] = {}
+        group_w: dict[tuple, float] = {}
+        for item_id, kind, use, nominal, g in rows:
+            use = use if use in ("score", "ref") else nodes[kind]["use"]
+            entries[item_id] = {"use": use}
+            if use == "score":
+                if g:
+                    group_w[g] = max(group_w.get(g, 0), nominal)
+                else:
+                    singles[item_id] = nominal
+        total = sum(singles.values()) + sum(group_w.values())
+        for item_id, kind, use, nominal, g in rows:
+            if entries[item_id]["use"] != "score":
+                continue
+            w = round(((group_w[g] if g else singles[item_id]) / total * 100) if total > 0 else 0.0, 4)
+            entries[item_id]["weight"] = w
+        return {"items": entries, "unassigned": total <= 0}
 
     base = {
         "schema": SCHEMA, "id": cid, "dim": case["dim"], "status": case["status"],
@@ -947,16 +1127,14 @@ def compile_case(case: dict, points: dict, version: str) -> list[dict]:
                            "injections": p.get("injections", [])}
                           for p in case.get("preconditions") or []],
         "facts": facts_of(),
-        "path": [{k: v for k, v in p.items() if k != "weight"} for p in (case.get("path") or [])],
-        "weights": weights_of(),
+        "path": [{k: v for k, v in p.items() if k not in ("weight", "use")} for p in (case.get("path") or [])],
+        "scoring": scoring_of(),
         "evidence": ev_rows,
         "reference_answer": case.get("reference_answer"),
         "note": case.get("note"),
         "evalset_version": version,
     }
 
-    if not base.get("weights"):
-        base.pop("weights", None)                # 无显式权重的用例不落键（等权计分）
     base["case_id"] = cid
     rows = [dict(base, uid=f"{cid}#0", variant_index=0, variant=None,
                  turns=[{"role": USER, "content": t} for t in turns])]
@@ -1124,7 +1302,10 @@ def cmd_check(args) -> int:
     report(failures)
     for e in docs_errors:
         print(e, file=sys.stderr)
-    n_warn = sum(len(e.warnings) for e in failures)
+    for c in cases:                       # 通过用例的提示也要可见（如「未分配，评测时将跳过」）
+        for w in c.get("_warnings") or []:
+            print(f"{c['id']}: 提示：{w}")
+    n_warn = sum(len(e.warnings) for e in failures) + sum(len(c.get("_warnings") or []) for c in cases)
     ok = not failures and not [e for e in docs_errors if not e.startswith("提示")]
     print(f"通过 {len(cases)} 个，失败 {len(failures)} 个；--docs 问题 {len(docs_errors)} 条；提示 {n_warn} 条")
     return 0 if ok else 1
@@ -1182,6 +1363,20 @@ def validate_method(method: dict, mapping: dict, uids: set) -> list:
     return warns
 
 
+def next_version(dist_dir: Path, today=None) -> str:
+    """自动版本号（doc/17 决定 16）：vYYYYMMDD-N，N = 当天 dist 已有最大序号 + 1。
+    adhoc-* 等非 v 日期前缀的产物不参与取号。"""
+    d = _dt.date.today() if today is None else today
+    base = f"v{d.strftime('%Y%m%d')}"
+    ns = [0]
+    if Path(dist_dir).is_dir():
+        for f in Path(dist_dir).glob(f"evalset-{base}-*.jsonl"):
+            m = re.fullmatch(rf"evalset-{base}-([0-9]+)\.jsonl", f.name)
+            if m:
+                ns.append(int(m.group(1)))
+    return f"{base}-{max(ns) + 1}"
+
+
 def cmd_build(args) -> int:
     mapping = load_mapping()
     cases, failures, by_id = load_all(args.paths, mapping)
@@ -1194,6 +1389,9 @@ def cmd_build(args) -> int:
     demoted = apply_rev_linkage(cases, by_id, points, verbose) if args.linkage else set()
     include = set(args.include.split(","))
     picked = [c for c in cases if c["status"] in include]
+    out = Path(args.output)
+    if not args.version:                                  # 决定 16：缺省自动取号
+        args.version = next_version(out.parent)
     rows, row_map = [], {}
     for c in picked:
         for r in compile_case(c, points, args.version):
@@ -1202,13 +1400,12 @@ def cmd_build(args) -> int:
     method = load_method(args.method)
     verbose += validate_method(method, mapping, set(row_map))
     msha = method_sha(method)
-    out = Path(args.output)
     if out.exists():
         print(f"构建中止：{out} 已存在（dist 按版本不可变）", file=sys.stderr)
         return 1
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as fh:
-        # 快照头（doc/15 §3.9）：首行声明版本/测法/入选；正文行权重在顶层 weights
+        # 快照头（doc/15 §3.9）：首行声明版本/测法/入选；正文行计分配置在顶层 scoring
         fh.write(json.dumps({"snapshot": {"version": args.version, "method_sha": msha,
                                           "include": args.include}}, ensure_ascii=False) + "\n")
         for r in rows:
@@ -1238,7 +1435,7 @@ def cmd_build(args) -> int:
 # ---------------------------------------------------------------- case → md（render）
 
 META_KEYS = ("id", "dim", "status", "status_note", "answerable", "history", "topic",
-             "granularity", "pair", "tags", "source", "owner")
+             "granularity", "pair", "tags", "source", "owner", "拒答权重")
 
 
 def case_to_md(case: dict, mapping: dict | None = None) -> str:
@@ -1266,7 +1463,10 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
         "injections_ref": lambda v: [f"- {j['id']}：@{j['point']}/{j['option']}" for j in v],
         "preconditions": lambda v: [f"- {p['id']}：{p['text']}"
                                     + attrs_str({"轮次": p.get("turn"),
-                                                 "注入": "、".join(p.get("injections") or []) or None})
+                                                 "注入": "、".join(p.get("injections") or []) or None,
+                                                 "计分": True if p.get("use") == "score" else None,
+                                                 "参考": True if p.get("use") == "ref" else None,
+                                                 "权重": p.get("weight")})
                                     for p in v],
         "facts": lambda v: [f"- {f['id']}：{f['text']}"
                             + attrs_str({"关键词": "/".join(f["keywords"]) if f.get("keywords") else None,
@@ -1275,10 +1475,14 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
                                          "外部": True if f.get("evidence") == "external" else None,
                                          "权重": f.get("weight"),
                                          "性质": "主观" if f.get("nature") == "subjective" else None,
-                                         "部分判据": f.get("partial_rule")})
+                                         "部分判据": f.get("partial_rule"),
+                                         "计分": True if f.get("use") == "score" else None,
+                                         "参考": True if f.get("use") == "ref" else None})
                             for f in v],
         "path": lambda v: [f"- {'必须' if p['type'] == 'must' else '禁止'}：加载 skill {p['action']['skill']}"
-                           + attrs_str({"轮次": p.get("turn"), "权重": p.get("weight")}) for p in v],
+                           + attrs_str({"轮次": p.get("turn"), "权重": p.get("weight"),
+                                        "计分": True if p.get("use") == "score" else None,
+                                        "参考": True if p.get("use") == "ref" else None}) for p in v],
         "evidence_ref": lambda v: [f"- {r['id']}：@{r['point']}" if r.get("point")
                                    else f"- {r['id']}：{r['inline']['doc']['skill']}:{r['inline']['doc']['file']}"
                                         + (f" / {r['inline']['section']}" if r['inline'].get("section") else "")
@@ -1362,7 +1566,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("build", help="编译为运行用 JSONL（首行快照头 + 同名 .snapshot.json 测法）")
     p.add_argument("paths", nargs="+")
     p.add_argument("-o", "--output", required=True)
-    p.add_argument("--version", required=True)
+    p.add_argument("--version", help="版本号（缺省自动取号 vYYYYMMDD-N，doc/17 决定 16）")
     p.add_argument("--method", help="测法文件（缺省 evalset/method.yaml）")
     p.add_argument("--prev", help="上一版 dist，用于生成自动 diff")
     p.add_argument("--include", default="admitted")

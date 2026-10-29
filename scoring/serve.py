@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re
+import threading
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
@@ -26,9 +27,8 @@ from pydantic import BaseModel
 
 from . import views
 from .chain import default_operators_path, load_operator_config
-from .items import SCALES
-from .policy import default_policy_path, load_policy, rules_dict_of_policy
-from .rules import (Method, Rules, RulesError, canonical_sha, default_rules_path, load_rules,
+from .items import NODES, SCALES, node_hint, spec_items
+from .rules import (Method, Rules, RulesError, default_rules_path, load_rules,
                     rules_from_dict, rules_to_dict)
 from .store import Store, StoreError
 
@@ -125,16 +125,29 @@ class ReviewBatchIn(BaseModel):
     reviewer: str = ""
 
 
-class WeightsIn(BaseModel):
+class TempWeightsIn(BaseModel):
+    """临时权重接口（doc/17 §5.2）：save 保存（可选立即启用）/ use 切换口径 /
+    clear 删除 / promote 转正（写入 md，走保存管线，然后删除临时权重）。"""
     case_id: str
-    weights: dict[str, float]
-    label: str = ""
+    action: str = "save"
+    weights: dict[str, float] = {}      # 名义百分比（save/promote 用；存库前归一）
+    on: bool = True                     # use 动作：True=评测用临时权重 / False=md 权重
 
 
-class WeightsRestoreIn(BaseModel):
+class CaseEditItem(BaseModel):
+    """条目级编辑（doc/17 §5.1）：use/weight 至少给一项；text 改动会换 standard_fp（待重判）。"""
+    id: str
+    use: str | None = None              # score / ref；None = 不改
+    weight: float | None = None         # 名义百分比；保存时统一归一写回（决定 12）
+    text: str | None = None             # 条目文本（前提/事实；路径没有文本）
+    clear_weight: bool = False          # 删除【权重】（= 0%）
+    clear_use: bool = False             # 删除【计分】/【参考】，回节点缺省
+
+
+class CaseEditIn(BaseModel):
     case_id: str
-    set_at: str
-    label: str = ""                                   # 同秒多次保存时与 set_at 共同定位
+    items: list[CaseEditItem] = []
+    refusal_weight: float | None = None  # 拒答权重（answerable=false 的用例）
 
 
 class RunRenameIn(BaseModel):
@@ -425,13 +438,11 @@ def _build_case_md(b: CaseNewIn) -> tuple[str, list[str], list[str]]:
 
 
 def _build_hint(rel_path: str) -> list[str]:
-    """保存成功后的下一步命令（check → build 新版本 → 执行）。"""
+    """保存成功后的下一步命令（新建用例仍走手动流程，doc/17 §5.1）。"""
+    m2c = _md2case()
     dist = _REPO_ROOT / "evalset" / "dist"
+    version = m2c.next_version(dist)
     prevs = sorted(dist.glob("evalset-*.jsonl")) if dist.is_dir() else []
-    version = f"v{_dt.date.today().strftime('%Y%m%d')}-1"
-    while any(p.stem.endswith(version) for p in prevs):
-        n = int(version.rsplit("-", 1)[1]) + 1
-        version = f"{version.rsplit('-', 1)[0]}-{n}"
     build = (f"python evalset/md2case.py build evalset/cases"
              f" -o evalset/dist/evalset-{version}.jsonl --version {version}")
     if prevs:
@@ -446,25 +457,65 @@ def _ev_dict(v) -> dict:
             "vetoes": v.vetoes, "reason": v.invalid_reason or v.error or "", "parts": v.parts}
 
 
+# ---------------- 用例页计分配置区的条目取值（spec → 展示字段）
+
+def _spec_fact(spec: dict, item_id: str) -> dict:
+    return next((f for f in spec.get("facts") or [] if f.get("id") == item_id), {})
+
+
+def _item_text(spec: dict, item_id: str, kind: str) -> str:
+    if kind == "precond":
+        p = next((x for x in spec.get("preconditions") or [] if x.get("id") == item_id), {})
+        return p.get("text") or ""
+    if kind == "path":
+        m = re.fullmatch(r"path#([0-9]+)", item_id or "")
+        ps = spec.get("path") or []
+        p = ps[int(m.group(1)) - 1] if m and 0 < int(m.group(1)) <= len(ps) else {}
+        act = p.get("action") or {}
+        return f"{'必须' if p.get('type') == 'must' else '禁止'}加载技能 {act.get('skill')}" if act else ""
+    if kind == "refusal":
+        return "应说明依据资料无法回答，而非编造或泛泛拒答"
+    return _spec_fact(spec, item_id).get("text") or ""
+
+
+def _item_turn(spec: dict, item_id: str, kind: str):
+    if kind == "precond":
+        p = next((x for x in spec.get("preconditions") or [] if x.get("id") == item_id), {})
+        return p.get("turn")
+    if kind in ("path", "refusal"):
+        return None
+    return _spec_fact(spec, item_id).get("turn")
+
+
+def _item_keywords(spec: dict, item_id: str):
+    return _spec_fact(spec, item_id).get("keywords") or []
+
+
+def _item_attr(spec: dict, item_id: str, key: str):
+    return _spec_fact(spec, item_id).get(key)
+
+
+def _num_md(v: float):
+    """md 友好的数字（整数去小数点；否则保留至多四位小数）。"""
+    f = float(v)
+    return int(f) if f.is_integer() else round(f, 4)
+
+
 # ---------------------------------------------------------------- 应用
 
 def create_app(db: str | Path, rules_path: str | Path | None = None,
                operators_path: str | Path | None = None,
-               cases_dir: str | Path | None = None) -> FastAPI:
+               cases_dir: str | Path | None = None,
+               dist_dir: str | Path | None = None) -> FastAPI:
     app = FastAPI(title="Agent_Eval 复核服务", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     store = Store(db)
     cases_root = Path(cases_dir) if cases_dir else DEFAULT_CASES_DIR
-    # 计分规则（doc/15 §3.7）：rules.yaml 为主；--policy 为弃用别名（旧 policy 转换加载）。
-    # rules 表是唯一事实来源：启动时把加载的规则登记进库，页面按 rules_sha 选择。
+    dist_root = Path(dist_dir) if dist_dir else (_REPO_ROOT / "evalset" / "dist")
+    # 计分规则（doc/15 §3.7 + doc/17 §8.1：policy 已删除）。rules 表是唯一事实来源：
+    # 启动时把加载的规则登记进库，页面按 rules_sha 选择。
     if rules_path:
-        try:                                   # rules.yaml 直接装载
-            rules, rules_sha = load_rules(rules_path)
-        except RulesError:                     # 旧 policy 文件（无 schema:1）→ 转换装载
-            from .policy import load_policy as _lp
-            _pol, _ = _lp(rules_path)
-            _d = rules_dict_of_policy(_pol)
-            rules, rules_sha = rules_from_dict(_d), canonical_sha(_d)
+        rules, rules_sha = load_rules(rules_path)
     else:
         rules, rules_sha = load_rules(default_rules_path())
     store.register_rules(rules_sha, rules_to_dict(rules))
@@ -531,7 +582,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                 "SELECT COUNT(*) FROM conclusions c JOIN answers a ON a.answer_id = c.answer_id"
                 " JOIN questions q ON q.qkey = a.qkey"
                 " WHERE q.current_standard_fp = c.standard_fp AND c.chain_sha = ? AND c.rules_sha = ?"
-                " AND c.weight_fp = COALESCE(q.current_weight_fp, 'equal')"
+                " AND c.scoring_fp = q.current_scoring_fp"
                 " AND c.status IN ('undecided', 'error')",
                 (chain, rules_sha)).fetchone()[0]
             _nav_cache.update({"chain": chain, "n": n})
@@ -831,55 +882,40 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                           "cells": [p["turns"][i] if i < len(p["turns"]) else None for p in pair_data]}
                          for i in range(n)]
         injections = spec.get("injections") or []
-        # 权重编辑器（doc/15 §4.3）：数据源 = item_weights 有效权重（按用例，恒百分制）。
-        # 无权重行 → 等权展示（total 可折算），保存时必须覆盖全部计分条目。
-        case_weights, case_wfp, weights_incomplete = store.effective_weights(case_id)
-        # 权重历史（可追溯）：每次保存一组；「查看」直读该 weight_fp 下的现存结论
-        w_hist = store.weight_history(case_id)
-        _w_chain, (_w_rules, _w_rsha) = chain_of(request), rules_state(request)
-        for g in w_hist:
-            g["rows"] = store.case_conclusions_under_weight(case_id, g["weight_fp"], _w_chain, _w_rsha)
-        wlabel_row = store.conn.execute(
-            "SELECT label FROM item_weights WHERE case_id=? AND active=1 AND label IS NOT NULL"
-            " ORDER BY set_at DESC LIMIT 1", (case_id,)).fetchone()
-        weight_facts = []
-        wf = [f for f in spec.get("facts") or [] if f.get("kind") in ("required", "expected")]
-        weight_map: dict[str, int] = {}
-        for f in wf:
-            if case_weights:
-                pct = round(case_weights.get(f["id"], 0))
-            else:
-                pct = round(100 / len(wf)) if wf else 0
-            weight_map[f["id"]] = pct
-            weight_facts.append({"id": f["id"], "kind": f["kind"], "pct": pct})
+        # 计分配置区（doc/17 §5.2）：全部条目的用途 + md 权重 + 临时权重（含拒答行）
+        plan, case_sfp, scoring_is_temp = store.scoring_plan(case_id, fp)
+        temp = store.temp_weights(case_id)
+        groups_of = {f.get("id"): f.get("group") for f in spec.get("facts") or []}
+        scoring_rows = []
+        for iid, kind in spec_items(spec):
+            use = plan["uses"].get(iid) or NODES[kind]["use"]
+            scoring_rows.append({
+                "id": iid, "kind": kind, "label": NODES[kind]["label"], "node_hint": node_hint(kind),
+                "use": use, "default_use": NODES[kind]["use"],
+                "weight": plan["weights"].get(iid) if use == "score" else None,
+                "temp_weight": ((temp or {}).get("weights") or {}).get(iid) if use == "score" else None,
+                "group": groups_of.get(iid)})
+        temp_sum = round(sum(((temp or {}).get("weights") or {}).values()), 2)
         # 条目详情（简要列表点「详情」下钻）：全部条目类型
         item_details = []
-        for p in spec.get("preconditions") or []:
-            item_details.append({"id": p.get("id"), "kind": "precond", "text": p.get("text") or "",
-                                 "turn": p.get("turn"), "keywords": [], "group": None,
-                                 "weight": None, "note": "门槛：不成立 → 会话无效，不计分"})
-        for p in spec.get("path") or []:
-            item_details.append({"id": "path", "kind": "path", "text": f"必须加载技能 {(p.get('action') or {}).get('skill')}",
-                                 "turn": None, "keywords": [], "group": None,
-                                 "weight": None, "note": "否决项：违反 → 总分 0"})
-        for f in spec.get("facts") or []:
-            note = {"forbidden": "否决项：被采信 → 总分 0",
-                    "required": "按权重计分；判「错」→ 总分 0",
-                    "expected": "按权重计分"}.get(f.get("kind"), "")
-            item_details.append({"id": f.get("id"), "kind": f.get("kind"), "text": f.get("text") or "",
-                                 "turn": f.get("turn"), "keywords": f.get("keywords") or [],
-                                 "group": f.get("group"),
-                                 "nature": f.get("nature"), "partial_rule": f.get("partial_rule"),
-                                 "weight": weight_map.get(f.get("id")) if f.get("kind") in ("required", "expected") else None,
-                                 "note": note})
+        for row in scoring_rows:
+            item_details.append({"id": row["id"], "kind": row["kind"],
+                                 "text": _item_text(spec, row["id"], row["kind"]),
+                                 "turn": _item_turn(spec, row["id"], row["kind"]),
+                                 "keywords": _item_keywords(spec, row["id"]),
+                                 "group": row["group"],
+                                 "nature": _item_attr(spec, row["id"], "nature"),
+                                 "partial_rule": _item_attr(spec, row["id"], "partial_rule"),
+                                 "use": row["use"], "default_use": row["default_use"],
+                                 "weight": row["weight"], "note": row["node_hint"]})
         return render(request, "case.html", case_id=case_id, members=members, seed=seed, spec=spec,
                       standard_fp=fp or "", history=history, convs=convs, axis=axis,
                       axis_values=axis_values, tags=json.loads(seed["tags_json"] or "[]"),
                       injections=injections, health=health, variant_cards=variant_cards,
-                      weight_facts=weight_facts, weight_map=weight_map,
-                      weights_incomplete=weights_incomplete, weight_fp=case_wfp,
-                      weight_history=w_hist,
-                      weight_label=(wlabel_row["label"] if wlabel_row else None),
+                      scoring_rows=scoring_rows, scoring_by_id={r["id"]: r for r in scoring_rows},
+                      scoring_plan=plan, scoring_fp=case_sfp,
+                      scoring_is_temp=scoring_is_temp, temp=temp, temp_sum=temp_sum,
+                      answerable=spec.get("answerable", True) is not False,
                       item_details=item_details, saved=saved,
                       variant_stats=variant_stats, conv_stats=conv_stats,
                       conv_totals=conv_totals, conv_group_counts=conv_group_counts,
@@ -1157,7 +1193,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         for m in members:
             m["is_current"] = (m["current_standard_fp"] == m["standard_fp"])
         seeds = {r["case_id"] for r in store.conn.execute(
-            "SELECT DISTINCT case_id FROM item_weights WHERE source='import'")}
+            "SELECT DISTINCT case_id FROM case_scoring")}
         return render(request, "detail_snapshot.html", row=row, members=members,
                       seeded_cases=sorted(seeds),
                       is_current=(version == store.current_snapshot()))
@@ -1223,35 +1259,180 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         _nav_cache.clear()
         return {"episode_status": status, "reason": reason}
 
-    @app.post("/api/case/weights")
-    async def case_weights(body: WeightsIn):
-        """权重保存（按用例，doc/15 §4.3）：写 item_weights 有效行 + 刷新 weight_fp，
-        随后只重算本用例在所有有判定的链下的结论——不产生新标准、不需要 rejudge。"""
-        try:
-            res = store.revise_weights(body.case_id, dict(body.weights), body.label)
-            n = store.rescore_cases([body.case_id], rules, rules_sha)
-        except StoreError as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-        return {**res, "rescored": n}
+    # ---------------- 保存管线与计分配置接口（doc/17 §5.1/§5.2，决定 11+16）
+    _pipeline_lock = threading.Lock()
 
-    @app.post("/api/case/weights-restore")
-    async def case_weights_restore(body: WeightsRestoreIn):
-        """权重切回历史配置：把该组值写成新的有效行（追加，历史不删）+ 只重算本用例。
-        标准修订后条目集变化时 revise_weights 会拒绝并说明缺哪些条目。"""
+    def _case_md_path(case_id: str) -> Path | None:
+        p = _existing_case_ids(cases_root).get(case_id)
+        return Path(p) if p else None
+
+    def run_save_pipeline(new_md: str, md_path: Path) -> dict:
+        """保存管线：内存校验（报错只针对被改用例，不通过不落盘）→ 写 md →
+        build 新版本（锁内自动取号，dist 不可变兜底）→ 整批导入（设为当前快照）→
+        同步 rescore → 报告待重判。build 因其余用例失败时 md 已落盘、无新快照。"""
+        m2c = _md2case()
+        mapping = m2c.load_mapping()
+        errors: list[str] = []
         try:
-            group = next((g for g in store.weight_history(body.case_id)
-                          if g["set_at"] == body.set_at and (g["label"] or "") == body.label.strip()), None)
-            if group is None:
-                return JSONResponse({"error": f"没有这次保存记录：{body.set_at}"}, status_code=400)
-            if group["active"]:
-                return JSONResponse({"error": "该权重配置已是当前配置"}, status_code=400)
-            label = f"切回·{group['label'] or body.set_at[:16]}"
-            res = store.revise_weights(body.case_id, group["weights"], label)
-            n = store.rescore_cases([body.case_id], rules, rules_sha)
+            parsed = m2c.md_to_case(new_md, str(md_path), mapping)
+            warnings = list(parsed.get("_warnings") or [])
+        except m2c.CaseError as e:
+            return {"ok": False, "errors": list(e.errors), "warnings": list(e.warnings)}
+        points = m2c.load_knowledge([m2c.KNOWLEDGE_DIR]) if m2c.KNOWLEDGE_DIR.is_dir() else {}
+        m2c.check_knowledge(parsed, points, errors)
+        if errors:
+            return {"ok": False, "errors": errors, "warnings": warnings}
+        md_path.write_text(new_md, encoding="utf-8")
+        with _pipeline_lock:                       # 决定 16②：取号 → build → 导入
+            version = m2c.next_version(dist_root)
+            rc = m2c.main(["build", str(cases_root), "-o", str(dist_root / f"evalset-{version}.jsonl"),
+                          "--version", version])
+            if rc != 0:
+                return {"ok": False, "saved_md": True, "version": None, "warnings": warnings,
+                        "errors": ["build 失败：其余用例有解析错误（本次修改已写入 md，未产生新快照；"
+                                   "修复那个用例后重试保存即可）"]}
+            out = dist_root / f"evalset-{version}.jsonl"
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+            rows = [r for r in rows if isinstance(r, dict) and r.get("uid")]
+            stats = store.import_evalset(rows, version)
+        n = store.rescore(rules, rules_sha, cfg.chain_sha)          # 决定 16③：同步 rescore
+        pending = len(store.pending_rejudge(cfg.chain_sha))         # 新 standard_fp → 待重判（异步）
+        _nav_cache.clear()
+        return {"ok": True, "saved_md": True, "version": version, "warnings": warnings,
+                "questions": stats["questions"], "unassigned": stats["unassigned"],
+                "rescored": n, "pending_rejudge": pending}
+
+    def _load_case_for_edit(case_id: str) -> tuple[Path, dict] | None:
+        """现 md → 结构化用例（解析失败把错误抛给调用方返回）。"""
+        md_path = _case_md_path(case_id)
+        if md_path is None:
+            return None
+        m2c = _md2case()
+        case = m2c.md_to_case(md_path.read_text(encoding="utf-8"), str(md_path), m2c.load_mapping())
+        return md_path, case
+
+    def _write_weights_to_case(case: dict, weights: dict[str, float]) -> None:
+        """把（已归一的）权重写到结构化用例上：事实/前提按 id，路径按 path#N，
+        拒答写 frontmatter 键「拒答权重」。只写用途为计分的条目；归一后为 0 的
+        不落【权重】（决定 3：不填就是 0%）。"""
+        nodes = NODES
+        for coll in (case.get("facts") or [], case.get("preconditions") or []):
+            for item in coll:
+                iid = item.get("id")
+                if iid in weights and (item.get("use") or nodes[item.get("kind", "required")]["use"]) == "score":
+                    if float(weights[iid]) > 0:
+                        item["weight"] = _num_md(weights[iid])
+                    else:
+                        item.pop("weight", None)
+        for i, item in enumerate(case.get("path") or [], 1):
+            if f"path#{i}" in weights and (item.get("use") or "ref") == "score":
+                if float(weights[f"path#{i}"]) > 0:
+                    item["weight"] = _num_md(weights[f"path#{i}"])
+                else:
+                    item.pop("weight", None)
+        if case.get("answerable") is False and "refusal" in weights:
+            if float(weights["refusal"]) > 0:
+                case["拒答权重"] = _num_md(weights["refusal"])
+            else:
+                case.pop("拒答权重", None)
+
+    @app.post("/api/case/{case_id}/edit")
+    async def case_edit(case_id: str, body: CaseEditIn):
+        """用例页保存（doc/17 §5.1）：条目用途 / 权重 / 文本 → case_to_md 回写 →
+        保存管线（决定 11+16）。权重按名义值提交，落盘前统一归一（决定 12）。"""
+        if body.case_id != case_id:
+            return JSONResponse({"error": "case_id 不一致"}, status_code=400)
+        try:
+            loaded = _load_case_for_edit(case_id)
+        except Exception as e:                       # 现 md 解析失败（_md2case 的 CaseError）
+            return JSONResponse({"error": f"当前 md 无法解析，先修复：{e}"}, status_code=400)
+        if loaded is None:
+            return JSONResponse({"error": f"找不到用例文件：{case_id}"}, status_code=404)
+        md_path, case = loaded
+        edits = {e.id: e for e in body.items}
+        known = {f.get("id") for f in case.get("facts") or []} \
+            | {p.get("id") for p in case.get("preconditions") or []} \
+            | {f"path#{i}" for i in range(1, len(case.get("path") or []) + 1)}
+        unknown = sorted(set(edits) - known)
+        if unknown:
+            return JSONResponse({"error": f"未知条目：{'、'.join(unknown)}"}, status_code=400)
+        def _apply(item: dict, e, kind: str) -> None:
+            if e.clear_use:
+                item.pop("use", None)
+            elif e.use in ("score", "ref"):
+                item["use"] = e.use
+            if e.clear_weight:
+                item.pop("weight", None)
+            elif e.weight is not None:
+                item["weight"] = e.weight
+            use = item.get("use") or NODES[kind]["use"]
+            if use == "ref":
+                item.pop("weight", None)          # 参考带权重是 check 报错（§2.3），转参考即剥
+            if e.text is not None and kind != "path" and str(e.text).strip():
+                item["text"] = str(e.text).strip()
+
+        for item in (case.get("facts") or []) + (case.get("preconditions") or []):
+            e = edits.get(item.get("id"))
+            if e is not None:
+                _apply(item, e, item.get("kind", "required") if item.get("kind") in ("required", "expected", "forbidden")
+                       else "precond")
+        for i, item in enumerate(case.get("path") or [], 1):
+            e = edits.get(f"path#{i}")
+            if e is not None:
+                _apply(item, e, "path")
+        if body.refusal_weight is not None and case.get("answerable") is False:
+            case["拒答权重"] = body.refusal_weight
+        # 归一写回（决定 12：「保存到用例」写回归一后的百分比值）
+        m2c = _md2case()
+        _write_weights_to_case(case, m2c.normalize_score_weights(m2c.score_units_of(case)))
+        result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path)
+        if not result.get("ok"):
+            return JSONResponse(result, status_code=400)
+        return result
+
+    @app.post("/api/case/{case_id}/temp-weights")
+    async def case_temp_weights(case_id: str, body: TempWeightsIn):
+        """临时权重（doc/17 §5.2）：save 保存并启用 / use 切口径 / clear 删除 /
+        promote 转正（写进 md 走保存管线，然后删除临时权重）。save 后只重算本用例。"""
+        if body.case_id != case_id:
+            return JSONResponse({"error": "case_id 不一致"}, status_code=400)
+        _nav_cache.clear()
+        try:
+            if body.action == "save":
+                res = store.set_temp_weights(case_id, dict(body.weights), by="web", use=True)
+                n = store.rescore_cases([case_id], rules, rules_sha)
+                return {**res, "rescored": n}
+            if body.action == "use":
+                res = store.temp_weights_use(case_id, body.on)
+                n = store.rescore_cases([case_id], rules, rules_sha)
+                return {**res, "rescored": n}
+            if body.action == "clear":
+                res = store.clear_temp_weights(case_id)
+                n = store.rescore_cases([case_id], rules, rules_sha)
+                return {**res, "rescored": n}
+            if body.action == "promote":
+                t = store.temp_weights(case_id)
+                if not t:
+                    return JSONResponse({"error": "没有临时权重可转正"}, status_code=400)
+                try:
+                    loaded = _load_case_for_edit(case_id)
+                except Exception as e:
+                    return JSONResponse({"error": f"当前 md 无法解析，先修复：{e}"}, status_code=400)
+                if loaded is None:
+                    return JSONResponse({"error": f"找不到用例文件：{case_id}"}, status_code=404)
+                md_path, case = loaded
+                m2c = _md2case()
+                _write_weights_to_case(case, t["weights"])   # 临时值已归一，直接写
+                result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path)
+                if result.get("ok"):
+                    store.clear_temp_weights(case_id)
+                    result["rescored"] += store.rescore_cases([case_id], rules, rules_sha)
+                else:
+                    return JSONResponse(result, status_code=400)
+                return result
         except StoreError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
-        _nav_cache.clear()
-        return {**res, "rescored": n, "label": label}
+        return JSONResponse({"error": f"未知动作：{body.action}"}, status_code=400)
 
     @app.post("/api/run/rename")
     async def run_rename(body: RunRenameIn):

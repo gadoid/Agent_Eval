@@ -1,14 +1,13 @@
 """视图（方案 §10 出口迁移 + 改造方案 §4.3 题目级统计）：能力视图、
 难度/区分度/稳定性/题组一致性/历史。变体泄露嫌疑见 test_items。"""
 from scoring import views
-from scoring.policy import policy_from_dict, rules_dict_of_policy
 from scoring.rules import rules_from_dict
 from scoring.rules import EpisodeVerdict
 from scoring.views import ability_view, question_stats
 
 
 def test_ability_view_counts_undecided_and_headline():
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
+    policy = rules_from_dict({})
     mk = lambda st: EpisodeVerdict(uid="u", mode="natural", trial=1, dim="知识召回", status=st)
     cell = ability_view([mk("pass"), mk("fail"), mk("undecided"), mk("invalid"), mk("error")], policy)["知识召回|natural"]
     assert cell["n"] == 2 and cell["pass"] == 1
@@ -93,7 +92,7 @@ def _srow(qkey, case, dim, score, mode="forced", trial=1, vi=0, rewrite=None,
 
 def test_dimension_and_composite_scores_doc_sample():
     """doc/10 §6.3 样例：错误知识纠正 62.5，四维度等权 → 综合分 73.9。"""
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
+    policy = rules_from_dict({})
     rows = (
         # ec-0201：trial 89、54、invalid → 题目分 71.5
         [_srow("q1|a", "ec-0201", "错误知识纠正", 89), _srow("q1|a", "ec-0201", "错误知识纠正", 54, trial=2),
@@ -121,7 +120,7 @@ def test_dimension_and_composite_scores_doc_sample():
 
 def test_compare_scores_single_component():
     """doc/10 §6.4：单组件综合分差 = 各维度差按维度权重平均（样例 78.2→81.3 等 → +2.8）。"""
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
+    policy = rules_from_dict({})
     dims = ["知识召回", "多轮上下文召回", "同义请求一致性", "错误知识纠正"]
     base_v = [78.2, 70.0, 85.0, 62.5]
     tgt_v = [81.3, 68.8, 85.4, 71.5]
@@ -154,7 +153,7 @@ def test_shapley_doc_sample():
 def test_question_scores_provisional_on_unconverged():
     """P1：结论已定但区间未收敛（pass / score=None）与 error 的会话被排除出均分，
     题目分与维度分要标临时；invalid 是合规排除，不算。"""
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
+    policy = rules_from_dict({})
     r90 = _srow("q1|a", "c1", "知识召回", 90, mode="natural")
     rows = [r90, {**r90, "trial": 2, "c_score": None, "c_status": "pass"}]
     qs = views.question_scores(rows, policy)
@@ -180,7 +179,7 @@ def test_dim_delta_respects_resample_multiplicity():
 def test_compare_scores_selects_headline_mode_per_question():
     """P1：mode 放开时同一 qkey 的 natural 与 forced 不混算——两侧都有主口径
     （ec → forced）只取主口径；一侧没有则该题按两侧 mode 不一致排除。"""
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
+    policy = rules_from_dict({})
     rows = [
         _srow("q1|a", "c1", "错误知识纠正", 90, mode="forced", skills_base="v1"),
         _srow("q1|a", "c1", "错误知识纠正", 50, mode="forced", skills_base="v2"),
@@ -202,7 +201,7 @@ def test_compare_scores_selects_headline_mode_per_question():
 def test_shapley_cells_aligned_on_shared_questions():
     """P1：各格只在共有题目上算分（单侧题不出现在任何格），mode 不作组件时逐题
     按主口径选 mode——各格综合分出自同一题集，Shapley 才可比。"""
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict({})))
+    policy = rules_from_dict({})
     rows = (
         [_srow("q1|a", "c1", "知识召回", 80, mode="natural", skills_base="v1"),
          _srow("q1|a", "c1", "知识召回", 40, mode="natural", skills_base="v2")]

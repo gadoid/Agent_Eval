@@ -54,8 +54,7 @@
   <section class="rv-card" id="expect">
     {% if saved %}
     <div class="rv-notice" data-tone="info" style="margin-bottom:12px">
-      <b>权重已保存</b><span>本用例已按新权重重算（不产生新标准、不需要重判；已有人工判定保留）</span>
-      <span class="rv-meta">（改权重只重算本用例，不需要重判）</span>
+      <b>计分配置已保存</b><span>已生成新快照并设为当前、重新计分；standard_fp 未变的判定与人工改判全部复用</span>
     </div>
     {% endif %}
     <h2>标准 <span class="rv-meta" style="font-weight:400"><span>当前标准 {{ (standard_fp or '')[:8] }}</span>
@@ -91,11 +90,13 @@
             </li>
             {% endfor %}
             {% for f in spec.facts or [] %}
+            {% set sr = scoring_by_id.get(f.id) %}
             <li class="rv-fact rv-item" data-id="{{ f.id }}">
               <span class="rv-kind" {% if f.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ f.kind|kind_label }} {{ f.id }}</span>
               {% if f.nature %}<span class="rv-pill rv-pill--nature" title="合理表述不唯一；「部分」按充分性判">主观</span>{% endif %}
               <span class="rv-fact-text">{{ (f.text or '')[:36] }}{% if (f.text or '')|length > 36 %}…{% endif %}</span>
-              {% if f.id in weight_map %}<span class="rv-weight rv-wpct-chip" data-wchip="{{ f.id }}">{{ weight_map[f.id] }}%</span>{% endif %}
+              {% if sr and sr.use == 'ref' %}<span class="rv-pill">参考</span>
+              {% elif sr %}<span class="rv-weight rv-wpct-chip" data-wchip="{{ f.id }}">{{ (sr.weight or 0)|round|int }}%</span>{% endif %}
               <button class="rv-btn rv-detail-btn" type="button" data-id="{{ f.id }}">详情</button>
             </li>
             {% endfor %}
@@ -105,7 +106,9 @@
             <div class="rv-detail-card" data-detail="{{ d.id }}" hidden>
               <div class="rv-row-top" style="margin-bottom:6px">
                 <span class="rv-kind" {% if d.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ d.kind|kind_label }} {{ d.id }}</span>
-                {% if d.weight is not none %}<span class="rv-weight">权重 {{ d.weight }}%</span>{% endif %}
+                {% if d.use == 'ref' %}<span class="rv-pill">参考</span>
+                {% elif d.weight is not none %}<span class="rv-weight">计分 · 权重 {{ d.weight|round(2) }}%</span>
+                {% else %}<span class="rv-weight">计分 · 权重 0%</span>{% endif %}
                 <span class="rv-meta"><span>{% if d.turn %}第 {{ d.turn }} 轮{% endif %}</span>
                   {% if d.group %}<span>组 {{ d.group }}</span>{% endif %}<span>{{ d.note }}</span></span>
                 <button class="rv-btn rv-detail-close" type="button" style="margin-left:auto">收起</button>
@@ -118,72 +121,60 @@
             {% endfor %}
           </div>
         </div>
-        {% if weight_facts %}
-        <div class="rv-pie-col" id="weight-editor" data-case="{{ case_id }}" data-wfp="{{ weight_fp }}"
-             data-save-url="/api/case/weights">
-          <svg id="w-pie" viewBox="0 0 200 200" role="img" aria-label="权重分布饼图"></svg>
-          <div class="rv-pie-legend" id="w-legend"></div>
-          <div class="rv-wsum">已分配 <b id="w-sum"></b> · 未分配 <b id="w-left"></b></div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button class="rv-btn rv-btn--primary" id="w-save" type="button">保存权重</button>
-            {% if weight_label %}<span class="rv-meta">当前标签：{{ weight_label }}</span>{% endif %}
-            <input class="rv-input" id="w-label" maxlength="40" placeholder="版本标签（可空）" style="width:190px">
-            <span class="rv-meta">拖滑杠圆钮调整（减少→未分配，有未分配才能增加）；双击百分比值可直接输入，粒度 1%</span>
-          </div>
-        </div>
-        {% endif %}
-      </div>
-      {% if weight_history %}
-      <details class="rv-fold" id="weight-history" data-case="{{ case_id }}">
-        <summary><span class="rv-fold-title">权重历史</span>
-          <span class="rv-meta">{{ weight_history|length }} 次配置 · 当前在首行</span>
-          <span class="rv-fold-hint" data-closed>展开</span><span class="rv-fold-hint" data-open>收起</span></summary>
-        <div class="rv-fold-body">
-          <p class="rv-meta" style="margin:0 0 8px">每次保存留档（追加不删）；「查看」读该权重下<b>已算好</b>的结论（不重算），
-            「切回」把它写成新的有效配置并只重算本用例。标准修订后条目有增减时切回会被拒并提示缺项。</p>
+        <div class="rv-pie-col" id="scoring-editor" data-case="{{ case_id }}"
+             data-temp-in-use="{{ 1 if scoring_is_temp else 0 }}">
+          <div class="rv-eyebrow">计分配置（md 是唯一数据源；临时权重只覆盖权重）</div>
+          {% if scoring_plan.unassigned %}
+          <div class="rv-notice" data-tone="error" style="margin-bottom:8px">
+            <b>权重未分配</b><span>计分条目合计 0%，评测时将跳过本用例；补齐权重后自动恢复（不用重跑）</span></div>
+          {% endif %}
           <div class="rv-table-wrap">
-          <table class="rv-table">
-            <thead><tr><th>保存时间</th><th>标签</th><th>来源</th><th>权重</th><th>weight_fp</th><th></th></tr></thead>
+          <table class="rv-table" id="scoring-table">
+            <thead><tr><th>条目</th><th>用途</th><th>md 权重%</th>{% if temp %}<th>临时%</th>{% endif %}<th>默认规则</th></tr></thead>
             <tbody>
-            {% for g in weight_history %}
-            <tr data-wh="{{ g.set_at }}">
-              <td class="rv-mono">{{ g.set_at[:19] }}</td>
-              <td>{{ g.label or '—' }}</td>
-              <td class="rv-meta">{{ g.source }}{% if g.set_by %}/{{ g.set_by }}{% endif %}</td>
-              <td>{% for i, w in g.weights.items() %}<span class="rv-mono">{{ i }} {{ w|f1 }}%</span>{% if not loop.last %} · {% endif %}{% endfor %}</td>
-              <td class="rv-mono" title="{{ g.weight_fp }}">{{ g.weight_fp[:10] }}{% if g.weight_fp == 'equal' %}（等权）{% endif %}</td>
-              <td>{% if g.active %}<span class="rv-pill">当前</span>{% else %}
-                <button class="rv-btn rv-wh-view" type="button" data-setat="{{ g.set_at }}">查看</button>
-                <button class="rv-btn rv-btn--primary rv-wh-restore" type="button" data-setat="{{ g.set_at }}"
-                        data-label="{{ g.label or '' }}">切回</button>{% endif %}</td>
-            </tr>
-            <tr class="rv-wh-rows" data-setat="{{ g.set_at }}" hidden>
-              <td colspan="6">
-                {% if g.rows %}
-                <table class="rv-table">
-                  <thead><tr><th>会话</th><th>模式</th><th>trial</th><th>结论</th><th>分数</th><th>来源</th></tr></thead>
-                  <tbody>
-                  {% for c in g.rows %}
-                  <tr><td class="rv-mono">{{ c.uid }}{% if c.rewrite %} <span class="rv-meta">· {{ c.rewrite }}</span>{% endif %}</td>
-                    <td>{{ c.mode }}</td><td class="rv-num">{{ c.trial }}</td>
-                    <td>{% if c.status %}<span class="rv-state" data-s="{{ 'pass' if c.status == 'pass' else ('fail' if c.status == 'fail' else 'need') }}">{{ { 'pass': '通过', 'fail': '未过', 'undecided': '待定', 'invalid': '无效', 'error': '错误'}.get(c.status, c.status) }}</span>{% if c.status == 'undecided' and c.score_min is not none %} <span class="rv-meta">{{ c.score_min|f1 }}–{{ c.score_max|f1 }}</span>{% endif %}{% else %}<span class="rv-meta">无现成结论（标准/链/规则已变，切回后重算可见）</span>{% endif %}</td>
-                    <td class="rv-num">{% if c.score is not none %}<b>{{ c.score|f1 }}</b>{% elif c.score_min is not none %}{{ c.score_min|f1 }}–{{ c.score_max|f1 }}{% else %}—{% endif %}</td>
-                    <td class="rv-meta">{{ c.score_source or '' }}</td></tr>
-                  {% endfor %}
-                  </tbody>
-                </table>
-                {% else %}
-                <span class="rv-meta">该权重下没有本用例的会话（当时还未执行）。</span>
-                {% endif %}
-              </td>
+            {% for r in scoring_rows %}
+            <tr data-row="{{ r.id }}" data-kind="{{ r.kind }}">
+              <td><span class="rv-kind">{{ r.label }} {{ r.id }}</span>
+                {% if r.group %}<span class="rv-meta">组 {{ r.group }}</span>{% endif %}</td>
+              <td>{% if r.kind == 'refusal' %}<span class="rv-meta">计分（固定）</span>
+                  {% else %}<select class="rv-input sc-use" data-use="{{ r.id }}" style="width:auto">
+                    <option value="score"{% if r.use == 'score' %} selected{% endif %}>计分</option>
+                    <option value="ref"{% if r.use == 'ref' %} selected{% endif %}>参考</option>
+                  </select>{% endif %}</td>
+              <td><input class="rv-input sc-w" data-w="{{ r.id }}" type="number" min="0" max="100" step="0.0001"
+                         style="width:90px" value="{{ r.weight if r.weight is not none else '' }}"
+                         {% if r.use != 'score' %}disabled{% endif %} placeholder="0"></td>
+              {% if temp %}<td><input class="rv-input sc-tw" data-tw="{{ r.id }}" type="number" min="0" max="100" step="0.0001"
+                         style="width:90px" value="{{ r.temp_weight if r.temp_weight is not none else '' }}"
+                         {% if r.use != 'score' %}disabled{% endif %} placeholder="0"></td>{% endif %}
+              <td class="rv-meta">{{ r.node_hint }}</td>
             </tr>
             {% endfor %}
             </tbody>
           </table>
           </div>
+          <div class="rv-wsum">md 合计 <b data-md-sum>—</b>{% if temp %} · 临时合计 <b data-temp-sum>—</b>{% endif %}
+            · 评测口径 <b>{{ '临时权重' if scoring_is_temp else 'md 权重' }}</b>
+            <span class="rv-meta">scoring_fp {{ scoring_fp[:8] }}{% if scoring_is_temp %}（临时）{% endif %}</span></div>
+          {% if temp and (temp.unknown or temp.missing) %}
+          <div class="rv-notice" data-tone="warn" style="margin:8px 0"><b>临时权重与当前条目不一致</b>
+            {% if temp.unknown %}<span>已不存在的条目被忽略：{{ temp.unknown|join('、') }}</span>{% endif %}
+            {% if temp.missing %}<span>新增计分条目按 0 计：{{ temp.missing|join('、') }}</span>{% endif %}</div>
+          {% endif %}
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="rv-btn rv-btn--primary" id="sc-save-md" type="button">保存到用例（md）</button>
+            <button class="rv-btn" id="sc-save-temp" type="button">保存为临时权重</button>
+            {% if temp %}
+            <button class="rv-btn" id="sc-temp-toggle" type="button">{{ '改用 md 权重' if scoring_is_temp else '改用临时权重' }}</button>
+            <button class="rv-btn" id="sc-temp-promote" type="button">临时权重转正</button>
+            <button class="rv-btn rv-btn--ghost" id="sc-temp-clear" type="button">删除临时权重</button>
+            {% endif %}
+          </div>
+          <div class="rv-meta" style="margin-top:6px" data-sc-msg>
+            「保存到用例」回写 md 并生成新快照（设为当前、覆盖此前的快照选择与逐题偏离）；
+            只改用途/权重不触发重判；名义合计 ≠100 会在保存时按比例归一。临时权重只重算本用例、不动 md。</div>
         </div>
-      </details>
-      {% endif %}
+      </div>
       {% if spec.reference_answer %}
       <details class="rv-fold">
         <summary><span class="rv-fold-title">参考答案</span><span class="rv-meta">{{ spec.reference_answer|length }} 字</span>

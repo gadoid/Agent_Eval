@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from scoring.chain import config_from_dict
-from scoring.items import FACT_SCALE, SCALES
+from scoring.items import FACT_SCALE, NODES as _NODES, SCALES
 from scoring.operators import Verdict, operator
 
 
@@ -173,12 +173,61 @@ def cfg_map(mapping, adopted=False):
 
 # ---------------------------------------------------------------- 会话构造
 
-def fact(id, kind="required", text="", keywords=(), turn=None, group=None, evidence=None, weight=None):
+def fact(id, kind="required", text="", keywords=(), turn=None, group=None, evidence=None, weight=None,
+         use=None):
     f = {"id": id, "kind": kind, "text": text, "keywords": list(keywords), "turn": turn,
          "group": group, "evidence": evidence}
     if weight is not None:
         f["weight"] = weight
+    if use is not None:
+        f["use"] = use
     return f
+
+
+def scoring_block_for(case: dict) -> dict:
+    """给内嵌编译行补计分块（doc/17 §3.2）：按节点缺省用途；名义权重取条目上的
+    weight（缺省 1 份，等价旧 default_weight=1 的相对权重语义），归一为百分比；
+    没有计分条目时 unassigned（测试要计分就显式给用途/权重）。"""
+    nodes = _NODES
+    rows = []
+    for p in case.get("preconditions") or []:
+        rows.append((p["id"], "precond", p.get("use"),
+                     float(p["weight"]) if p.get("weight") is not None else None))
+    for i, p in enumerate(case.get("path") or [], 1):
+        rows.append((f"path#{i}", "path", p.get("use"),
+                     float(p["weight"]) if p.get("weight") is not None else None))
+    for f in case.get("facts") or []:
+        rows.append((f["id"], f.get("kind", "required"), f.get("use"),
+                     float(f["weight"]) if f.get("weight") is not None else None))
+    if case.get("answerable") is False:
+        rw = case.get("拒答权重")
+        rows.append(("refusal", "refusal", None, float(rw) if rw is not None else 1.0))
+    entries: dict[str, dict] = {}
+    units: dict[str, float] = {}
+    group_w: dict[tuple, float] = {}
+    group_of: dict[str, tuple] = {}
+    for iid, kind, use, nominal in rows:
+        use = use if use in ("score", "ref") else nodes[kind]["use"]
+        entries[iid] = {"use": use}
+        if use != "score":
+            continue
+        w = nominal if nominal is not None else 1.0
+        g = None
+        for f in case.get("facts") or []:
+            if f.get("id") == iid and f.get("group"):
+                g = (f.get("kind"), f["group"])
+        if g:
+            group_of[iid] = g
+            group_w[g] = max(group_w.get(g, 0), w)
+        else:
+            units[iid] = w
+    for iid, g in group_of.items():
+        units[iid] = group_w[g]
+    total = sum(units.values())
+    for iid, e in entries.items():
+        if e["use"] == "score":
+            e["weight"] = round(units.get(iid, 0) / total * 100, 4) if total > 0 else 0.0
+    return {"items": entries, "unassigned": total <= 0}
 
 
 def turn(output="答", skills=(), ask_user=0, status="ok", index=None, source="live"):
@@ -207,6 +256,9 @@ def mk_record(**over):
     for i, t in enumerate(base["turns"], 1):
         if t.get("index") is None:
             t["index"] = i
+    case = base.get("case") or {}
+    if isinstance(case, dict) and "scoring" not in case:
+        case["scoring"] = scoring_block_for(case)   # doc/17 §3.2：无计分块 → 未分配 → skipped
     return base
 
 

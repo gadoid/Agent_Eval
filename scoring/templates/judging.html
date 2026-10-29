@@ -44,7 +44,7 @@
     <dl class="rv-caseinfo">
       <div class="rv-wide"><dt>评测库</dt><dd class="rv-mono">{{ db_path }} · schema v5</dd></div>
       <div class="rv-wide"><dt>判定配置</dt><dd>{% for ch in chains %}{{ ch.name or '未命名' }} {{ ch.chain_sha[:8] }}（{{ ch.operators|join(', ') }}{% if ch.judge_models %}；判定模型 {{ ch.judge_models|join('、') }}{% endif %}）{% if not loop.last %} · {% endif %}{% endfor %}</dd></div>
-      <div class="rv-wide"><dt>计分规则</dt><dd class="rv-mono">rules {{ rules_sha }} · 及格 {{ pass_mark }} · 否决 {{ rules.score.veto.values()|join('/') }} · {{ rules.aggregate.dimension_unit }}等权</dd></div>
+      <div class="rv-wide"><dt>计分规则</dt><dd class="rv-mono">rules {{ rules_sha }} · 及格 {{ pass_mark }} · 否决 {{ rules.score.veto_mode }}（cap {{ rules.score.cap }}） · {{ rules.aggregate.dimension_unit }}等权</dd></div>
     </dl>
   </section>
 </main>

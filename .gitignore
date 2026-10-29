@@ -20,3 +20,6 @@ Thumbs.db
 
 # scoring 运行时产物：跨 run 模型判定缓存（已迁入评测库 verdict_cache 表，遗留文件可删）
 scoring/verdict-cache.jsonl
+
+# v9 重建前的旧库留档（本机）
+demo/dsh-trade/eval-v8-backup-*.db

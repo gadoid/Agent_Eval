@@ -3,8 +3,7 @@
 假 judge 算子（tests.helpers）行为等价于旧版测试的 mk_judges 默认值。"""
 from scoring.chain import judge_episode
 from scoring.cli import conclusions
-from scoring.policy import policy_from_dict, rules_dict_of_policy
-from scoring.rules import rules_from_dict
+from scoring.rules import rules_from_dict, Rules
 from scoring.rules import EpisodeVerdict
 from scoring.views import ability_view, attribution_view, wilson
 from tests import legacy_scoring_reference as legacy
@@ -21,11 +20,11 @@ def run_old(record, judges=None):
     return legacy.score_episode(record, j)
 
 
-def run_new(record, cfg=None, policy_dict=None):
+def run_new(record, cfg=None, rules: Rules | None = None):
     cfg = cfg or fake_config()
-    policy = rules_from_dict(rules_dict_of_policy(policy_from_dict(policy_dict or {})))
+    rules = rules or rules_from_dict({})
     rows = judge_episode(record, cfg, "r-test").rows
-    return conclusions([record], rows, [], policy)[0]
+    return conclusions([record], rows, [], rules)[0]
 
 
 def assert_parity(record, cfg=None, judges=None):
@@ -196,12 +195,12 @@ def test_run_aggregation_headline_and_error():
     cfg = cfg_fact("对")
     records = [mk_record(mode="forced"), mk_record(mode="forced"),
                mk_record(mode="forced", status="error", failed_turn=1)]
-    policy = policy_from_dict({})
+    rules = rules_from_dict({})
     rows = []
     for r in records:
         rows.extend(judge_episode(r, cfg, "r").rows)
-    verdicts = conclusions(records, rows, [], policy)
-    cell = ability_view(verdicts, policy)["错误知识纠正|forced"]
+    verdicts = conclusions(records, rows, [], rules)
+    cell = ability_view(verdicts, rules)["错误知识纠正|forced"]
     assert cell["n"] == 2 and cell["pass"] == 2 and cell["headline"] is True
     assert cell["error"] == 1
 

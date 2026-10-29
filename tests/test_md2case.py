@@ -385,28 +385,61 @@ def test_render_roundtrip(env):
 
 # ---------------------------------------------------------------- 权重（doc/10 §5.1）
 
-def test_weight_attr_compiles_and_round_trips(env):
-    text = (EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】", "保单号后三位应填 400 【轮次：2】【外部】【权重：2】")
-                   .replace("- 必须：加载 skill trade-company 【轮次：1】", "- 必须：加载 skill trade-company 【轮次：1】【权重：0】")
-                   .replace("后三位应填 500 【轮次：2】【证据：R1】", "后三位应填 500 【轮次：2】【证据：R1】【权重：0.5】"))
+def test_scoring_block_compiles_and_round_trips(env):
+    """doc/17 决定 12/§3：【权重】是名义百分比（0–100，≤4 位小数），编译时归一进
+    顶层 scoring 块；事实/路径行不内联（标准与指纹不含计分配置）。"""
+    text = (EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】", "保单号后三位应填 400 【轮次：2】【外部】【权重：70】")
+                   .replace("后三位应填 500 【轮次：2】【证据：R1】", "后三位应填 500 【轮次：2】【证据：R1】【计分】【权重：30】"))
     case = parse_ok(env, text, "ec-0102")
     rows = md2case.compile_case(case, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")
-    # v8（doc/15 §3.9）：md 原值在行顶层 weights；facts/path 不再内联（标准不含权重）
-    assert rows[0]["weights"] == {"F1": 2, "X1": 0.5, "path#1": 0}
-    assert all("weight" not in f for f in rows[0]["facts"]) and "weight" not in rows[0]["path"][0]
-    from scoring.items import weights_map_to_percent
-    pct = weights_map_to_percent(rows[0]["weights"], rows[0])   # 导入侧换算：计分与禁止分组换算
-    assert pct == {"F1": 100.0, "X1": 100.0}        # 各组只有显式成员 → 各自 100%；权重 0 组丢弃（不计分）
-    again = md2case.md_to_case(md2case.case_to_md(case), "<render>")      # 权重 0 不能在往返中丢失
-    assert again["path"][0]["weight"] == 0 and {f["id"]: f.get("weight") for f in again["facts"]} == {"F1": 2, "X1": 0.5}
+    sc = rows[0]["scoring"]
+    assert sc["unassigned"] is False
+    assert sc["items"]["F1"] == {"use": "score", "weight": 70.0}   # 必要缺省计分
+    assert sc["items"]["X1"] == {"use": "score", "weight": 30.0}   # 禁止缺省参考，显式计分
+    assert sc["items"]["P1"] == {"use": "ref"} and sc["items"]["path#1"] == {"use": "ref"}
+    assert all("weight" not in f and "use" not in f for f in rows[0]["facts"])
+    assert "weight" not in rows[0]["path"][0] and "use" not in rows[0]["path"][0]
+    again = md2case.md_to_case(md2case.case_to_md(case), "<render>")      # 计分/权重往返不丢
+    assert again["facts"][0]["weight"] == 70 and again["facts"][1]["use"] == "score"
+
+
+def test_scoring_normalize_and_unassigned(env):
+    """归一（§3.1）：名义合计 ≠100 按比例；没写 = 0；全 0 → unassigned（评测跳过）。"""
+    text = EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】",
+                           "保单号后三位应填 400 【轮次：2】【外部】【权重：60.5】【权重：x】")
+    # 上面替换故意非法 → 改用合法样例：F1=60.5 与 X1【计分】=29.5，合计 90 → 归一到 100
+    text = (EC_CASE.replace("保单号后三位应填 400 【轮次：2】【外部】", "保单号后三位应填 400 【轮次：2】【外部】【权重：60.5】")
+                   .replace("后三位应填 500 【轮次：2】【证据：R1】", "后三位应填 500 【轮次：2】【证据：R1】【计分】【权重：29.5】"))
+    case = parse_ok(env, text, "ec-0102")
+    rows = md2case.compile_case(case, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")
+    sc = rows[0]["scoring"]
+    assert abs(sc["items"]["F1"]["weight"] - 67.2222) < 1e-6      # 60.5/90×100
+    assert abs(sc["items"]["X1"]["weight"] - 32.7778) < 1e-6
+    # 未分配：一条权重都不写 → 计分条目全 0 → unassigned（admitted 才给提示，决定 14）
+    case2 = parse_ok(env, EC_CASE, "ec-0102")
+    sc2 = md2case.compile_case(case2, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")[0]["scoring"]
+    assert sc2["unassigned"] is True and sc2["items"]["F1"]["weight"] == 0.0
+    assert any("未分配" in w for w in case2["_warnings"])          # admitted 用例给提示
 
 
 def test_error_bad_weight(env):
-    for bad_w in ("-1", "两", "1.25"):
+    for bad_w in ("-1", "两", "1.23456", "101"):
         bad = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
                               f"- F1：太保的倒签保函在开船时提供 【证据：R1】【权重：{bad_w}】")
         e = parse_err(env, bad, "kr-0001")
         assert any("权重" in x for x in e.errors), bad_w
+
+
+def test_error_ref_weight_without_score(env):
+    """【参考】条目写【权重】报错（§2.3）：显式参考与节点缺省参考都算。"""
+    bad = KR_CASE.replace("- F1：太保的倒签保函在开船时提供 【证据：R1】",
+                          "- F1：太保的倒签保函在开船时提供 【证据：R1】【参考】【权重：30】")
+    assert any("不能写【权重】" in x for x in parse_err(env, bad, "kr-0001").errors)
+    bad2 = EC_CASE.replace("后三位应填 500 【轮次：2】【证据：R1】",
+                           "后三位应填 500 【轮次：2】【证据：R1】【权重：30】")   # 禁止缺省参考
+    assert any("不能写【权重】" in x for x in parse_err(env, bad2, "ec-0102").errors)
+    bad3 = KR_CASE.replace("## 证据", "## 前提\n- P1：答复为可以电放 【权重：10】\n\n## 证据")  # 前提缺省参考
+    assert any("不能写【权重】" in x for x in parse_err(env, bad3, "kr-0001").errors)
 
 
 # ---------------------------------------------------------------- 性质与部分判据（doc/16 §3）

@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from scoring import cli  # noqa: E402
 from scoring.chain import default_operators_path, load_operator_config  # noqa: E402
-from scoring.policy import default_policy_path, load_policy  # noqa: E402
 from scoring.serve import create_app  # noqa: E402
 from scoring.store import Store  # noqa: E402
 from tests.helpers import make_run, mk_record  # noqa: E402
@@ -49,16 +48,13 @@ def served_plain(tmp_path):
     return TestClient(app), db
 
 
-def test_create_app_rules_path_accepts_both_formats(tmp_path):
-    """--rules 给 rules.yaml 直接装载；旧 policy.yaml（无 schema:1）转换装载，
-    等价内容登记同一 rules_sha。修复前 rules.yaml 被无条件当 policy 装载 → PolicyError。"""
+def test_create_app_rules_path(tmp_path):
+    """--rules 给 rules.yaml 直接装载并登记进库（doc/17 §8.1：policy 已删除）。"""
     db = str(tmp_path / "eval.db")
     c1 = TestClient(create_app(db, rules_path=_drp()))
     assert c1.get("/").status_code == 200
-    c2 = TestClient(create_app(db, rules_path=default_policy_path()))
-    assert c2.get("/").status_code == 200
     shas = {r["rules_sha"] for r in Store(db).rules_rows()}
-    assert len(shas) == 1
+    assert shas == {RULES_SHA}
 
 
 def test_config_detail_pages(served):
@@ -91,34 +87,30 @@ def test_config_detail_pages(served):
     assert home.count("🔍") >= 3 and "judge-help" in home and "snapshot use" in home
 
 
-def test_weight_history_view_and_restore(served):
-    """用例页权重历史：历次配置可查（含旧权重下现存结论）、可切回（写成新有效
-    配置 + 重算本用例）；切回「当前」被拒。"""
+def test_temp_weights_api_and_scoring_editor(served):
+    """临时权重接口（doc/17 §5.2）：save 保存并启用（重算本用例）、use 切口径、
+    clear 删除；用例页渲染计分配置表（用途下拉 + md 权重 + 临时权重列）。"""
     client, db, tmp_path, ops = served
     st = Store(db)
-    r1 = st.revise_weights("ec-1", {"F1": 40})
-    st.rescore_cases(["ec-1"], RULES, RULES_SHA)
-    old = st.weight_history("ec-1")[0]["set_at"]
-    st.revise_weights("ec-1", {"F1": 70}, label="提高F1")
-    st.rescore_cases(["ec-1"], RULES, RULES_SHA)
-
+    save = client.post("/api/case/ec-1/temp-weights",
+                       json={"case_id": "ec-1", "action": "save", "weights": {"F1": 60}})
+    assert save.status_code == 200 and save.json()["in_use"] and save.json()["rescored"] >= 1
+    plan, sfp, is_temp = st.scoring_plan("ec-1")
+    assert is_temp and plan["weights"] == {"F1": 100.0}       # 唯一计分条目 → 归一 100
     page = client.get("/case/ec-1").text
-    assert "权重历史" in page and "切回" in page and old[:10] in page
+    assert 'id="scoring-editor"' in page and 'id="scoring-table"' in page
+    assert 'data-tw="F1"' in page and 'id="sc-save-md"' in page    # 临时列 + 保存按钮
+    assert 'id="sc-temp-toggle"' in page and "临时权重转正" in page
 
-    resp = client.post("/api/case/weights-restore",
-                       json={"case_id": "ec-1", "set_at": old, "label": ""})
-    assert resp.status_code == 200 and resp.json()["rescored"] >= 1
-    w, wfp, _ = st.effective_weights("ec-1")
-    assert w == {"F1": 40} and wfp == r1["weight_fp"]        # 切回后指纹复原
-
-    hist = st.weight_history("ec-1")
-    assert hist[0]["active"] and hist[0]["label"].startswith("切回")
-    assert any(g["weight_fp"] == r1["weight_fp"] and not g["active"] for g in hist[1:])
-    bad = client.post("/api/case/weights-restore",
-                      json={"case_id": "ec-1", "set_at": hist[0]["set_at"], "label": hist[0]["label"]})
-    assert bad.status_code == 400 and "已是当前" in bad.json()["error"]
-    assert client.post("/api/case/weights-restore",
-                       json={"case_id": "ec-1", "set_at": "1999-01-01"}).status_code == 400
+    use = client.post("/api/case/ec-1/temp-weights",
+                      json={"case_id": "ec-1", "action": "use", "on": False})
+    assert use.status_code == 200
+    _, sfp_md, is_temp2 = st.scoring_plan("ec-1")
+    assert not is_temp2
+    clear = client.post("/api/case/ec-1/temp-weights",
+                        json={"case_id": "ec-1", "action": "clear"})
+    assert clear.status_code == 200 and st.temp_weights("ec-1") is None
+    st.close()
 
 
 def test_rescore_notice(tmp_path):
@@ -272,13 +264,14 @@ def test_review_page(served_plain):
     assert "data-concl='{\"" in r.text and "data-scale='[\"" in r.text
     assert "data-map='{}'" in r.text                        # 非计分行 map 为空对象
     assert 'data-concl="{' not in r.text
-    # 权重调整后的复核行按百分比显示（百分制标记 → 权重 60.0%）
+    # 临时权重调整后的复核行按百分比显示（计分标记；X1 缺省参考）
     st = Store(db)
     q = st.questions()[0]
-    st.revise_weights(q["case_id"], {"F1": 60})     # v8：按用例存 item_weights
+    st.set_temp_weights(q["case_id"], {"F1": 60})   # doc/17 §5.2：临时权重只覆盖权重
     st.close()
     r2 = client.get(f"/review/{quote(answer_id)}")
-    assert "权重 60%</span>" in r2.text
+    assert "计分 100%</span>" in r2.text            # 唯一计分条目 → 归一 100%
+    assert ">参考</span>" in r2.text                # X1 缺省参考
 
 
 def test_review_page_markdown_and_static(served_plain):
@@ -447,7 +440,7 @@ def test_review_rejects_score_on_veto_kind(served_plain):
     s.close()
     bad = client.post("/api/reviews", json={"answer_id": answer_id, "reviewer": "t",
                                             "entries": [{"item_id": "X1", "value": "未采信", "score": 50}]})
-    assert bad.status_code == 400 and "不记条目分" in bad.json()["error"]
+    assert bad.status_code == 400 and "不能带分数" in bad.json()["error"]
 
 
 def test_review_page_keeps_saved_human_values(served_plain):
@@ -610,7 +603,7 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
             record = {"uid": uid, "mode": "natural", "trial": 1, "status": "ok",
                       "turns": [{"index": 1, "source": "live", "input": "q", "output": "答",
                                  "status": "ok", "observations": {}}], "case": case}
-            questions.append((qkey, uid, case_id, 0, None, "知识召回", "t", "环节", "[]", fp, fp, 1, "2026-01-01"))
+            questions.append((qkey, uid, case_id, 0, None, "知识召回", "t", "环节", "[]", fp, fp, 1, "2026-01-01", "equal"))
             conn.execute("INSERT OR IGNORE INTO specs VALUES(?,?,?,'v1','2026-01-01')",
                          (qkey, fp, json.dumps(case, ensure_ascii=False)))
             rec_json = json.dumps(record, ensure_ascii=False)
@@ -638,8 +631,8 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                     reviews.append((a_id, "F1", f"sha{qi}", "asha", "对", "回答明确", "codfish",
                                     "2026-01-01", None))
         conn.executemany("INSERT OR REPLACE INTO questions(qkey, uid, case_id, variant_index, rewrite, dim,"
-                         " topic, granularity, tags_json, input_fp, current_standard_fp, active, first_seen)"
-                         " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", questions)
+                         " topic, granularity, tags_json, input_fp, current_standard_fp, active, first_seen,"
+                         " current_scoring_fp) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", questions)
         conn.executemany("INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id,"
                          " judge_fp_at_run, profile_id, models_json, mode, trial, skills_mode,"
                          " skills_base, evalset_version, run_status, record_json,"
@@ -649,7 +642,7 @@ def _build_big_db(db_path, n_q=1000, n_per=10):
                          " kind, turn, item_sha, answer_sha, value, source, operator, reason,"
                          " trace_json, status, judged_at, score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", verdicts)
         conn.executemany("INSERT OR REPLACE INTO conclusions(answer_id, standard_fp, chain_sha, rules_sha,"
-                         " weight_fp, status, reason, detail_json, score, score_min, score_max,"
+                         " scoring_fp, status, reason, detail_json, score, score_min, score_max,"
                          " auto_score, score_source) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          [(a, f, c, r, "equal", *rest) for a, f, c, r, *rest in conclusions])
         conn.executemany("INSERT INTO reviews(answer_id, item_id, item_sha, answer_sha, value, reason,"
@@ -706,29 +699,19 @@ def test_synthetic_scale_performance(tmp_path):
     assert elapsed < 1.0, f"对比页（base/target）响应 {elapsed:.2f}s 超过 1s"
 
 
-def test_case_weights_editor(served):
-    """用例详情权重分配（v8：按用例存 item_weights）：编辑器渲染、保存即重算、
-    超限 400、无未覆盖条目校验、saved 提示条、标签留痕。"""
+def test_case_scoring_editor_renders(served):
+    """用例详情计分配置区（doc/17 §5.2）：全部条目列出（含缺省用途）、用途下拉、
+    默认规则文案来自节点表；saved 提示条。"""
     client, db, _, _ = served
     s = Store(db)
     case_id = s.questions()[0]["case_id"]
     s.close()
-    page = client.get(f"/case/{case_id}")
-    assert 'id="weight-editor"' in page.text and 'id="w-pie"' in page.text   # 饼图编辑器
-    assert 'rv-detail-btn' in page.text and 'data-detail=' in page.text      # 简要条目 + 详情下钻
-    assert 'data-case="%s"' % case_id in page.text                           # B1：编辑对象=用例
-    ok = client.post("/api/case/weights", json={"case_id": case_id, "weights": {"F1": 60}})
-    assert ok.status_code == 200 and ok.json()["changed"] and ok.json()["rescored"] >= 1
-    page3 = client.get(f"/case/{case_id}")
-    assert 'data-wchip="F1">60%</span>' in page3.text        # 百分制原值显示（未分配不折算）
-    page2 = client.get(f"/case/{case_id}?saved=abcd1234")
-    assert "权重已保存" in page2.text and "不需要重判" in page2.text       # v8：无 rejudge 提示
-    bad = client.post("/api/case/weights", json={"case_id": case_id, "weights": {"F1": 101}})
-    assert bad.status_code == 400 and "0–100" in bad.json()["error"]   # 该用例只有 1 个计分条目，逐值上限先触发
-    # 版本标签留痕（item_weights.label）
-    ok2 = client.post("/api/case/weights", json={"case_id": case_id, "weights": {"F1": 30}, "label": "权重-降F1"})
-    assert ok2.status_code == 200 and ok2.json()["changed"]
-    assert "权重-降F1" in client.get(f"/case/{case_id}").text
+    page = client.get(f"/case/{case_id}").text
+    assert 'id="scoring-editor"' in page and ('data-case="%s"' % case_id) in page
+    assert 'data-w="F1"' in page and 'data-use="X1"' in page     # 计分条目 + 用途下拉
+    assert "默认规则" in page and "不成立 → 会话无效" not in page  # 该用例无前提
+    page2 = client.get(f"/case/{case_id}?saved=1")
+    assert "计分配置已保存" in page2.text
 
 
 def test_run_and_chain_rename(served):

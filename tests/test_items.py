@@ -114,16 +114,21 @@ def test_seed_not_checked():
 
 
 def test_weight_changes_judge_fp_not_item_sha():
-    from scoring.items import Item, item_sha_of, standard_fp_of, weight_of
-    from tests.helpers import fact, mk_record
+    """doc/17 §3.2：用途与权重都不进标准指纹 / 条目指纹；计分配置走 scoring 块。"""
+    from scoring.items import (Item, item_sha_of, resolve_plan, standard_fp_of, strip_scoring)
+    from tests.helpers import mk_record
     case = mk_record()["case"]
-    weighted = dict(case, facts=[dict(f, weight=2) if f["id"] == "F1" else f for f in case["facts"]])
-    assert standard_fp_of(case) == standard_fp_of(weighted)   # v8：权重移出标准（doc/15 §3.2）
+    weighted = dict(case, facts=[dict(f, weight=2, use="score") if f["id"] == "F1" else f
+                                 for f in case["facts"]])
+    assert standard_fp_of(case) == standard_fp_of(weighted)
     f1 = next(f for f in case["facts"] if f["id"] == "F1")
     a = Item("required", "F1", f1["text"], f1["turn"], f1)
-    b = Item("required", "F1", f1["text"], f1["turn"], dict(f1, weight=2))
+    b = Item("required", "F1", f1["text"], f1["turn"], dict(f1, weight=2, use="ref"))
     assert item_sha_of(a) == item_sha_of(b)
-    assert weight_of(a, 1) == 1 and weight_of(b, 1) == 2 and weight_of(Item("expected", "E1", "", None, fact("E1", weight=0)), 1) == 0
+    assert "scoring" not in strip_scoring(dict(case, scoring={"items": {}, "unassigned": False}))
+    plan = resolve_plan(case, case.get("scoring"))
+    assert plan["uses"]["F1"] == "score" and plan["uses"]["X1"] == "ref"   # 节点缺省
+    assert plan["unassigned"] is False and plan["weights"]["F1"] == 100.0
 
 
 # ---------------------------------------------------------------- 性质与部分判据（doc/16 §3.6）

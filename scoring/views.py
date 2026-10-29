@@ -78,6 +78,7 @@ def ability_view(verdicts: list[EpisodeVerdict], rules: Rules, method: Method | 
             "invalid": sum(v.status == "invalid" for v in vs),
             "undecided": sum(v.status == "undecided" for v in vs),
             "error": sum(v.status == "error" for v in vs),
+            "skipped": sum(v.status == "skipped" for v in vs),   # 权重未分配（doc/17 §4）
             "pass_direct": rate(direct),
             "pass_after_ask": rate(after),
             "headline": (method or DEFAULT_METHOD).headline(dim) == mode,
@@ -471,6 +472,7 @@ def question_scores(rows: list[dict], rules: Rules, method: Method | None = None
             "provisional": any(_unsettled(r) for r in rs),
             "undecided": sum(r["c_status"] == "undecided" for r in rs),
             "invalid": sum(r["c_status"] == "invalid" for r in rs),
+            "skipped": sum(r["c_status"] == "skipped" for r in rs),
             "pending": sum(r["c_status"] is None for r in rs),
             "dim": rs[0]["dim"] or "?", "case_id": rs[0]["case_id"],
             "rewrite": rs[0]["rewrite"], "uid": rs[0]["uid"],
@@ -505,7 +507,7 @@ def case_scores(rows: list[dict], rules: Rules, method: Method | None = None,
 def case_health(rows: list[dict], cases: dict[str, dict] | None = None) -> dict[str, list[str]]:
     """用例体检标记（§5.4）：变体泄露嫌疑、全部采样无效、注入 found>1、
     前提不成立、forced 前提成立率偏低。一次扫描，用例页与用例详情共用。"""
-    leak, inj, invalid = set(), set(), set()
+    leak, inj, invalid, skipped = set(), set(), set(), set()
     forced: dict[str, list[str]] = defaultdict(list)
     for r in rows:
         cid = r["case_id"]
@@ -515,6 +517,8 @@ def case_health(rows: list[dict], cases: dict[str, dict] | None = None) -> dict[
             inj.add(cid)
         if r["c_status"] == "invalid":
             invalid.add(cid)
+        if r["c_status"] == "skipped":
+            skipped.add(cid)
         if r["mode"] == "forced" and r["c_status"]:
             forced[cid].append(r["c_status"])
     out: dict[str, list[str]] = {}
@@ -528,6 +532,8 @@ def case_health(rows: list[dict], cases: dict[str, dict] | None = None) -> dict[
             flags.append("注入 found>1")
         if cid in invalid:
             flags.append("前提不成立")
+        if cid in skipped:
+            flags.append("权重未分配（跳过评测）")
         sts = forced.get(cid) or []
         if len(sts) >= 2 and sts.count("invalid") / len(sts) > 0.5:
             flags.append("forced 前提成立率偏低")
