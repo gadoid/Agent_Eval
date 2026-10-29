@@ -468,11 +468,11 @@ def _build_case_md(b: CaseNewIn) -> tuple[str, list[str], list[str]]:
     return md, errors, warnings
 
 
-def _build_hint(rel_path: str) -> list[str]:
+def _build_hint(rel_path: str, reserved=()) -> list[str]:
     """保存成功后的下一步命令（新建用例仍走手动流程，doc/17 §5.1）。"""
     m2c = _md2case()
     dist = _REPO_ROOT / "evalset" / "dist"
-    version = m2c.next_version(dist)
+    version = m2c.next_version(dist, reserved=reserved)
     prevs = sorted(dist.glob("evalset-*.jsonl")) if dist.is_dir() else []
     build = (f"python evalset/md2case.py build evalset/cases"
              f" -o evalset/dist/evalset-{version}.jsonl --version {version}")
@@ -1369,7 +1369,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
             return {"ok": True, "saved_md": True, "version": None, "warnings": warnings,
                     "rescored": 0, "pending_rejudge": 0}
         with _pipeline_lock:                       # 决定 16②：取号 → build → 导入
-            version = m2c.next_version(dist_root)
+            # dist 不进 git：取号同时看库内已登记版本，换机器/清空 dist 也不重号
+            version = m2c.next_version(dist_root, reserved=store.snapshot_versions())
             # 与 CLI build 共用 DEFAULT_INCLUDE，避免「CLI build / 页面保存」两条路径
             # 产出不同快照（doc/17 §4）
             rc = m2c.main(["build", str(cases_root), "-o", str(dist_root / f"evalset-{version}.jsonl"),
@@ -1381,7 +1382,11 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
             out = dist_root / f"evalset-{version}.jsonl"
             rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
             rows = [r for r in rows if isinstance(r, dict) and r.get("uid")]
-            stats = store.import_evalset(rows, version)
+            try:
+                stats = store.import_evalset(rows, version, include=m2c.DEFAULT_INCLUDE)
+            except StoreError as e:                  # 版本已存在且内容不同（不可变兜底）
+                return {"ok": False, "saved_md": True, "version": None, "warnings": warnings,
+                        "errors": [str(e)]}
         n = store.rescore(rules, rules_sha, cfg.chain_sha)          # 决定 16③：同步 rescore
         pending = len(store.pending_rejudge(cfg.chain_sha))         # 新 standard_fp → 待重判（异步）
         _nav_cache.clear()
@@ -1600,7 +1605,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         except ValueError:
             rel = str(path)
         return {"id": cid, "path": rel, "warnings": warnings,
-                "md": md, "hint": _build_hint(rel)}
+                "md": md, "hint": _build_hint(rel, reserved=store.snapshot_versions())}
 
     # ---------------- 旧路由 301（§4.1）
     @app.get("/question/{qkey}")

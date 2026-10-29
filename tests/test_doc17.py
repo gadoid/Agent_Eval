@@ -366,6 +366,7 @@ def test_save_pipeline_edit_builds_imports_and_rescores(pipeline_env):
     assert out.exists()
     s = Store(db)
     assert s.current_snapshot() == j["version"]
+    assert s.snapshot(j["version"])["include"] == "structured,reviewed,admitted"
     sc = s.case_scoring("kr-0301")
     assert sc["items"]["F1"]["weight"] == 75.0
     fp_before = s.questions()[0]["current_standard_fp"]
@@ -437,6 +438,23 @@ def test_save_pipeline_version_autoincrements(pipeline_env):
     assert vs[0] != vs[1] and vs[1].endswith(str(int(vs[1].rsplit("-", 1)[1])))
     files = sorted(p.name for p in dist.glob("evalset-*.jsonl"))
     assert len(files) == 2
+
+
+def test_save_pipeline_version_continues_after_dist_cleared(pipeline_env):
+    """dist 不进 git：本地版本文件清空后，取号仍从库内 snapshots 续号，不重号覆盖。"""
+    client, cases, dist, db = pipeline_env
+    r1 = client.post("/api/case/kr-0301/edit", json={
+        "case_id": "kr-0301", "items": [{"id": "F1", "weight": 60}, {"id": "F2", "weight": 40}]})
+    assert r1.status_code == 200, r1.text
+    v1 = r1.json()["version"]
+    for p in dist.glob("evalset-*.jsonl"):
+        p.unlink()
+    r2 = client.post("/api/case/kr-0301/edit", json={
+        "case_id": "kr-0301", "items": [{"id": "F1", "weight": 50}, {"id": "F2", "weight": 50}]})
+    assert r2.status_code == 200, r2.text
+    v2 = r2.json()["version"]
+    assert v2 != v1 and v2.startswith(v1.rsplit("-", 1)[0] + "-")
+    assert int(v2.rsplit("-", 1)[1]) == int(v1.rsplit("-", 1)[1]) + 1
 
 
 def test_draft_edit_only_writes_md(pipeline_env):

@@ -152,6 +152,22 @@ def test_set_current_unknown_version_is_error(store, tmp_path):
     assert {q["qkey"]: (q["active"], q["current_standard_fp"]) for q in store.questions()} == before
 
 
+def test_import_same_version_different_content_rejected(store):
+    """dist 不进 git 后版本可能重号：同版本内容不同必须报错，不能覆盖旧快照。"""
+    store.import_evalset(_dist_rows("v1"), "v1")
+    before = store.snapshot("v1")["snapshot_sha"]
+    with pytest.raises(StoreError, match="已存在且内容不同"):
+        store.import_evalset(_dist_rows("v1", text="改写后的事实文本"), "v1")
+    assert store.snapshot("v1")["snapshot_sha"] == before
+    store.import_evalset(_dist_rows("v1"), "v1")      # 同内容重复导入照常刷新
+
+
+def test_import_records_actual_include(store):
+    """include 记录实际收录范围（不是固定 admitted）。"""
+    store.import_evalset(_dist_rows("v1"), "v1", include="structured,reviewed,admitted")
+    assert store.snapshot("v1")["include"] == "structured,reviewed,admitted"
+
+
 def test_missing_question_marked_inactive(store, tmp_path):
     ingest(store, tmp_path, "demo", [mk_record()])
     store.import_evalset(_dist_rows("v1"), "v1")

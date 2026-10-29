@@ -230,7 +230,12 @@ def cmd_specs_import(args) -> int:
         sidecar = dist.with_name(dist.stem + ".snapshot.json")
         if sidecar.exists():
             method = (json.loads(sidecar.read_text(encoding="utf-8")) or {}).get("method")
-    stats = store.import_evalset(rows, version, method=method)
+    try:
+        stats = store.import_evalset(rows, version, method=method,
+                                     include=(header or {}).get("include"))
+    except StoreError as e:                    # 版本不可变：同版本内容不同不覆盖
+        print(str(e))
+        return 1
     print(f"导入快照 {stats['questions']} 题 / {stats['cases']} 用例（评测集 {version}）→ 已设为当前快照：{store.path}")
     if stats.get("unassigned"):
         print(f"  注意：{len(stats['unassigned'])} 个用例计分权重未分配（评测将跳过，doc/17 §4）："

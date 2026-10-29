@@ -443,7 +443,7 @@ class Store:
         return js, canonical_sha(method)
 
     def _register_snapshot(self, version: str, qkeys: list[str], method: dict | None = None,
-                           include: str = "admitted",
+                           include: str | None = None,
                            scoring_by_case: dict[str, dict] | None = None) -> str:
         """登记/刷新快照（snapshot_sha 单一算法，S2：doc/15 §1 + doc/17 §8.2 的
         scoring 分量）。scoring_by_case：导入原始行的计分配置（specs 表已剥除）。"""
@@ -467,14 +467,45 @@ class Store:
                 "INSERT INTO snapshots VALUES(?,?,?,?,?,?,?)"
                 " ON CONFLICT(evalset_version) DO UPDATE SET snapshot_sha=excluded.snapshot_sha,"
                 " method_json=excluded.method_json, method_sha=excluded.method_sha,"
-                " include=excluded.include",
+                " include=COALESCE(excluded.include, snapshots.include)",
                 (version, snap_sha, method_js, method_sha, include, None, now()))
         return snap_sha
 
-    def import_evalset(self, rows: list[dict], version: str, method: dict | None = None) -> dict:
+    def _snapshot_parts(self, rows: list[dict]) -> tuple[list[list], dict[str, dict]]:
+        """导入行的快照载荷（与 _register_snapshot 的算法一致）：先算 snapshot_sha，
+        才能在不写库的前提下判断版本冲突。"""
+        row_map: dict[str, list] = {}
+        seeds: dict[str, dict] = {}
+        for case in rows:
+            row_map[qkey_of(case)] = [case.get("uid") or "?", input_fp_of(case),
+                                      standard_fp_of(case)]
+            cid = case.get("case_id") or case.get("id") or "?"
+            if (case.get("variant_index") or 0) == 0 or cid not in seeds:
+                seeds[cid] = case
+        smap = {cid: seed["scoring"] for cid, seed in seeds.items() if seed.get("scoring")}
+        if not smap:                       # 旧 dist 无 scoring 块：沿用库内已有计分配置
+            for cid, seed in seeds.items():
+                if (seed.get("variant_index") or 0) != 0:
+                    continue
+                sc = self.case_scoring(cid)
+                if sc:
+                    smap[cid] = sc
+        return sorted(row_map.values()), smap
+
+    def import_evalset(self, rows: list[dict], version: str, method: dict | None = None,
+                       include: str | None = None) -> dict:
         """specs import：登记全部标准并把该版本设为当前快照；未出现的题保留旧标准、
         标记非活跃。计分配置（scoring 块）按用例覆盖写 case_scoring、刷新缓存列；
-        报告未分配（计分权重合计 0，评测将跳过，doc/17 §4）的用例。"""
+        报告未分配（计分权重合计 0，评测将跳过，doc/17 §4）的用例。
+        版本不可变：同版本已登记且 snapshot_sha 不同 → 报错，绝不覆盖旧快照。"""
+        rows_v, smap = self._snapshot_parts(rows)
+        _, method_sha = self._load_method(method)
+        new_sha = canonical_sha({"rows": rows_v, "scoring": smap, "method_sha": method_sha})
+        existing = self.snapshot(version)
+        if existing is not None and existing["snapshot_sha"] != new_sha:
+            raise StoreError(
+                f"快照 {version} 已存在且内容不同（库内 {existing['snapshot_sha'][:8]}，"
+                f"本次 {new_sha[:8]}）：dist 按版本不可变，请换版本号重新 build")
         qkeys: dict[str, str] = {}
         seeds: dict[str, dict] = {}
         with self.lock, self.conn:
@@ -498,7 +529,8 @@ class Store:
                     scoring_by_case[cid] = seed["scoring"]
             for cid in seeds:
                 self._refresh_scoring_fp(cid)
-            self._register_snapshot(version, list(qkeys), method, scoring_by_case=scoring_by_case)
+            self._register_snapshot(version, list(qkeys), method, include=include,
+                                    scoring_by_case=scoring_by_case)
             self.conn.execute("INSERT OR REPLACE INTO meta VALUES('current_snapshot', ?)", (version,))
         unassigned = [cid for cid, seed in seeds.items()
                       if resolve_plan(seed, seed.get("scoring"))["unassigned"]]
@@ -559,6 +591,10 @@ class Store:
                 (d["evalset_version"],)).fetchone()["n"]
             out.append(d)
         return out
+
+    def snapshot_versions(self) -> list[str]:
+        return [r["evalset_version"] for r in
+                self.conn.execute("SELECT evalset_version FROM snapshots")]
 
     def snapshot(self, version: str) -> dict | None:
         r = self.conn.execute("SELECT * FROM snapshots WHERE evalset_version=?", (version,)).fetchone()

@@ -1392,17 +1392,20 @@ def validate_method(method: dict, mapping: dict, uids: set) -> list:
     return warns
 
 
-def next_version(dist_dir: Path, today=None) -> str:
-    """自动版本号（doc/17 决定 16）：vYYYYMMDD-N，N = 当天 dist 已有最大序号 + 1。
-    adhoc-* 等非 v 日期前缀的产物不参与取号。"""
+def next_version(dist_dir: Path, today=None, reserved=()) -> str:
+    """自动版本号（doc/17 决定 16）：vYYYYMMDD-N，N = 当天 dist 文件与 reserved
+    （评测库 snapshots 已登记的版本）已有最大序号 + 1。adhoc-* 与非 v 日期前缀
+    的产物不参与取号。dist 不进 git 后，取号不能只看本地目录。"""
     d = _dt.date.today() if today is None else today
     base = f"v{d.strftime('%Y%m%d')}"
-    ns = [0]
+    names = [f"evalset-{v}.jsonl" for v in reserved]
     if Path(dist_dir).is_dir():
-        for f in Path(dist_dir).glob(f"evalset-{base}-*.jsonl"):
-            m = re.fullmatch(rf"evalset-{base}-([0-9]+)\.jsonl", f.name)
-            if m:
-                ns.append(int(m.group(1)))
+        names += [f.name for f in Path(dist_dir).glob(f"evalset-{base}-*.jsonl")]
+    ns = [0]
+    for name in names:
+        m = re.fullmatch(rf"evalset-{base}-([0-9]+)\.jsonl", name)
+        if m:
+            ns.append(int(m.group(1)))
     return f"{base}-{max(ns) + 1}"
 
 
