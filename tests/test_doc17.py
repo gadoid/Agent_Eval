@@ -115,6 +115,59 @@ def test_scored_precond_and_path():
     assert v2.status == "invalid"                            # 门控与用途无关
 
 
+@pytest.mark.parametrize("node,weights,values,expected", [
+    # 前提计分：P1 30 成立 + F1 70 未提及 → 30（P0 复现场景）
+    ("precond", {"P1": 30.0, "F1": 70.0}, {"P1": "成立", "F1": "未提及"}, 30.0),
+    # 路径计分：path#1 50 满足 + F1 50 未提及 → 50
+    ("path", {"path#1": 50.0, "F1": 50.0}, {"path#1": "满足", "F1": "未提及"}, 50.0),
+    # 禁止事实计分：X1 50 未采信 + F1 50 未提及 → 50
+    ("forbidden", {"X1": 50.0, "F1": 50.0}, {"X1": "未采信", "F1": "未提及"}, 50.0),
+])
+def test_scored_non_fact_nodes_affect_weighted_score(node, weights, values, expected):
+    """P0 回归：用途为计分的前提、路径、禁止事实必须进 units，权重对分数生效。"""
+    case = dict(mk_record()["case"])
+    case.pop("scoring", None)
+    case["facts"] = [fact("F1", text="甲")]
+    if node == "precond":
+        case["preconditions"] = [{"id": "P1", "turn": 1, "text": "前提成立", "injections": []}]
+    elif node == "path":
+        case["path"] = [{"type": "must", "action": {"kind": "load_skill", "skill": "s"}, "turn": 1}]
+    else:
+        case["facts"].append(fact("X1", "forbidden", "禁止内容"))
+    rec = mk_record(case=case)
+    scoring = resolve_plan(case, {"items": {i: {"use": "score", "weight": w}
+                                            for i, w in weights.items()}, "unassigned": False})
+    eff = {i: Verdict(v, "judge", "op@1") for i, v in values.items()}
+    v = _conclude(rec, eff, scoring=scoring)
+    assert v.score == expected
+    assert v.status == ("pass" if expected >= 60 else "fail")
+
+
+def test_refusal_forbidden_veto_matches_queue():
+    """P1 回归：不可回答分支的禁止事实否决与复核队列同一口径。
+
+    禁止事实已「采信」+ 拒答未决：结论两边都是 0（fail），队列为空是合法短路，
+    不再是「undecided 0–100 且队列为空」的死锁。"""
+    from tests.helpers import turn
+    case = dict(mk_record()["case"])
+    case.pop("scoring", None)
+    case["answerable"] = False
+    case["facts"] = [fact("X1", "forbidden", "禁止内容")]
+    rec = mk_record(case=case, turns=[turn(output="答")])
+    scoring = resolve_plan(case, {"items": {"X1": {"use": "score", "weight": 50.0},
+                                            "refusal": {"use": "score", "weight": 50.0}},
+                                  "unassigned": False})
+    eff = {"X1": Verdict("采信", "judge", "op@1")}
+    v = _conclude(rec, eff, scoring=scoring)
+    assert v.status == "fail" and v.score == 0
+    assert v.undecided_items == []                       # 结论已确定，无需复核
+
+    # 禁止事实也未决：不短路，拒答与禁止事实都进队列
+    v2 = _conclude(rec, {}, scoring=scoring)
+    assert v2.status == "undecided"
+    assert {"refusal", "X1"} <= set(v2.undecided_items)
+
+
 def test_all_not_applicable_paths_error():
     """计分路径全部「不适用」→ 分母 0 → error（§6.1），不再兜底满分。"""
     case = dict(mk_record()["case"])
@@ -319,6 +372,27 @@ def test_save_pipeline_edit_builds_imports_and_rescores(pipeline_env):
     assert bad2.status_code == 400 and "未知条目" in bad2.json()["error"]
 
 
+def test_promote_writes_complete_weight_map(pipeline_env):
+    """P2 回归：转正写回的 md 必须等于转正前的生效口径——临时权重里缺失的计分
+    条目按 0 落盘（不能保留 md 旧值）。"""
+    client, cases, dist, db = pipeline_env
+    r = client.post("/api/case/kr-0301/edit", json={
+        "case_id": "kr-0301", "items": [{"id": "F1", "weight": 60}, {"id": "F2", "weight": 40}]})
+    assert r.status_code == 200, r.text
+    # 只给 F1 存临时权重：F2 在临时口径里按 0 生效
+    r = client.post("/api/case/kr-0301/temp-weights", json={
+        "case_id": "kr-0301", "action": "save", "weights": {"F1": 70}})
+    assert r.status_code == 200, r.text
+    r = client.post("/api/case/kr-0301/temp-weights", json={
+        "case_id": "kr-0301", "action": "promote"})
+    assert r.status_code == 200, r.text
+    md = (cases / "batch" / "kr-0301.md").read_text(encoding="utf-8")
+    f1 = next(l for l in md.splitlines() if l.startswith("- F1："))
+    f2 = next(l for l in md.splitlines() if l.startswith("- F2："))
+    assert "【权重：100】" in f1
+    assert "【权重" not in f2
+
+
 def test_save_pipeline_version_autoincrements(pipeline_env):
     """决定 16②：不给版本号自动取号 vYYYYMMDD-N，N 递增；dist 不可变。"""
     import evalset.md2case as m2c  # noqa: F401  （自动取号在管线内）
@@ -331,6 +405,24 @@ def test_save_pipeline_version_autoincrements(pipeline_env):
     assert vs[0] != vs[1] and vs[1].endswith(str(int(vs[1].rsplit("-", 1)[1])))
     files = sorted(p.name for p in dist.glob("evalset-*.jsonl"))
     assert len(files) == 2
+
+
+def test_draft_edit_only_writes_md(pipeline_env):
+    """§5.1：编辑 draft 用例只写 md，不 build、不产生快照、不导入。"""
+    client, cases, dist, db = pipeline_env
+    draft = PIPE_CASE.replace("id: kr-0301", "id: kr-0304").replace(
+        "status: admitted", "status: draft")
+    (cases / "batch" / "kr-0304.md").write_text(draft, encoding="utf-8")
+    r = client.post("/api/case/kr-0304/edit", json={
+        "case_id": "kr-0304", "items": [{"id": "F1", "weight": 70}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] is None and r.json()["saved_md"] is True
+    md = (cases / "batch" / "kr-0304.md").read_text(encoding="utf-8")
+    assert "【权重：63.6364】" in md and "【权重：36.3636】" in md
+    assert list(dist.glob("evalset-*.jsonl")) == []
+    s = Store(db)
+    assert s.current_snapshot() is None
+    s.close()
 
 
 def test_case_page_use_slots_markup(pipeline_env):
@@ -346,9 +438,9 @@ def test_case_page_use_slots_markup(pipeline_env):
     r = client.post("/api/case/kr-0302/edit", json={
         "case_id": "kr-0302", "items": [{"id": "P1", "use": "score", "weight": 30}]})
     assert r.status_code == 200, r.text
-    # 保存管线整链回写：H1 标题头在最前、frontmatter 随其后（与 frontmatter title 同源）
+    # 保存管线整链回写：frontmatter 首行，title 只存一份（H1 由页面渲染）
     saved_md = (cases / "batch" / "kr-0302.md").read_text(encoding="utf-8")
-    assert saved_md.startswith("# 前提计分的保单号填写（路径与分组渲染测试）\n\n---\n")
+    assert saved_md.startswith("---\nid: kr-0302\ntitle: 前提计分的保单号填写（路径与分组渲染测试）\n")
     out = dist / f"evalset-{r.json()['version']}.jsonl"
     uids = set()
     for line in out.read_text(encoding="utf-8").splitlines():

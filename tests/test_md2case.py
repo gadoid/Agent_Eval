@@ -286,12 +286,15 @@ def test_title_roundtrip_and_missing_warn(env):
     assert case["title"] == "融资单据清单"
     md = md2case.case_to_md(case, md2case.load_mapping())
     assert "title: 融资单据清单" in md
-    # H1 在最前、frontmatter 随其后（人类直接读 md 的标题头），再是 ## 段落；
-    # 收尾 --- 前留空行，避免 CommonMark 把字段块解析成 setext H2
-    assert md.startswith("# 融资单据清单\n\n---\n")
-    assert "\n\n---\n\n## 问题" in md
+    # frontmatter 必须在首行（通用解析器只认这种写法）；标题只在 frontmatter 存一份，
+    # 页面渲染时生成 H1，md 不再重复标题。
+    assert md.startswith("---\nid: kr-0001\n")
+    assert "# 融资单据清单" not in md
+    assert "\n---\n\n## 问题" in md
+    assert "answerable: true" not in md                    # 缺省值不落盘
     back = md2case.md_to_case(md, "kr-0001.md")            # 回写产物再解析，title 不丢
     assert back["title"] == "融资单据清单"
+    assert md2case.case_to_md(back) == md                   # 回写幂等
     rows = md2case.compile_case(case, {}, "vX")
     assert rows[0]["title"] == "融资单据清单" and rows[0]["source"] is None
     no = parse_ok(env, "---\nid: kr-0002\ndim: 知识召回\nstatus: draft\n---\n" + body, "kr-0002")
@@ -399,6 +402,19 @@ def test_build_and_diff_and_rev_linkage(env):
     assert "ec-0102#0" not in {r["uid"] for r in v2_rows}
 
 
+def test_build_default_includes_structured(env):
+    """doc/17 §4：一期无准入流程，CLI build 缺省收录 structured/reviewed/admitted，
+    与页面保存管线同一口径（不再出现「CLI 构建 0 行、页面保存有行」）。"""
+    (env / "cases").mkdir()
+    (env / "cases" / "kr-0001.md").write_text(
+        KR_CASE.replace("status: admitted", "status: structured"), encoding="utf-8")
+    out = env / "dist" / "v1.jsonl"
+    assert md2case.main(["build", str(env / "cases"), "-o", str(out), "--version", "v1"]) == 0
+    rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+    assert {r["uid"] for r in rows if r.get("uid")} == {"kr-0001#0"}
+    assert rows[0]["snapshot"]["include"] == md2case.DEFAULT_INCLUDE
+
+
 def test_build_refuses_overwrite(env):
     (env / "cases").mkdir()
     (env / "cases" / "kr-0001.md").write_text(KR_CASE, encoding="utf-8")
@@ -458,6 +474,12 @@ def test_scoring_normalize_and_unassigned(env):
     sc2 = md2case.compile_case(case2, md2case.load_knowledge([md2case.KNOWLEDGE_DIR]), "vX")[0]["scoring"]
     assert sc2["unassigned"] is True and sc2["items"]["F1"]["weight"] == 0.0
     assert any("未分配" in w for w in case2["_warnings"])          # admitted 用例给提示
+    # structured 也会进入快照（DEFAULT_INCLUDE），未分配提示同样给出
+    case3 = parse_ok(env, EC_CASE.replace("status: admitted", "status: structured"), "ec-0103")
+    assert any("未分配" in w for w in case3["_warnings"])
+    # draft 不进快照，不给未分配提示
+    case4 = parse_ok(env, EC_CASE.replace("status: admitted", "status: draft"), "ec-0104")
+    assert not any("未分配" in w for w in case4["_warnings"])
 
 
 def test_error_bad_weight(env):

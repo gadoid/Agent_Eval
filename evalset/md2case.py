@@ -5,7 +5,8 @@
   python md2case.py check   <路径>... [--docs <skill根,...>]    校验（--docs 追加与 skill 原文的一致性校验）
   python md2case.py convert <用例.md> [-o out.yaml]            单个用例转 YAML
   python md2case.py build   <cases目录> -o dist/evalset-vX.jsonl --version vX
-                                   [--prev dist/evalset-vW.jsonl] [--include admitted]
+                                   [--prev dist/evalset-vW.jsonl]
+                                   [--include structured,reviewed,admitted]
                                    编译 + 与上一版自动 diff + 注入 rev 联动降级
   python md2case.py render  <结构化用例> -o <目录> [--force]    生成器产出 → md
 
@@ -28,6 +29,9 @@ MAPPING_PATH = HERE / "mapping.yaml"
 KNOWLEDGE_DIR = HERE / "knowledge"
 REV_STATE_PATH = HERE / ".knowledge-state.json"
 SCHEMA = 2
+# 进入快照的缺省状态（doc/17 §4/决定 14）：一期没有准入流程，structured 是工作状态；
+# CLI build 与页面保存管线共用这一口径，避免「上次是 CLI 还是页面」产出不同快照。
+DEFAULT_INCLUDE = "structured,reviewed,admitted"
 
 _NODES = None
 
@@ -629,18 +633,13 @@ PARSERS = {
 # ---------------------------------------------------------------- md → case
 
 def split_frontmatter(text: str, errors: list[str], h1: list[str] | None = None):
-    """切元数据块。开头可先写一行「# 标题」（H1 在前、frontmatter 在后），
-    H1 收进 h1；也接受只有 frontmatter 的旧写法。"""
-    lines = text.splitlines()
+    """切元数据块：frontmatter 必须在文件首行（通用解析器只认这种写法）。
+    正文里允许一个「# 标题」作旧文件兼容，由 split_sections 收进 h1 并与
+    frontmatter title 对账；case_to_md 不再生成 H1（标题唯一来源是 frontmatter）。"""
+    lines = text.lstrip("\ufeff").splitlines()
     start = 0
-    if lines and H1.match(lines[0].strip()):
-        if h1 is not None:
-            h1.append(H1.match(lines[0].strip()).group(1))
-        start = 1
-        while start < len(lines) and not lines[start].strip():
-            start += 1
     if start >= len(lines) or lines[start].strip() != "---":
-        errors.append("文件开头应为「# 标题」+ --- 元数据块（frontmatter）")
+        errors.append("文件开头应为 --- 元数据块（frontmatter）")
         return {}, lines[start:], start
     for i in range(start + 1, len(lines)):
         if lines[i].strip() == "---":
@@ -947,7 +946,7 @@ def check_scoring(case, errors, warns):
     """条目计分配置的 check（doc/17 §2.3）。行级报错（【计分】【参考】同写、参考带
     【权重】、数值非法）已在解析器给出；这里给跨条目的：拒答用例不得写必要/期望
     事实；提示：部分计分条目没写权重、名义百分比合计 ≠ 100（告知归一结果）、
-    未分配（仅 admitted，决定 14）。"""
+    未分配（仅会进入快照的 structured/reviewed/admitted，决定 14）。"""
     nodes = nodes_table()
     answerable = case.get("answerable", True) is not False
     if not answerable:
@@ -966,7 +965,7 @@ def check_scoring(case, errors, warns):
         brief = "、".join(f"{i}={w / total * 100:.4f}".rstrip("0").rstrip(".") + "%"
                           for i, w in unit_w.items() if w > 0)
         warns.append(f"计分条目名义权重合计 {total:g}（≠100），编译按比例归一：{brief}")
-    if total <= 0 and case.get("status") == "admitted":
+    if total <= 0 and case.get("status") in DEFAULT_INCLUDE.split(","):
         if not answerable:
             warns.append("拒答用例未写「拒答权重」，评测时将跳过（权重未分配）")
         else:
@@ -1220,24 +1219,15 @@ def save_rev_state(state: dict) -> None:
 
 
 def demote_case_file(path: Path, notes: list[str]) -> None:
-    """重写用例 md 的 frontmatter：status → structured，status_note 追加原因；正文不动。"""
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    start = 0
-    if lines and H1.match(lines[0].strip()):        # 新结构：H1 在 frontmatter 之前
-        start = 1
-        while start < len(lines) and not lines[start].strip():
-            start += 1
-    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "---")
-    meta = yaml.safe_load("\n".join(lines[start + 1:end])) or {}
-    meta["status"] = "structured"
-    note = meta.get("status_note") or ""
+    """重写用例 md 的 frontmatter：status → structured，status_note 追加原因；正文不动。
+    走 case_to_md 保持规范格式（frontmatter 首行、tags 行内），避免降级造成整文件 diff。"""
+    mapping = load_mapping()
+    case = md_to_case(path.read_text(encoding="utf-8"), str(path), mapping)
+    case["status"] = "structured"
+    note = case.get("status_note") or ""
     add = "；".join(notes)
-    meta["status_note"] = f"{note}；{add}" if note else add
-    head = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip()
-    prefix = "\n".join(lines[:start])
-    path.write_text((prefix + "\n" if prefix else "") + "---\n" + head + "\n\n---\n"
-                    + "\n".join(lines[end + 1:]), encoding="utf-8")
+    case["status_note"] = f"{note}；{add}" if note else add
+    path.write_text(case_to_md(case, mapping) + "\n", encoding="utf-8")
 
 
 def apply_rev_linkage(cases: list[dict], paths: dict[str, Path], points: dict,
@@ -1474,15 +1464,29 @@ META_KEYS = ("id", "title", "dim", "status", "status_note", "answerable", "histo
              "granularity", "pair", "tags", "source", "owner", "拒答权重")
 
 
+class _InlineList(list):
+    """只用于 tags：块式映射里保持 [a, b] 行内写法，回写不整文件 diff。"""
+
+
+class _CaseDumper(yaml.SafeDumper):
+    pass
+
+
+_CaseDumper.add_representer(
+    _InlineList, lambda d, v: d.represent_sequence("tag:yaml.org,2002:seq", v, flow_style=True))
+
+
 def case_to_md(case: dict, mapping: dict | None = None) -> str:
     mapping = mapping or load_mapping()
     meta = {k: case[k] for k in META_KEYS
             if case.get(k) not in (None, []) and str(case.get(k)).strip() != ""}
-    _title = str(case.get("title") or "").strip()
-    out: list[str] = [f"# {_title}", ""] if _title else []   # H1 先、frontmatter 后
-    # 收尾 --- 前留空行：frontmatter 在 H1 之后时，CommonMark 会把紧贴 --- 的字段行
-    # 整块解析成 setext H2 标题
-    out += ["---", yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip(), "", "---", ""]
+    if meta.get("answerable") is True:            # 缺省值不落盘，回写才能幂等
+        meta.pop("answerable")
+    if meta.get("tags"):
+        meta["tags"] = _InlineList(meta["tags"])
+    # frontmatter 首行（唯一数据源）；标题只在这里存一份，页面渲染时生成 H1。
+    out: list[str] = ["---", yaml.dump(meta, Dumper=_CaseDumper, allow_unicode=True,
+                                       sort_keys=False).strip(), "---", ""]
     turns = case.get("turns") or []
     refs = case.get("assistant_refs") or [None] * len(turns)
     if len(turns) <= 1:
@@ -1610,7 +1614,7 @@ def main(argv=None) -> int:
     p.add_argument("--version", help="版本号（缺省自动取号 vYYYYMMDD-N，doc/17 决定 16）")
     p.add_argument("--method", help="测法文件（缺省 evalset/method.yaml）")
     p.add_argument("--prev", help="上一版 dist，用于生成自动 diff")
-    p.add_argument("--include", default="admitted")
+    p.add_argument("--include", default=DEFAULT_INCLUDE)
     p.add_argument("--no-linkage", dest="linkage", action="store_false",
                    help="跳过注入 rev 联动降级（调试用）")
     p.set_defaults(func=cmd_build, linkage=True)

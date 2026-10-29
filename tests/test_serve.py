@@ -852,13 +852,14 @@ def test_case_new_title_and_refusal_type(served, tmp_path):
     data = prev.json()
     assert data["ok"], data["errors"]
     assert "title: 融资业务我司报关需提供的单据" in data["md"]
-    assert data["md"].startswith("# 融资业务我司报关需提供的单据\n\n---\n")   # H1 在 frontmatter 之前
+    assert data["md"].startswith("---\nid: ")                 # frontmatter 首行
+    assert "# 融资业务我司报关需提供的单据" not in data["md"]  # H1 由页面渲染，不重复存
     assert "answerable: false" in data["md"] and "拒答权重: 100" in data["md"]
     ok = c2.post("/api/case/create", json=_kr_body(
         title="融资业务我司报关需提供的单据", answerable=False, refusal_weight=100, facts=[]))
     assert ok.status_code == 200, ok.text
     saved = (cases / "batch-a" / "kr-9001.md").read_text(encoding="utf-8")
-    assert "# 融资业务我司报关需提供的单据" in saved
+    assert "title: 融资业务我司报关需提供的单据" in saved
     assert "answerable: false" in saved and "拒答权重: 100" in saved
     bad = c2.post("/api/case/preview", json=_kr_body(answerable=False, refusal_weight=100))
     assert not bad.json()["ok"] and any("拒答用例" in e for e in bad.json()["errors"])

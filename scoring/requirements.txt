@@ -1,5 +1,5 @@
 # scoring 依赖分层（判定算子扩展方案 §11）：
-# - score / rescore / compare 命令行：仅 PyYAML（读 operators.yaml / policy.yaml）
+# - score / rescore / compare 命令行：仅 PyYAML（读 operators.yaml / rules.yaml）
 # - serve 复核服务：以下全部（可选安装）
 pyyaml>=6.0
 fastapi==0.137.1

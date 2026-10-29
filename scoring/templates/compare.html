@@ -86,6 +86,7 @@
     <div><div class="rv-delta-l">不变</div><div class="rv-delta-n">{{ rep.n_shared - rep.questions|length }}</div>
       <div class="rv-meta"><span>题</span><span>共有 {{ rep.n_shared }} 题 / {{ rep.n_shared_cases }} 用例</span></div></div>
   </div>
+  <div class="rv-meta" style="margin:-8px 0 16px">快照对比只切换判定标准与执行输入；计分权重按当前数据库口径（切回旧快照不会回滚权重），历史权重请看用例页的保存记录。</div>
 
   <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px">
     {% for side, label in [(rep.base, '基线'), (rep.target, '对照')] %}

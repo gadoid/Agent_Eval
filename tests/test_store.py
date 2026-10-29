@@ -520,6 +520,42 @@ def test_scoring_plan_md_and_temp_calibers(store, tmp_path):
     assert sfp4 == sfp_md
 
 
+def test_temp_weights_group_normalization_matches_md(store, tmp_path):
+    """P2 回归：临时权重按「组 = 一个计分单位」归一，组内成员得到同一百分比，
+    与 md 编译口径一致。"""
+    from tests.helpers import fact
+    case = dict(mk_record()["case"])
+    case.pop("scoring", None)
+    case["facts"] = [fact("F1", text="甲", group="G1"), fact("F2", text="乙", group="G1"),
+                     fact("E1", "expected", "丙")]
+    ingest(store, tmp_path, "demo", [mk_record(case=case)])
+    cid = store.questions()[0]["case_id"]
+    store.set_temp_weights(cid, {"F1": 30, "F2": 30, "E1": 40})
+    tw = store.temp_weights(cid)["weights"]
+    # 组内取最大 30 作为一个单位，加 E1 40 → 30/70、30/70、40/70
+    assert tw["F1"] == tw["F2"] == pytest.approx(42.8571)
+    assert tw["E1"] == pytest.approx(57.1429)
+    plan, _, _ = store.scoring_plan(cid)
+    assert plan["weights"]["F1"] == plan["weights"]["F2"] == pytest.approx(42.8571)
+
+
+def test_case_scoring_imported_at_only_on_change(store, tmp_path):
+    """P2 回归：weights_touched_after 依赖 imported_at，内容未变的重复导入不得刷新它。"""
+    ingest(store, tmp_path, "demo", [mk_record()])
+    cid = "ec-1"
+    block = store.case_scoring(cid)
+    with store.lock, store.conn:
+        store.conn.execute("UPDATE case_scoring SET imported_at='2000-01-01T00:00:00' WHERE case_id=?",
+                           (cid,))
+    store._register_case_scoring(cid, block)                    # 同内容
+    assert store.conn.execute("SELECT imported_at FROM case_scoring WHERE case_id=?",
+                              (cid,)).fetchone()["imported_at"] == "2000-01-01T00:00:00"
+    changed = {**block, "items": {**block.get("items", {}), "E9": {"use": "score", "weight": 1.0}}}
+    store._register_case_scoring(cid, changed)                  # 内容变化
+    assert store.conn.execute("SELECT imported_at FROM case_scoring WHERE case_id=?",
+                              (cid,)).fetchone()["imported_at"] != "2000-01-01T00:00:00"
+
+
 def test_set_temp_weights_validation(store, tmp_path):
     """校验：只收计分条目（X1 默认参考不行）、0–100；保存即刷新缓存列。"""
     ingest(store, tmp_path, "demo", [mk_record()])

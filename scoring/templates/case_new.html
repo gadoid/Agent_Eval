@@ -18,7 +18,7 @@
           <label class="cn-sr" for="cn-title">标题</label>
           <input class="cn-title-input" id="cn-title" maxlength="60" placeholder="无标题用例">
         </div>
-        <p class="cn-doc-hint rv-meta">正文 H1 在最前；保存时同步写入 frontmatter 的 title</p>
+        <p class="cn-doc-hint rv-meta">frontmatter 的 title 是标题唯一来源（页面渲染 H1）；md 开头的 --- 块必须在首行</p>
         <div class="cn-doc-path">
           <span class="cn-doc-path-k">file</span>
           <span>evalset/cases/<b id="cn-doc-dir">{{ default_dir or '…' }}</b>/<b id="cn-doc-id">…</b>.md</span>

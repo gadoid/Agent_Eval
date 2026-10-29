@@ -237,6 +237,21 @@ class EpisodeVerdict:
         return asdict(self)
 
 
+def active_vetoes(items: list[Item], value_of, *, forced: bool = False,
+                  answerable: bool = True) -> list[str]:
+    """当前分支实际生效的否决（doc/17 §6.2/§6.3）。实际值与假想值共用：
+    evaluate 传两点求值的取值，live_items 传已判定值；答案分支只影响必要事实
+    （拒答型用例不允许必要/期望事实）。"""
+    reasons: list[str] = []
+    if not forced and any(value_of(i) == NODES["path"]["veto"] for i in items if i.kind == "path"):
+        reasons.append("path_violated")
+    if any(value_of(i) == NODES["forbidden"]["veto"] for i in items if i.kind == "forbidden"):
+        reasons.append("forbidden_adopted")
+    if answerable and any(value_of(i) == NODES["required"]["veto"] for i in items if i.kind == "required"):
+        reasons.append("required_wrong")
+    return reasons
+
+
 def target_skill(case: dict, routing: dict[str, list[str]] | None) -> str | None:
     """目标 skill（现行路径"必须"优先，缺省 routing 映射）。"""
     for p in case.get("path") or []:
@@ -361,7 +376,8 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
                   and not (path_violate and sp.veto_mode == "zero"))
 
     # ---- 未决清单（进复核队列的口径，live_items 单一实现，doc/17 §6.4）
-    live = live_items(items, decided, plan, forced=forced, veto_mode=sp.veto_mode)
+    live = live_items(items, decided, plan, forced=forced, veto_mode=sp.veto_mode,
+                      answerable=answerable)
     undecided = [i for i, k in missing.items() if k == "undecided" and i in live]
     errored = [i for i, k in missing.items() if k == "error" and i in live]
 
@@ -409,18 +425,17 @@ def session_conclusion(record: dict, ctx: EpisodeContext, items: list[Item], eff
             if value_of(item, fav) != "成立":
                 return {"invalid": True, "reason": "前提不成立（不计为答错）"}
         units: list[dict] = []
-        vetoes: list[str] = []
         # 否决检查统一走假想取值（doc/17 §6.3：未决条目在不利一次触发所在节点的默认规则）
-        if not forced and any(value_of(i, fav) == "违反" for i in paths):
-            vetoes.append("path_violated")
-        if not answerable:
-            if refusal is not None and use_of(refusal) == "score":
-                units.append(part(refusal, fav))
-        else:
-            if any(value_of(i, fav) == "采信" for i in forbids):
-                vetoes.append("forbidden_adopted")
-            if any(value_of(i, fav) == CONTRA for i in requireds):
-                vetoes.append("required_wrong")
+        vetoes = active_vetoes(items, lambda i: value_of(i, fav), forced=forced,
+                               answerable=answerable)
+        if not answerable and refusal is not None and use_of(refusal) == "score":
+            units.append(part(refusal, fav))
+        # 计分单位按用途取（doc/17 §6.1）：前提、路径、禁止事实在用途为计分时同样进分；
+        # 路径只在非 forced 会话判定，故 forced 时不进。
+        units += [part(i, fav) for i in preconds if use_of(i) == "score"]
+        units += [part(i, fav) for i in paths if not forced and use_of(i) == "score"]
+        units += [part(i, fav) for i in forbids if use_of(i) == "score"]
+        if answerable:
             groups: dict[tuple, list[Item]] = defaultdict(list)
             for item in requireds + expecteds:
                 if use_of(item) != "score":                 # 参考条目不构成计分单位
@@ -495,7 +510,8 @@ def _default_plan(items: list[Item]) -> dict:
 
 
 def live_items(items: list[Item], decided: dict[str, str], scoring: dict | None = None,
-               forced: bool = False, veto_mode: str = "zero") -> set[str]:
+               forced: bool = False, veto_mode: str = "zero",
+               answerable: bool | None = None) -> set[str]:
     """复核队列成员规则的唯一实现（doc/17 §2.1 末列、§6.4）。
 
     items：extract_items 拆出的条目；decided：{条目 id: 有效结论}（人工改判已覆盖；
@@ -515,6 +531,8 @@ def live_items(items: list[Item], decided: dict[str, str], scoring: dict | None 
     uses, weights = plan["uses"], plan["weights"]
     preconds = [i for i in items if i.kind == "precond"]
     undecided = {i.id for i in items if i.id not in decided}
+    if answerable is None:                    # spec_items/extract_items 只在拒答型用例加 refusal
+        answerable = not any(i.kind == "refusal" for i in items)
 
     def gate_hit() -> bool:
         return any(decided.get(i.id) == NODES["precond"]["gate"] for i in preconds)
@@ -522,11 +540,9 @@ def live_items(items: list[Item], decided: dict[str, str], scoring: dict | None 
     def veto_hit() -> bool:
         if veto_mode != "zero":
             return False
-        for i in items:
-            word = NODES[i.kind]["veto"]
-            if word and (i.kind != "path" or not forced) and decided.get(i.id) == word:
-                return True
-        return False
+        # 与会话结论同一套判定：不可回答分支同样看禁止事实否决（否则未决拒答会无出口）
+        return bool(active_vetoes(items, lambda i: decided.get(i.id), forced=forced,
+                                  answerable=answerable))
 
     if gate_hit() or veto_hit():
         return {i.id for i in preconds if i.id in undecided}

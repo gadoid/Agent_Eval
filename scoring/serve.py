@@ -1347,10 +1347,11 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                     pass
         return out
 
-    def run_save_pipeline(new_md: str, md_path: Path) -> dict:
+    def run_save_pipeline(new_md: str, md_path: Path, build: bool = True) -> dict:
         """保存管线：内存校验（报错只针对被改用例，不通过不落盘）→ 写 md →
         build 新版本（锁内自动取号，dist 不可变兜底）→ 整批导入（设为当前快照）→
-        同步 rescore → 报告待重判。build 因其余用例失败时 md 已落盘、无新快照。"""
+        同步 rescore → 报告待重判。build 因其余用例失败时 md 已落盘、无新快照。
+        build=False 用于 draft 用例（§5.1：只写 md，不产生快照、不导入）。"""
         m2c = _md2case()
         mapping = m2c.load_mapping()
         errors: list[str] = []
@@ -1364,12 +1365,15 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         if errors:
             return {"ok": False, "errors": errors, "warnings": warnings}
         md_path.write_text(new_md, encoding="utf-8")
+        if not build:                              # draft：只写 md（§5.1）
+            return {"ok": True, "saved_md": True, "version": None, "warnings": warnings,
+                    "rescored": 0, "pending_rejudge": 0}
         with _pipeline_lock:                       # 决定 16②：取号 → build → 导入
             version = m2c.next_version(dist_root)
-            # --include 显式对齐仓库口径（含 structured）：build 缺省只收 admitted，
-            # 漏带会让 structured 用例从新快照（整批导入设为当前）里消失
+            # 与 CLI build 共用 DEFAULT_INCLUDE，避免「CLI build / 页面保存」两条路径
+            # 产出不同快照（doc/17 §4）
             rc = m2c.main(["build", str(cases_root), "-o", str(dist_root / f"evalset-{version}.jsonl"),
-                          "--version", version, "--include", "structured,reviewed,admitted"])
+                          "--version", version, "--include", m2c.DEFAULT_INCLUDE])
             if rc != 0:
                 return {"ok": False, "saved_md": True, "version": None, "warnings": warnings,
                         "errors": ["build 失败：其余用例有解析错误（本次修改已写入 md，未产生新快照；"
@@ -1468,7 +1472,8 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         # 归一写回（决定 12：「保存到用例」写回归一后的百分比值）
         m2c = _md2case()
         _write_weights_to_case(case, m2c.normalize_score_weights(m2c.score_units_of(case)))
-        result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path)
+        result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path,
+                                   build=case.get("status") != "draft")
         if not result.get("ok"):
             return JSONResponse(result, status_code=400)
         return result
@@ -1505,8 +1510,12 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                     return JSONResponse({"error": f"找不到用例文件：{case_id}"}, status_code=404)
                 md_path, case = loaded
                 m2c = _md2case()
-                _write_weights_to_case(case, t["weights"])   # 临时值已归一，直接写
-                result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path)
+                # 转正后的 md 口径必须等于转正前的生效口径：临时权重里缺失的计分
+                # 条目（标准变化后新增）按 0 写回，不能保留 md 旧值。
+                full = {iid: float(t["weights"].get(iid) or 0) for iid in m2c.score_units_of(case)}
+                _write_weights_to_case(case, full)
+                result = run_save_pipeline(m2c.case_to_md(case, m2c.load_mapping()), md_path,
+                                           build=case.get("status") != "draft")
                 if result.get("ok"):
                     store.clear_temp_weights(case_id)
                     result["rescored"] += store.rescore_cases([case_id], rules, rules_sha)

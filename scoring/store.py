@@ -270,11 +270,18 @@ class Store:
         return row["qkey"] if row else None
 
     def _register_case_scoring(self, case_id: str, scoring: dict | None) -> None:
-        """导入/入库时落库 md 计分配置（dist 的 scoring 块原样，按用例覆盖写，doc/17 §7）。"""
+        """导入/入库时落库 md 计分配置（dist 的 scoring 块原样，按用例覆盖写，doc/17 §7）。
+        内容未变时保留 imported_at：它是 weights_touched_after 的判断依据，不能因每次
+        保存（哪怕只改条目文本）就刷新。"""
         cid = case_id or "?"
+        js = json.dumps(scoring or {}, ensure_ascii=False)
         with self.lock, self.conn:
+            row = self.conn.execute("SELECT scoring_json FROM case_scoring WHERE case_id=?",
+                                    (cid,)).fetchone()
+            if row and row["scoring_json"] == js:
+                return
             self.conn.execute("INSERT OR REPLACE INTO case_scoring VALUES(?,?,?)",
-                              (cid, json.dumps(scoring or {}, ensure_ascii=False), now()))
+                              (cid, js, now()))
 
     def case_scoring(self, case_id: str) -> dict:
         row = self.conn.execute("SELECT scoring_json FROM case_scoring WHERE case_id=?", (case_id,)).fetchone()
@@ -345,9 +352,31 @@ class Store:
         for k, v in weights.items():
             if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= float(v) <= 100:
                 raise StoreError(f"权重应为 0–100 的百分比：{k} = {v!r}")
-        total = sum(float(v) for v in weights.values())
-        norm = ({k: round(float(v) / total * 100, 4) for k, v in weights.items()} if total > 0
-                else {k: 0.0 for k in weights})
+        # 与 md 编译同式归一（doc/17 §3.1）：同组成员取组内最大值作为一个计分单位，
+        # 归一后每个成员记同一个百分比——否则分组用例的两种口径会不一致。
+        cur = self.current_spec(seed)
+        spec = cur[1] if cur else {}
+        group_of: dict[str, tuple] = {}
+        members: dict[tuple, list[str]] = {}
+        for f in spec.get("facts") or []:
+            fid = f.get("id")
+            if fid in scored and f.get("group"):
+                key = (f.get("kind", "required"), f["group"])
+                group_of[fid] = key
+                members.setdefault(key, []).append(fid)
+        unit: dict[object, float] = {}
+        for iid, v in weights.items():
+            key = group_of.get(iid, iid)
+            unit[key] = max(unit.get(key, 0.0), float(v))
+        total = sum(unit.values())
+        norm_unit = ({k: round(v / total * 100, 4) for k, v in unit.items()} if total > 0
+                     else {k: 0.0 for k in unit})
+        data = dict(weights)
+        for key, mem in members.items():
+            if key in unit:
+                for iid in mem:
+                    data[iid] = norm_unit[key]
+        norm = {iid: norm_unit[group_of.get(iid, iid)] for iid in data}
         with self.lock, self.conn:
             row = self.conn.execute("SELECT in_use FROM temp_weights WHERE case_id=?", (case_id,)).fetchone()
             in_use = 1 if (use or (row and row["in_use"])) else 0
@@ -1094,7 +1123,8 @@ class Store:
                     if val is not None:
                         decided[v["item_id"]] = val
                 items_objs = [Item(kind, iid, None, None, {}) for iid, kind in spec_items(spec)]
-                live = live_items(items_objs, decided, plan, forced=forced, veto_mode=veto_mode)
+                live = live_items(items_objs, decided, plan, forced=forced, veto_mode=veto_mode,
+                                  answerable=spec.get("answerable", True) is not False)
                 for c in items_:
                     if c["item_id"] in live:
                         out.append(c)
