@@ -4,6 +4,7 @@
 边界（参考/权重 0 的期望不进、权重 0 的必要仍进）、veto_mode=cap、计分分母 0 →
 error、参考必要事实仍触发否决、计分前提/路径、保存管线 e2e。"""
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -215,6 +216,34 @@ tags: [来源/人工构造]
 400。
 """
 
+PIPE_CASE2 = """---
+id: kr-0302
+dim: 知识召回
+status: admitted
+topic: 测试
+granularity: 环节
+tags: [来源/人工构造]
+---
+
+## 问题
+保单号后三位填多少？
+
+## 关键条件
+- 问点：保单号填写 【轮次：1】【关键词：保单号】
+
+## 前提
+- P1：客户已提供保单 【计分】【权重：30】
+
+## 路径
+- 必须：加载 skill trade-documents 【轮次：1】
+
+## 必要事实
+- F1：保单号后三位应填 400 【外部】【权重：70】
+
+## 参考答案
+400。
+"""
+
 
 @pytest.fixture()
 def pipeline_env(tmp_path):
@@ -301,6 +330,25 @@ def test_save_pipeline_version_autoincrements(pipeline_env):
     assert vs[0] != vs[1] and vs[1].endswith(str(int(vs[1].rsplit("-", 1)[1])))
     files = sorted(p.name for p in dist.glob("evalset-*.jsonl"))
     assert len(files) == 2
+
+
+def test_case_page_use_slots_markup(pipeline_env):
+    """用例页简要列表：前提/路径行也带用途角标（计分=权重%、参考=参考胶囊），
+    详情卡计分行带 data-duse——case.js syncBars 随图例切换重写这三处。"""
+    client, cases, dist, db = pipeline_env
+    (cases / "batch" / "kr-0302.md").write_text(PIPE_CASE2, encoding="utf-8")
+    r = client.post("/api/case/kr-0302/edit", json={
+        "case_id": "kr-0302", "items": [{"id": "P1", "use": "score", "weight": 30}]})
+    assert r.status_code == 200, r.text
+    page = client.get("/case/kr-0302").text
+    assert 'data-use-slot="P1"' in page and 'data-use-slot="path#1"' in page
+    assert 'data-use-slot="F1"' in page and 'data-duse="P1"' in page
+
+    def slot(iid):
+        m = re.search(r'<span class="([^"]*)" data-use-slot="%s">([^<]*)</span>' % re.escape(iid), page)
+        return m.groups() if m else (None, None)
+    assert slot("P1") == ("rv-weight rv-wpct-chip", "30%")     # 计分前提 → 权重角标
+    assert slot("path#1") == ("rv-pill", "参考")                 # 缺省参考路径 → 参考胶囊
 
 
 REF_CASE = """---

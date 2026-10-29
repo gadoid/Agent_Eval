@@ -709,7 +709,8 @@ def test_case_scoring_editor_renders(served):
     page = client.get(f"/case/{case_id}").text
     assert 'id="scoring-editor"' in page and ('data-case="%s"' % case_id) in page
     assert 'id="w-pie"' in page and 'id="scoring-data"' in page          # 饼图 + 条目 JSON
-    assert 'data-wchip="F1"' in page                                    # 计分条目百分比徽章
+    assert 'data-use-slot="F1"' in page                                 # 简要列表用途角标（JS 随图例同步）
+    assert 'data-duse="F1"' in page                                     # 详情卡计分行（同一同步点）
     assert '"kind": "forbidden"' in page and '"node_hint"' in page       # 条目 JSON 含禁止事实与默认规则
     assert "不成立 → 会话无效" not in page                               # 该用例无前提
     page2 = client.get(f"/case/{case_id}?saved=1")

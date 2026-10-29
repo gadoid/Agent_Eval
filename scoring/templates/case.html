@@ -76,16 +76,22 @@
         <div class="rv-items-col">
           <ul class="rv-facts rv-facts-brief" id="item-list">
             {% for p in spec.preconditions or [] %}
+            {% set sr = scoring_by_id.get(p.id) %}
             <li class="rv-fact rv-item" data-id="{{ p.id }}">
               <span class="rv-kind">前提 {{ p.id }}</span>
               <span class="rv-fact-text">{{ (p.text or '')[:36] }}{% if (p.text or '')|length > 36 %}…{% endif %}</span>
+              {% if sr and sr.use == 'ref' %}<span class="rv-pill" data-use-slot="{{ p.id }}">参考</span>
+              {% elif sr %}<span class="rv-weight rv-wpct-chip" data-use-slot="{{ p.id }}">{{ (sr.weight or 0)|round|int }}%</span>{% endif %}
               <button class="rv-btn rv-detail-btn" type="button" data-id="{{ p.id }}">详情</button>
             </li>
             {% endfor %}
             {% for p in spec.path or [] %}
+            {% set sr = scoring_by_id.get('path#' ~ loop.index) %}
             <li class="rv-fact rv-item" data-id="path#{{ loop.index }}">
               <span class="rv-kind">路径</span>
               <span class="rv-fact-text">必须加载技能 {{ (p.action or {}).skill }}</span>
+              {% if sr and sr.use == 'ref' %}<span class="rv-pill" data-use-slot="path#{{ loop.index }}">参考</span>
+              {% elif sr %}<span class="rv-weight rv-wpct-chip" data-use-slot="path#{{ loop.index }}">{{ (sr.weight or 0)|round|int }}%</span>{% endif %}
               <button class="rv-btn rv-detail-btn" type="button" data-id="path#{{ loop.index }}">详情</button>
             </li>
             {% endfor %}
@@ -95,8 +101,8 @@
               <span class="rv-kind" {% if f.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ f.kind|kind_label }} {{ f.id }}</span>
               {% if f.nature %}<span class="rv-pill rv-pill--nature" title="合理表述不唯一；「部分」按充分性判">主观</span>{% endif %}
               <span class="rv-fact-text">{{ (f.text or '')[:36] }}{% if (f.text or '')|length > 36 %}…{% endif %}</span>
-              {% if sr and sr.use == 'ref' %}<span class="rv-pill">参考</span>
-              {% elif sr %}<span class="rv-weight rv-wpct-chip" data-wchip="{{ f.id }}">{{ (sr.weight or 0)|round|int }}%</span>{% endif %}
+              {% if sr and sr.use == 'ref' %}<span class="rv-pill" data-use-slot="{{ f.id }}">参考</span>
+              {% elif sr %}<span class="rv-weight rv-wpct-chip" data-use-slot="{{ f.id }}">{{ (sr.weight or 0)|round|int }}%</span>{% endif %}
               <button class="rv-btn rv-detail-btn" type="button" data-id="{{ f.id }}">详情</button>
             </li>
             {% endfor %}
@@ -106,9 +112,9 @@
             <div class="rv-detail-card" data-detail="{{ d.id }}" hidden>
               <div class="rv-row-top" style="margin-bottom:6px">
                 <span class="rv-kind" {% if d.kind == 'forbidden' %}data-kind="forbidden"{% endif %}>{{ d.kind|kind_label }} {{ d.id }}</span>
-                {% if d.use == 'ref' %}<span class="rv-pill">参考</span>
-                {% elif d.weight is not none %}<span class="rv-weight">计分 · 权重 {{ d.weight|round(2) }}%</span>
-                {% else %}<span class="rv-weight">计分 · 权重 0%</span>{% endif %}
+                {% if d.use == 'ref' %}<span class="rv-pill" data-duse="{{ d.id }}">参考</span>
+                {% elif d.weight is not none %}<span class="rv-weight" data-duse="{{ d.id }}">计分 · 权重 {{ d.weight|round(2) }}%</span>
+                {% else %}<span class="rv-weight" data-duse="{{ d.id }}">计分 · 权重 0%</span>{% endif %}
                 <span class="rv-meta"><span>{% if d.turn %}第 {{ d.turn }} 轮{% endif %}</span>
                   {% if d.group %}<span>组 {{ d.group }}</span>{% endif %}<span>{{ d.note }}</span></span>
                 <button class="rv-btn rv-detail-close" type="button" style="margin-left:auto">收起</button>

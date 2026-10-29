@@ -762,6 +762,9 @@ span.sc-use-pill { cursor: default; opacity: .75; }
 #scoring-editor .rv-wbar-row[data-ref="1"] .rv-wbar,
 #scoring-editor .rv-wbar-row[data-ref="1"] .rv-lg-dot { opacity: .35; }
 #scoring-editor .rv-wbar-row[data-ref="1"] .rv-bar-pct { color: var(--ink-2); font-weight: 400; }
+/* 判定条目简要行随图例用途同步置灰（data-refrow 由 case.js 在 syncBars 里维护） */
+#item-list .rv-item[data-refrow="1"] .rv-kind,
+#item-list .rv-item[data-refrow="1"] .rv-fact-text { opacity: .55; }
 
 /* ---------------- 新建用例表单（用例管理 → 新建用例） */
 

@@ -395,9 +395,21 @@
     var sumEl = document.getElementById('w-sum'), leftEl = document.getElementById('w-left');
     if (sumEl) sumEl.textContent = fmt(total()) + '%';
     if (leftEl) leftEl.textContent = fmt(rest.pct) + '%';
+    // 简要列表与详情卡随图例同步（图例是唯一编辑入口）：参考 → 换「参考」胶囊并置灰行；
+    // 计分 → 权重角标。拒答没有列表行，只同步详情卡。
     items.forEach(function (it) {
-      var chip = document.querySelector('[data-wchip="' + it.id + '"]');
-      if (chip) chip.textContent = fmt(it.pct) + '%';
+      var slot = document.querySelector('[data-use-slot="' + it.id + '"]');
+      if (slot) {
+        if (it.use === 'ref') { slot.className = 'rv-pill'; slot.textContent = '参考'; }
+        else { slot.className = 'rv-weight rv-wpct-chip'; slot.textContent = fmt(it.pct) + '%'; }
+        var li = slot.closest('.rv-item');
+        if (li) { if (it.use === 'ref') li.dataset.refrow = '1'; else delete li.dataset.refrow; }
+      }
+      var d = document.querySelector('[data-duse="' + it.id + '"]');
+      if (d) {
+        if (it.use === 'ref') { d.className = 'rv-pill'; d.textContent = '参考'; }
+        else { d.className = 'rv-weight'; d.textContent = '计分 · 权重 ' + fmt(it.pct) + '%'; }
+      }
     });
   }
 
