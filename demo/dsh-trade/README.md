@@ -39,6 +39,10 @@ python -m scoring serve --db demo/dsh-trade/eval.db \
 
 ## 全流程复现（从零重跑）
 
+> **注意**：`evalset/dist/` 已不进 git（原因见仓库 `.gitignore` 里该目录的注释）。要复现本页描述的
+> 历史快照 `v20261028-dsh`，需先 `git checkout` 到删除 dist 之前的提交，再执行下面的 `build`；
+> 新版本直接用当前 md 编译即可。
+
 ```bash
 # 0) 安装技能与 profile（本包 agent/ 内有副本）
 cp demo/dsh-trade/agent/trade-documents.md ~/.dsh/skills/
@@ -49,7 +53,7 @@ cat demo/dsh-trade/agent/evalheadless-trade.cordis.patch.yml \
 # 1) 编译测评集（用例源在 evalset/cases/payment_release/）
 cd evalset && python md2case.py check cases/payment_release --docs ~/.dsh/skills
 python md2case.py build cases/payment_release -o dist/evalset-v20261028-dsh.jsonl \
-  --version v20261028-dsh --include structured,reviewed,admitted
+  --version v20261028-dsh --include structured,reviewed,admitted --db ../archive/eval-dsh.db
 
 # 2) 执行会话（D:\dsh 无头，真实计费）
 cd ../runner && node lib/cli.js run \
