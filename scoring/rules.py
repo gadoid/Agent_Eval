@@ -1,6 +1,6 @@
 """计分规则层（doc/15 §3.3 + doc/17 §6）：⑥ 计分规则的加载与身份，以及会话结论计算。
 
-rules_sha = rules.yaml 规范化哈希（注释/空白不扰动）。doc/17 起：
+rules_sha = 规则内容（注释/空白不扰动）+ 计分逻辑版本的规范化哈希。doc/17 起：
 - 条目是否计分由**条目用途**决定（scoring 方案，items.NODES 缺省），不再按 kind 写死；
 - 否决方式全局唯一：score.veto_mode（zero | cap），veto.* 逐项配置删除；
 - 两点求值的否决检查统一走假想取值（未决必要事实在不利一次触发否决，C5 修正）；
@@ -36,6 +36,11 @@ VETO_MODES = ("zero", "cap")
 # 计分条目的全部取值都要有快捷分值；路径"不适用"不计分，不在表内
 SCORED_VALUES = (*("对", "部分", "未提及", "错"), "满足", "违反", "成立", "不成立",
                  "未采信", "采信", "拒答", "未拒答")
+
+# 计分逻辑版本：结论怎么算（计分单位、否决、取整、维度聚合）随代码走，不是配置项。
+# 任何会改变已有会话结论的计分代码改动都必须升 SCORING_LOGIC_VER——版本计入 rules_sha，
+# 改口径后旧结论自动失效，页面提示执行 rescore（doc/15 §3.3）。
+SCORING_LOGIC_VER = 1
 
 
 def _default_map() -> dict[str, float]:
@@ -86,11 +91,19 @@ def rules_to_dict(r: Rules) -> dict:
     }
 
 
+def rules_record(r: Rules) -> dict:
+    """入库与 rules_sha 的载荷：配置 + 计分逻辑版本。配置文件本身仍以 rules_to_dict 为准。"""
+    return {"logic_ver": SCORING_LOGIC_VER, **rules_to_dict(r)}
+
+
 def rules_from_dict(d: dict) -> Rules:
     r = Rules()
     if not isinstance(d, dict):
         raise RulesError("rules 配置必须是映射")
-    unknown = set(d) - {"schema", "undecided", "operator_score", "score", "aggregate", "group"}
+    # logic_ver 由入库载荷写入（见 rules_record），加载配置时忽略：历史行保留当时的版本，
+    # 只影响身份（rules_sha），不改变规则内容。
+    unknown = set(d) - {"schema", "undecided", "operator_score", "score", "aggregate", "group",
+                        "logic_ver"}
     if unknown:
         raise RulesError(f"rules 含未知参数：{sorted(unknown)}")
     if d.get("schema", 1) != 1:
@@ -154,6 +167,11 @@ def canonical_sha(payload) -> str:
                                      separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
 
+def rules_sha_of(r: Rules) -> str:
+    """计分规则身份：内容 + 计分逻辑版本（代码改动升版本即换 key）。"""
+    return canonical_sha(rules_record(r))
+
+
 def load_rules(path: str | Path) -> tuple[Rules, str]:
     raw = Path(path).read_text(encoding="utf-8")
     try:
@@ -161,7 +179,7 @@ def load_rules(path: str | Path) -> tuple[Rules, str]:
     except ImportError as e:  # pragma: no cover
         raise RulesError("读取 rules.yaml 需要 PyYAML（pip install pyyaml）") from e
     rules = rules_from_dict(yaml.safe_load(raw) or {})
-    return rules, canonical_sha(rules_to_dict(rules))
+    return rules, rules_sha_of(rules)
 
 
 def default_rules_path() -> Path:

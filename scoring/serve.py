@@ -29,7 +29,7 @@ from . import views
 from .chain import default_operators_path, load_operator_config
 from .items import NODES, SCALES, node_hint, spec_items
 from .rules import (Method, Rules, RulesError, default_rules_path, load_rules,
-                    rules_from_dict, rules_to_dict)
+                    rules_from_dict, rules_record)
 from .store import Store, StoreError
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -551,7 +551,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
         rules, rules_sha = load_rules(rules_path)
     else:
         rules, rules_sha = load_rules(default_rules_path())
-    store.register_rules(rules_sha, rules_to_dict(rules))
+    store.register_rules(rules_sha, rules_record(rules))
     cfg = load_operator_config(operators_path or default_operators_path())
     default_chain = cfg.chain_sha
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))

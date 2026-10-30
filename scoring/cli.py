@@ -36,7 +36,7 @@ from .chain import (VerdictCache, default_cache_path, default_operators_path, ep
 from .effective import load_reviews
 from .items import build_context, extract_items, item_sha_of
 from .rules import (EpisodeVerdict, Method, Rules, canonical_sha, default_rules_path,
-                    load_rules, rules_from_dict, rules_to_dict)
+                    load_rules, rules_from_dict, rules_record, rules_to_dict)
 from .store import Store, StoreError, answer_id_of, evalset_version_of
 
 DEFAULT_DB = "archive/eval.db"
@@ -263,7 +263,7 @@ def cmd_score(args) -> int:
     rules, rules_sha = load_rules_pair()
     run_id, n_records = ingest_run(store, args.run)
     register_chain(store, cfg)
-    store.register_rules(rules_sha, rules_to_dict(rules))
+    store.register_rules(rules_sha, rules_record(rules))
     pending = store.pending_rejudge(cfg.chain_sha, run_id=run_id)
     no_spec = [a for a in store.answers(run_id=run_id) if store.current_spec(a["qkey"]) is None]
     eps, items = judge_pending(store, pending, cfg, rules, rules_sha, DbCache(store))

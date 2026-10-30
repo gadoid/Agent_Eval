@@ -122,6 +122,31 @@ def test_rescore_notice(tmp_path):
     assert "python -m scoring rescore" in client.get("/").text
 
 
+def test_logic_ver_bump_invalidates_conclusions(served, monkeypatch):
+    """计分逻辑版本计入 rules_sha（doc/15 §3.3）：只升代码版本、配置不变，
+    旧结论即不再命中，页面提示 rescore；重算后恢复，入库载荷记录 logic_ver。"""
+    import scoring.rules as rules_mod
+    _, db, _, ops = served
+    st = Store(db)
+    old_sha = rules_mod.load_rules(_drp())[1]
+    assert st.conn.execute("SELECT COUNT(*) c FROM conclusions WHERE rules_sha=?",
+                           (old_sha,)).fetchone()["c"] > 0
+    monkeypatch.setattr(rules_mod, "SCORING_LOGIC_VER", rules_mod.SCORING_LOGIC_VER + 1)
+    new_sha = rules_mod.load_rules(_drp())[1]
+    assert new_sha != old_sha
+    client = TestClient(create_app(db, operators_path=ops))
+    assert "还没有会话结论" in client.get("/").text
+    assert cli.main(["rescore", "--db", db, "--operators", ops]) == 0
+    assert "还没有会话结论" not in client.get("/").text
+    assert st.conn.execute("SELECT COUNT(*) c FROM conclusions WHERE rules_sha=?",
+                           (new_sha,)).fetchone()["c"] > 0
+    row = next(r for r in st.rules_rows() if r["rules_sha"] == new_sha)
+    assert row["rules"]["logic_ver"] == rules_mod.SCORING_LOGIC_VER
+    # 历史行带 logic_ver 也能正常加载（只影响身份，不改变配置）
+    assert rules_mod.rules_from_dict({"logic_ver": 99}).score.pass_mark == 60
+    st.close()
+
+
 def test_cases_page(served, tmp_path):
     """用例页：综合分构成（ec 主口径 forced）、用例表（case_id 一行）。"""
     client, db, _, ops = served
