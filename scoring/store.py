@@ -1588,6 +1588,7 @@ class Store:
                 "index": t.get("index"), "input": t.get("input", ""), "output": t.get("output", ""),
                 "status": t.get("status"), "source": t.get("source", "live"),
                 "skills": [s["name"] for s in obs.get("skills", []) if s.get("ok")],
+                "tools": sorted({o["name"] for o in obs.get("tools", []) if o.get("name")}),
                 "ask_user": (obs.get("ask_user") or {}).get("count", 0),
                 "tool_errors": obs.get("tool_errors") or [],
             })
@@ -1599,6 +1600,7 @@ class Store:
         profile_content = ((manifest.get("profile") or {}).get("content") or {})
         q = self.question(a["qkey"]) or {}
         return {
+            "observed_tools": (record.get("observed_tools") or {}).get("names") or [],
             "answer_id": answer_id, "qkey": a["qkey"], "uid": q.get("uid") or record.get("uid", "?"),
             "case_id": q.get("case_id"), "dim": q.get("dim"),
             "topic": q.get("topic"), "rewrite": q.get("rewrite"), "variant_index": q.get("variant_index"),

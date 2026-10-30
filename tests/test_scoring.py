@@ -212,3 +212,50 @@ def test_attribution_three_way():
                                        (True, False, "fail"), (True, False, "pass")]]
     at = attribution_view(verdicts)
     assert at["n"] == 4 and at["not_loaded"] == 0.25 and at["mis_loaded"] == 0.25 and at["loaded_wrong"] == 0.25
+
+
+# ---------------------------------------------------------------- doc/18 §4.2：调用 tool 判定
+
+def test_call_tool_path_semantics():
+    """call_tool 与「加载 skill」同一套窗口语义（必须=截至 N 轮；禁止=第 N 轮/全程），
+    forced 不判；观测能力缺失（capabilities 显式 false）两个方向都判「不适用」。"""
+    from scoring.items import Item, build_context
+    from scoring.operators import SkillPathOperator
+
+
+    op = SkillPathOperator()
+    assert op.version == "2"                     # doc/18 §4.2：升版本，chain_sha 随之失效重判
+
+    def ctx_for(per_turn_tools, mode="natural", caps=None):
+        turns = [{"index": i + 1, "source": "live", "output": "答",
+                  "observations": {"tools": [{"name": n, "args": ""} for n in names]}}
+                 for i, names in enumerate(per_turn_tools)]
+        return build_context({"mode": mode, "status": "ok", "turns": turns, "case": {}},
+                             capabilities=caps)
+
+    def item_of(action, type_="must", turn=None):
+        return Item("path", "path#1", None, turn, {"type": type_, "action": action, "turn": turn})
+
+    web = {"kind": "call_tool", "tool": "web_search"}
+    # 必须：截至第 2 轮（含）调用过
+    ok = ctx_for([["read"], ["read", "web_search"]])
+    assert op.judge(item_of(web, turn=2), ok).value == "满足"
+    assert op.judge(item_of(web, turn=1), ok).value == "违反"
+    # 必须：不写轮次 = 截至最后一轮
+    assert op.judge(item_of(web), ctx_for([["read"], ["web_search"]])).value == "满足"
+    assert op.judge(item_of(web), ctx_for([["read"], ["read"]])).value == "违反"
+    # 禁止：第 N 轮 / 全程
+    assert op.judge(item_of(web, "forbid", turn=2), ok).value == "违反"
+    assert op.judge(item_of(web, "forbid", turn=1), ok).value == "满足"
+    assert op.judge(item_of(web, "forbid"), ctx_for([["read"], ["read"]])).value == "满足"
+    assert op.judge(item_of(web, "forbid"), ok).value == "违反"
+    # forced 不判；观测能力缺失判不适用（两个动作同规则）
+    assert op.judge(item_of(web), ctx_for([["web_search"]], mode="forced")).value == "不适用"
+    assert op.judge(item_of(web), ctx_for([["web_search"]],
+                       caps={"observe_tools": False})).value == "不适用"
+    skill = {"kind": "load_skill", "skill": "trade-documents"}
+    assert op.judge(item_of(skill), ctx_for([["trade-documents"]],
+                       caps={"observe_skills": False})).value == "不适用"
+    rec = {"mode": "natural", "status": "ok", "case": {},
+           "turns": [turn(output="答", skills=("trade-documents",))]}
+    assert op.judge(item_of(skill), build_context(rec)).value == "满足"

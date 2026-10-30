@@ -636,3 +636,51 @@ def test_warn_required_subjective_and_subjective_with_keywords(env):
     case = parse_ok(env, text, "kr-0001")
     assert any("必要事实 F1 标为主观" in w for w in case["_warnings"])
     assert any("写了关键词" in w for w in case["_warnings"])
+
+
+# ---------------------------------------------------------------- doc/18 §4.1：路径「调用 tool」
+
+TC_CASE = """---
+id: tc-0001
+dim: 工具调用
+status: draft
+---
+
+## 问题
+- 用户：查一下今天的美元汇率
+
+## 关键条件
+- 币种：美元
+
+## 必要事实
+- F1：给出美元汇率参考区间
+
+## 路径
+- 必须：调用 tool web_search 【轮次：2】【计分】【权重：20】
+- 禁止：调用 tool pwsh
+"""
+
+
+def test_path_call_tool_parse(env):
+    case = md2case.md_to_case(TC_CASE, "tc-0001.md")
+    rows = md2case.compile_case(case, {}, "t")
+    p = rows[0]["path"]
+    assert p[0] == {"type": "must", "action": {"kind": "call_tool", "tool": "web_search"}, "turn": 2}
+    assert p[1] == {"type": "forbid", "action": {"kind": "call_tool", "tool": "pwsh"}}
+    # 用途与权重进顶层 scoring 块（doc/17 §3.2，与事实条目同路），不进 path 条目
+    assert rows[0]["scoring"]["items"]["path#1"] == {"use": "score", "weight": 100.0}
+
+
+def test_path_call_tool_skill_is_error(env):
+    """调用 tool skill 报错：skill 工具加载的是技能，应写「加载 skill」（doc/18 §4.1）。"""
+    import pytest
+    from md2case import CaseError
+    with pytest.raises(CaseError) as e:
+        md2case.md_to_case(TC_CASE.replace("web_search", "skill"), "tc-0002.md")
+    assert any("应写成「加载 skill" in str(x) for x in e.value.errors)
+
+
+def test_observed_tool_names_empty_without_db(env):
+    """库不可读 / 无观测数据时 check 不提示未知工具名（doc/18 §4.1）。"""
+    assert md2case.observed_tool_names(None) == set()
+    assert md2case.observed_tool_names(env / "no-such.db") == set()

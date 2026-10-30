@@ -179,6 +179,11 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
     )
     if (mismatch.length > 0) warnings.push(`skills_mismatch：${String(mismatch.length)} 段无注入会话的副本 sha256 与基底不一致`)
   }
+  // 同 run 内工具清单应一致（doc/18 §2.2）：各会话 header 观测的 tools_sha 不同即告警
+  const toolShas = new Set(all.map((r) => r.observed_tools?.sha256).filter((x): x is string => !!x))
+  if (toolShas.size > 1) {
+    warnings.push(`tools_mismatch：本 run 各会话的工具清单不一致（${String(toolShas.size)} 种 sha），对比页按 tools 轴需注意`)
+  }
   manifest.warnings = warnings
   manifest.finished_at = new Date().toISOString()
   await store.writeManifest(manifest)

@@ -174,7 +174,12 @@ def judge_pending(store: Store, pending: list[dict], cfg, rules: Rules, rules_sh
         a = store.answer(p["answer_id"])
         record = json.loads(a["record_json"])
         spec = store.spec_of(a["qkey"], p["standard_fp"])
-        judged = judge_episode(record, cfg, a["run_id"], cache, case=spec)
+        caps = None                                       # 适配器观测能力（doc/18 §6）
+        try:
+            caps = json.loads(store.run(a["run_id"])["capabilities_json"] or "null")
+        except (json.JSONDecodeError, TypeError, KeyError):
+            pass
+        judged = judge_episode(record, cfg, a["run_id"], cache, case=spec, capabilities=caps)
         if judged.rows:
             store.write_verdicts(a["answer_id"], p["standard_fp"], cfg.chain_sha, judged.rows)
         eps += 1

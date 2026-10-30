@@ -1,6 +1,8 @@
 import type { InjectionOp, LoadedSkill, Observations, Profile, TurnTrace } from '../domain.js'
 import type { Probe } from '../ports.js'
 import { sha256 } from '../profile.js'
+import { canonicalJson } from '../snapshot.js'
+import { extractText } from '../vendor/collector.js'
 import type { ToolCallRecord, ToolResultRecord } from '../vendor/types.js'
 
 /** dsh-tool-skill 成功结果的渲染标记：<skill_content name="..."> */
@@ -129,4 +131,50 @@ export function observe(trace: TurnTrace, profile: Profile, injections: readonly
     model: trace.models?.[0] ?? null,
     injections_observed: extractInjectionsObserved(trace.toolCalls, trace.toolResults, profile.skill_tool, injections),
   }
+}
+
+// ---------------------------------------------------------------- 会话级 header 观测（doc/18 §2.2）
+
+export interface HeaderToolEntry { name: string; description?: unknown; parameters?: unknown }
+
+/**
+ * 从一段会话日志文本解析 request/header 的生效工具清单与 system/message 系统提示
+ * （doc/18 §2.2）。`request/header` 每会话一帧、只随第 1 轮切出的日志出现——调用方
+ * 传本轮 fresh 文本，返回 null 表示该段没有这些帧；会话级字段由 episode-runner
+ * 取各轮第一个非空值。与 vendor 的 collectFromJsonl 吃同一段文本，vendor 零改动。
+ */
+export function parseSessionHeader(text: string): { tools: HeaderToolEntry[]; systemPrompt: string } | null {
+  let tools: HeaderToolEntry[] | null = null
+  let systemPrompt: string | null = null
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === '') continue
+    let frame: { type?: unknown; data?: Record<string, unknown> }
+    try {
+      frame = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (frame.type === 'request/header') {
+      const t = (frame.data?.header as { tools?: unknown } | undefined)?.tools
+      if (Array.isArray(t)) {
+        tools = t.filter(
+          (x): x is HeaderToolEntry => !!x && typeof x === 'object' && typeof (x as HeaderToolEntry).name === 'string',
+        )
+      }
+    } else if (frame.type === 'system/message') {
+      // 同 assistant/message：文本在 data.message（string / ContentBlock[] / {content}）
+      const s = extractText((frame.data as { message?: unknown } | undefined)?.message)
+      if (typeof s === 'string' && s !== '') systemPrompt = s
+    }
+  }
+  if (tools === null && systemPrompt === null) return null
+  return { tools: tools ?? [], systemPrompt: systemPrompt ?? '' }
+}
+
+/** 工具清单指纹（doc/18 §2.2）：(name, description, parameters) 排序后规范化哈希；名称清单去重排序 */
+export function toolsFingerprint(tools: readonly HeaderToolEntry[]): { sha256: string; names: string[] } {
+  const payload = tools
+    .map((t) => ({ name: t.name, description: t.description ?? null, parameters: t.parameters ?? null }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  return { sha256: sha256(canonicalJson(payload)), names: [...new Set(tools.map((t) => t.name))].sort() }
 }

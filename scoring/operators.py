@@ -81,10 +81,13 @@ class KeywordOperator:
 
 @operator
 class SkillPathOperator:
-    """路径约束规则（§9 首批，语义同现行 check_path / CASE-STRUCTURE §2.10）：
-    forced 会话判"不适用"；必须=截至 N 轮（含）已加载过；禁止=第 N 轮 / 全程。"""
+    """路径约束规则（§9 首批 + doc/18 §4.2，语义同现行 check_path / CASE-STRUCTURE §2.10）：
+    按 action.kind 分派——load_skill（字节形态 doc/18 前后不变）与 call_tool（@2 新增）。
+    forced 会话判"不适用"；必须=截至 N 轮（含）发生过；禁止=第 N 轮 / 全程。
+    适配器观测能力缺失（capabilities 显式 false，doc/18 §6）时两个方向都判"不适用"——
+    观测不到不是没发生。"""
 
-    id, version, source = "skill-path", "1", "rule"
+    id, version, source = "skill-path", "2", "rule"
     scales = {"path": SCALES["path"]}
     inputs = ()
 
@@ -93,20 +96,31 @@ class SkillPathOperator:
         opid = f"{self.id}@{self.version}"
         if ctx.record.get("mode") == "forced":
             return Verdict("不适用", self.source, opid, reason="forced 会话不判路径")
-        per_turn = [set(s) for s in ctx.skills_by_turn]
+        action = p.get("action") or {}
+        caps = ctx.capabilities or {}
+        if action.get("kind") == "call_tool":
+            if caps.get("observe_tools") is False:
+                return Verdict("不适用", self.source, opid, reason="适配器无法观测 tool 调用")
+            return self._window(p, action.get("tool"), ctx.tools_by_turn, "调用 tool", opid)
+        if caps.get("observe_skills") is False:
+            return Verdict("不适用", self.source, opid, reason="适配器无法观测 skill 加载")
+        return self._window(p, action.get("skill"), ctx.skills_by_turn, "加载 skill", opid)
+
+    def _window(self, p: dict, name, per_turn: tuple[frozenset[str], ...], label: str, opid: str) -> Verdict:
+        """必须/禁止 × 有无轮次：与「加载 skill」同一套窗口语义（doc/18 §4.1）。"""
         n = len(per_turn)
-        skill = (p.get("action") or {}).get("skill")
-        if not skill:
-            return Verdict("满足", self.source, opid, reason="约束无 skill 动作")
+        if not name:
+            return Verdict("满足", self.source, opid, reason=f"约束无 {label} 动作")
         turn = p.get("turn")
         if p.get("type") == "must":
             upto = per_turn[: turn or n]
-            loaded = [i + 1 for i in range(len(upto)) if skill in upto[i]]
-            if loaded:
-                return Verdict("满足", self.source, opid, reason=f"必须：{skill} 第 {loaded[0]} 轮已加载")
-            return Verdict("违反", self.source, opid, reason=f"必须：截至第 {turn or n} 轮未加载 {skill}")
+            hit = [i + 1 for i in range(len(upto)) if name in upto[i]]
+            if hit:
+                return Verdict("满足", self.source, opid, reason=f"必须：{label} {name} 第 {hit[0]} 轮已发生")
+            return Verdict("违反", self.source, opid, reason=f"必须：截至第 {turn or n} 轮未{label} {name}")
         window = [turn - 1] if turn else list(range(n))
-        loaded = [i + 1 for i in window if i < n and skill in per_turn[i]]
-        if loaded:
-            return Verdict("违反", self.source, opid, reason=f"禁止：{skill} 第 {'、'.join(map(str, loaded))} 轮发生加载")
-        return Verdict("满足", self.source, opid, reason=f"禁止：{'第 %d 轮' % turn if turn else '全程'}未加载 {skill}")
+        hit = [i + 1 for i in window if i < n and name in per_turn[i]]
+        if hit:
+            return Verdict("违反", self.source, opid, reason=f"禁止：{label} {name} 第 {'、'.join(map(str, hit))} 轮发生")
+        return Verdict("满足", self.source, opid,
+                       reason=f"禁止：{'第 %d 轮' % turn if turn else '全程'}未{label} {name}")

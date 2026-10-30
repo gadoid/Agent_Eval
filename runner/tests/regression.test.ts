@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { collectFromFile } from '../src/vendor/collector.js'
-import { extractLoadedSkills } from '../src/probes/index.js'
+import { extractLoadedSkills, parseSessionHeader, toolsFingerprint } from '../src/probes/index.js'
+import { decodeZstdLog } from '../src/vendor/zstd.js'
 
 /** 递归找 fixture 里唯一的 session.v4.jsonl.zstd（昨日 field-verify-eline 真实 forced 会话） */
 function findZstd(dir: string): string {
@@ -36,5 +37,21 @@ describe('真实日志回归（dsh 0.2.0-rc.2 / eline，2026-10-21 field-verify-
     expect(trace.finalText.length).toBeGreaterThan(50)
     expect(trace.tokens.total).toBeGreaterThan(0)
     expect(trace.turnEnd).toBe('completed')
+  })
+
+  it('header 观测：解析 24 个生效工具与系统提示（doc/18 §2.2）', () => {
+    const text = decodeZstdLog(readFileSync(findZstd(FIXTURE)))
+    const header = parseSessionHeader(text)
+    expect(header).not.toBeNull()
+    expect(header!.tools.length).toBe(24)
+    expect(header!.tools.map((t) => t.name)).toContain('web_search')
+    expect(header!.systemPrompt.length).toBeGreaterThan(0)
+    const fp = toolsFingerprint(header!.tools)
+    expect(fp.names.length).toBe(24)                     // 名称去重排序
+    expect(fp.sha256).toHaveLength(64)                   // (name, description, parameters) 排序哈希
+    // 无 header 帧的文本返回 null；只有 system/message 时工具为空清单
+    expect(parseSessionHeader('{"type":"user/message","data":{}}')).toBeNull()
+    const sysOnly = parseSessionHeader('{"type":"system/message","data":{"message":"sys"}}')
+    expect(sysOnly!.tools).toEqual([]) && expect(sysOnly!.systemPrompt).toBe('sys')
   })
 })

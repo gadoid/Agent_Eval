@@ -1,5 +1,6 @@
 """题目指纹与变体泄露嫌疑（items.py；R6/R11 验收）。"""
-from scoring.items import input_fp_of, standard_fp_of, qkey_of, variant_leak_suspects
+from scoring.items import (build_context, input_fp_of, qkey_of, standard_fp_of,
+                           variant_leak_suspects)
 from tests.helpers import mk_record
 
 
@@ -186,3 +187,15 @@ def test_attr_value_normalizes_evalset_version():
     row = {"profile_id": "p", "evalset_version": "D:/a/b/evalset-v20261022-1.jsonl"}
     assert attr_value(row, "evalset_version") == "v20261022-1"
     assert attr_value(row, "profile") == "p"
+
+
+def test_build_context_tools_by_turn_and_capabilities():
+    """doc/18 §4.2/§6：逐轮调用过的 tool 名进 EpisodeContext；capabilities 缺省 None（可观测）。"""
+    rec = {"status": "ok",
+           "turns": [{"source": "live", "output": "a",
+                      "observations": {"tools": [{"name": "read", "args": "{}"}, {"name": "web_search", "args": ""}]}},
+                     {"source": "live", "output": "b", "observations": {}}]}
+    ctx = build_context(rec, capabilities={"observe_tools": False})
+    assert ctx.tools_by_turn == (frozenset({"read", "web_search"}), frozenset())
+    assert ctx.capabilities == {"observe_tools": False}
+    assert build_context(rec).capabilities is None

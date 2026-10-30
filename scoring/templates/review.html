@@ -37,6 +37,7 @@
 
   <div class="rv-review-layout">
     <section class="rv-conv" id="conv" aria-label="对话">
+      {% if v.observed_tools %}<div class="rv-meta" style="margin-bottom:8px">生效工具（header 观测，doc/18 §2.2）：{{ v.observed_tools|join('、') }}</div>{% endif %}
       {% for t in v.turns %}
       <article class="rv-turn" data-turn="{{ t.index or loop.index }}">
         <div class="rv-turn-head"><b>第 {{ t.index or loop.index }} 轮</b>
@@ -44,6 +45,7 @@
           {% for s in t.skills %}<span class="rv-obs">技能 {{ s }} ✓</span>{% endfor %}
           {% if t.ask_user %}<span class="rv-obs">反问 {{ t.ask_user }}</span>{% endif %}
           {% for e in t.tool_errors %}<span class="rv-obs" data-ok="false">{{ e.name if e.name else '工具错误' }}</span>{% endfor %}
+          {% if t.tools %}<span class="rv-obs" title="{{ t.tools|join('、') }}">工具×{{ t.tools|length }}</span>{% endif %}
           <span class="rv-turn-items"></span></div>
         {# runner 写 source='prefill'（预置历史），'preset' 为旧拼写，一并识别 #}
         <div class="rv-msg" data-role="{{ 'preset' if t.source in ('preset', 'prefill') else 'user' }}">

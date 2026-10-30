@@ -501,14 +501,19 @@ def p_path(lines, rule, errors):
             continue
         kv = split_once(t, COLONS)
         if not kv or kv[0] not in ("必须", "禁止") or not kv[1]:
-            errors.append(f"第 {no} 行：应写成「必须：加载 skill 名称」或「禁止：加载 skill 名称」")
+            errors.append(f"第 {no} 行：应写成「必须：加载 skill 名称」或「禁止：调用 tool 名称」等路径动作")
             continue
-        m = re.fullmatch(r"加载\s*skill\s+(\S+)", kv[1])
-        if not m:
-            errors.append(f"第 {no} 行：第一期动作只支持「加载 skill <名称>」")
+        m_skill = re.fullmatch(r"加载\s*skill\s+(\S+)", kv[1])
+        m_tool = re.fullmatch(r"调用\s*tool\s+(\S+)", kv[1])
+        if not m_skill and not m_tool:
+            errors.append(f"第 {no} 行：路径动作只支持「加载 skill <名称>」或「调用 tool <名称>」（doc/18 §4.1）")
             continue
-        item = {"type": "must" if kv[0] == "必须" else "forbid",
-                "action": {"kind": "load_skill", "skill": m.group(1)}}
+        if m_tool and m_tool.group(1) == "skill":
+            errors.append(f"第 {no} 行：调用 tool skill 应写成「加载 skill <名称>」——skill 工具加载的是技能")
+            continue
+        action = ({"kind": "load_skill", "skill": m_skill.group(1)} if m_skill
+                  else {"kind": "call_tool", "tool": m_tool.group(1)})
+        item = {"type": "must" if kv[0] == "必须" else "forbid", "action": action}
         if (turn := parse_turn_attr(attrs, no, errors)) is not None:
             item["turn"] = turn
         use, weight = _use_weight_attrs(attrs, "path", kv[0], no, errors)
@@ -1324,9 +1329,37 @@ def report(failures) -> None:
         print(e, file=sys.stderr)
 
 
+def observed_tool_names(db_path: Path | None) -> set[str]:
+    """库内已观测的工具名并集（answers.record_json 的 observed_tools.names；doc/18 §4.1）。
+    库不可读或没有观测数据时返回空集——check 对未知工具名不提示。"""
+    if db_path is None or not Path(db_path).is_file():
+        return set()
+    import sqlite3
+    names: set[str] = set()
+    try:
+        conn = sqlite3.connect(f"file:{Path(db_path).as_posix()}?mode=ro", uri=True)
+        for (rj,) in conn.execute(
+                "SELECT record_json FROM answers WHERE record_json LIKE '%observed_tools%'"):
+            try:
+                names |= set((json.loads(rj).get("observed_tools") or {}).get("names") or [])
+            except ValueError:
+                continue
+        conn.close()
+    except sqlite3.Error:
+        return set()
+    return names
+
+
 def cmd_check(args) -> int:
     mapping = load_mapping()
     cases, failures, _ = load_all(args.paths, mapping)
+    known_tools = observed_tool_names(Path(args.db) if args.db else default_db_path())
+    for c in cases:                       # 「调用 tool」名称与库内已观测清单对照（doc/18 §4.1）
+        for p in c.get("path") or []:
+            tool = (p.get("action") or {}).get("tool")
+            if tool and known_tools and tool not in known_tools:
+                c.setdefault("_warnings", []).append(
+                    f"调用 tool {tool} 不在库内已观测的工具清单中（先跑一轮再看，或核对工具名）")
     docs_errors: list[str] = []
     if args.docs:
         roots = [Path(p) for p in args.docs.split(",") if p.strip()]
@@ -1569,7 +1602,9 @@ def case_to_md(case: dict, mapping: dict | None = None) -> str:
                                          "计分": True if f.get("use") == "score" else None,
                                          "参考": True if f.get("use") == "ref" else None})
                             for f in v],
-        "path": lambda v: [f"- {'必须' if p['type'] == 'must' else '禁止'}：加载 skill {p['action']['skill']}"
+        "path": lambda v: [f"- {'必须' if p['type'] == 'must' else '禁止'}："
+                           + (f"加载 skill {p['action']['skill']}" if p['action'].get("kind") != "call_tool"
+                              else f"调用 tool {p['action']['tool']}")
                            + attrs_str({"轮次": p.get("turn"), "权重": p.get("weight"),
                                         "计分": True if p.get("use") == "score" else None,
                                         "参考": True if p.get("use") == "ref" else None}) for p in v],
@@ -1646,6 +1681,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("check", help="校验 md 用例")
     p.add_argument("paths", nargs="+")
     p.add_argument("--docs", help="skill 根目录（逗号分隔），追加与原文一致性校验")
+    p.add_argument("--db", help=f"评测库路径（对照已观测工具名；缺省读 {DB_ENV} 或仓库 archive/eval.db）")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("convert", help="单个 md 转 YAML")

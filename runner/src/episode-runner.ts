@@ -3,7 +3,9 @@ import { RECORD_SCHEMA, userTurnsOf } from './domain.js'
 import type { AppliedInjection } from './materialize.js'
 import { ScriptedDriver } from './drivers/scripted.js'
 import type { AgentAdapter, AgentSession, Intervention, InterventionPlan, PrefillTurn, UserDriver } from './ports.js'
-import { observe } from './probes/index.js'
+import { observe, toolsFingerprint } from './probes/index.js'
+import type { HeaderToolEntry } from './probes/index.js'
+import { sha256 } from './profile.js'
 import { emptyTokenUsage } from './vendor/types.js'
 
 export interface EpisodeSpec {
@@ -59,6 +61,9 @@ export async function runEpisode(spec: EpisodeSpec, deps: EpisodeDeps): Promise<
   let session: AgentSession | null = null
   let artifacts: { sessionLog: string | null; sessionId: string | null } = { sessionLog: null, sessionId: null }
   let episodeError: string | undefined
+  // 会话级 header 观测（doc/18 §2.2）：帧只随第 1 轮出现，取各轮第一个非空值
+  let headerTools: HeaderToolEntry[] | null = null
+  let systemPrompt: string | null = null
 
   try {
     session = await deps.adapter.open(
@@ -78,6 +83,8 @@ export async function runEpisode(spec: EpisodeSpec, deps: EpisodeDeps): Promise<
         outcome = { status: 'error', error: `适配器异常：${(err as Error).message}`, durationMs: 0, trace: emptyTraceOutcome() }
       }
       turns.push(liveRecord(index, input, outcome, profile, row.injections ?? []))
+      if (!headerTools && outcome.trace.headerTools?.length) headerTools = outcome.trace.headerTools
+      if (systemPrompt === null && outcome.trace.systemPrompt) systemPrompt = outcome.trace.systemPrompt
       liveIndex++
       if (outcome.status !== 'ok') {
         failedTurn = index
@@ -123,6 +130,8 @@ export async function runEpisode(spec: EpisodeSpec, deps: EpisodeDeps): Promise<
     turns,
     final_output: turns.at(-1)?.source === 'live' ? (turns.at(-1)?.output ?? '') : '',
     loaded_skills: uniqueSkills(live),
+    observed_tools: headerTools ? toolsFingerprint(headerTools) : null,
+    system_prompt_sha: systemPrompt !== null ? sha256(systemPrompt) : null,
     usage: sumUsage(live),
     duration_ms: Date.now() - startedAt,
     artifacts: { session_log: artifacts.sessionLog, session_id: artifacts.sessionId, run_dir: spec.runDir },

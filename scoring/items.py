@@ -145,6 +145,8 @@ class EpisodeContext:
     case: dict
     outputs: tuple[str, ...]
     skills_by_turn: tuple[frozenset[str], ...]
+    tools_by_turn: tuple[frozenset[str], ...] = ()   # 各轮调用过的 tool 名（doc/18 §4.2）
+    capabilities: dict | None = None                 # 适配器观测能力（doc/18 §6）；None = 缺省可观测
 
     def answer_for(self, item: Item) -> str:
         """轮次定位（现行 _pick）：写了轮次且在 1..N 内取该轮；否则取最后一轮。"""
@@ -170,13 +172,27 @@ def loaded_skills_by_turn(record: dict) -> list[set[str]]:
     return out
 
 
-def build_context(record: dict, case: dict | None = None) -> EpisodeContext:
-    """case 缺省取 record 内嵌编译行；重判（期望修订）时传入 specs 表中的期望编译行。"""
+def called_tools_by_turn(record: dict) -> list[set[str]]:
+    """逐轮调用过的 tool 名（doc/18 §4.2）：observations.tools 的 name 集合。"""
+    out: list[set[str]] = []
+    for t in record.get("turns") or []:
+        names = {o["name"] for o in (t.get("observations") or {}).get("tools", []) if o.get("name")}
+        out.append(names)
+    return out
+
+
+def build_context(record: dict, case: dict | None = None,
+                  capabilities: dict | None = None) -> EpisodeContext:
+    """case 缺省取 record 内嵌编译行；重判（期望修订）时传入 specs 表中的期望编译行。
+    capabilities 为适配器观测能力声明（doc/18 §6，来自 run 的 capabilities_json）；
+    缺省 None 视为全部可观测（DSH 家族与旧记录）。"""
     return EpisodeContext(
         record=record,
         case=case if case is not None else (record.get("case") or {}),
         outputs=tuple(live_outputs(record)),
         skills_by_turn=tuple(frozenset(s) for s in loaded_skills_by_turn(record)),
+        tools_by_turn=tuple(frozenset(s) for s in called_tools_by_turn(record)),
+        capabilities=capabilities,
     )
 
 

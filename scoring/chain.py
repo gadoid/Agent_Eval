@@ -255,10 +255,11 @@ class EpisodeJudged:
 
 
 def judge_episode(record: dict, cfg: OperatorConfig, run_id: str, cache: VerdictCache | None = None,
-                  case: dict | None = None) -> EpisodeJudged:
+                  case: dict | None = None, capabilities: dict | None = None) -> EpisodeJudged:
     """对一段会话的全部条目执行链，产出 verdicts.jsonl 行。会话前置不满足时无行。
-    case 缺省取 record 内嵌编译行；重判时传 specs 表中的期望编译行。"""
-    ctx = build_context(record, case)
+    case 缺省取 record 内嵌编译行；重判时传 specs 表中的期望编译行。
+    capabilities 为适配器观测能力（doc/18 §6，来自 run 的 capabilities_json）。"""
+    ctx = build_context(record, case, capabilities)
     err = episode_error(record, ctx)
     if err:
         return EpisodeJudged(record, ctx, [], err)

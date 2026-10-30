@@ -123,6 +123,10 @@ export interface TurnTrace {
   tokens: TokenUsage
   /** request/header 事件中观测到的模型标识（该版本日志可得；适配器可不填） */
   models?: string[]
+  /** request/header 的生效工具清单与本轮 system/message 系统提示（doc/18 §2.2）。
+   *  每会话一帧、只随第 1 轮出现：会话级观测由 episode-runner 取各轮第一个非空值 */
+  headerTools?: { name: string; description?: unknown; parameters?: unknown }[]
+  systemPrompt?: string
 }
 
 export interface TurnOutcome {
@@ -218,6 +222,10 @@ export interface EpisodeRecord {
   final_output: string
   /** 各轮加载过的 skill（去重，保留首次出现顺序） */
   loaded_skills: string[]
+  /** 会话级 header 观测（doc/18 §2.2）：生效工具清单指纹与名称；旧记录无此字段（null） */
+  observed_tools?: { sha256: string; names: string[] } | null
+  /** system/message 文本哈希：只做一致性观测，不能当身份（doc/18 §2.2） */
+  system_prompt_sha?: string | null
   usage: { steps: number; tokens: TokenUsage }
   duration_ms: number
   artifacts: { session_log: string | null; session_id: string | null; run_dir: string; session_mirror?: string | null }
@@ -272,4 +280,8 @@ export interface AdapterCapabilities {
   multiTurn: boolean
   /** 能否把记录的助手回复预置为历史（history: prefill） */
   prefillHistory: boolean
+  /** 能否观测 skill 加载（doc/18 §6）：不能时 skill 路径条目判「不适用」；缺省视为可观测 */
+  observeSkills?: boolean
+  /** 能否观测 tool 调用（doc/18 §6）：不能时工具路径条目判「不适用」；缺省视为可观测 */
+  observeTools?: boolean
 }

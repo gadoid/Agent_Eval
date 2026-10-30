@@ -6,6 +6,7 @@ import type { Browser, Page } from 'playwright'
 import type { AdapterCapabilities, Profile, TurnOutcome, TurnStatus, TurnTrace } from '../domain.js'
 import type { AgentAdapter, AgentSession } from '../ports.js'
 import { collectFromJsonl } from '../vendor/collector.js'
+import { parseSessionHeader } from '../probes/index.js'
 import { resolveDshCommand } from '../vendor/dsh-kernel.js'
 import type { DshCommand } from '../vendor/dsh-kernel.js'
 import { emptyTokenUsage } from '../vendor/types.js'
@@ -233,7 +234,14 @@ class WebUiSession implements AgentSession {
     if (fresh.length === 0) return null
     if (!fresh.some((l) => l.includes('"turn/end"'))) return null
     this.consumedLines = lines.length
-    return collectFromJsonl(fresh.join('\n'))
+    const text = fresh.join('\n')
+    const trace: TurnTrace = { ...collectFromJsonl(text) }
+    const header = parseSessionHeader(text)             // 会话级观测（doc/18 §2.2）
+    if (header) {
+      if (header.tools.length > 0) trace.headerTools = header.tools
+      if (header.systemPrompt !== '') trace.systemPrompt = header.systemPrompt
+    }
+    return trace
   }
 }
 

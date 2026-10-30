@@ -3,6 +3,7 @@ import { basename, dirname, join } from 'node:path'
 import type { AdapterCapabilities, Profile, TurnOutcome, TurnStatus, TurnTrace } from '../domain.js'
 import type { AgentAdapter, AgentSession, SessionContext } from '../ports.js'
 import { collectFromJsonl } from '../vendor/collector.js'
+import { parseSessionHeader } from '../probes/index.js'
 import { buildModelOverlayEntries, buildSkillsOverlayEntries } from '../materialize.js'
 import { buildDshArgs, buildOverlayYaml, findSessionFile, resolveDshCommand, runOne } from '../vendor/dsh-kernel.js'
 import type { DshCommand } from '../vendor/dsh-kernel.js'
@@ -126,7 +127,15 @@ class DshSession implements AgentSession {
     const fresh = lines.slice(this.consumedLines)
     this.consumedLines = lines.length
     if (!this.sessionId) this.sessionId = deriveSessionId(path, lines[0])
-    return fresh.length > 0 ? collectFromJsonl(fresh.join('\n')) : null
+    if (fresh.length === 0) return null
+    const text = fresh.join('\n')
+    const trace: TurnTrace = { ...collectFromJsonl(text) }
+    const header = parseSessionHeader(text)             // 会话级观测（doc/18 §2.2）：与 vendor 同一段文本
+    if (header) {
+      if (header.tools.length > 0) trace.headerTools = header.tools
+      if (header.systemPrompt !== '') trace.systemPrompt = header.systemPrompt
+    }
+    return trace
   }
 }
 
