@@ -1,11 +1,15 @@
-"""被测配置指纹（doc/15 §3.1）：③ 被测配置的身份 = subject_fp。
+"""被测配置指纹（doc/15 §3.1 + doc/18 §2.1）：③ 被测配置的身份 = subject_fp。
 
 字段表与缺省值和 runner 解析 profile 的缺省一致（B6：缺失字段按缺省补齐，
 不写 unknown——同一套配置的旧记录不会因缺字段分裂成两组；确实缺关键项的
 标 subject_incomplete）。agent.name 即 adapter 名（orchestrator.ts：agent 段）。
-Python 侧用于 v8 迁移回填与 ingest；runner 侧（snapshot.ts）有一份 TS 实现，
+Python 侧用于 ingest 与回算；runner 侧（snapshot.ts）有一份 TS 实现，
 同一 manifest fixture 两端必须得出相同指纹（tests/test_subject.py +
-runner/tests 对拍，doc/15 §7.4）。
+runner/tests 对拍，doc/15 §7.4）。doc/18 起：eline_profile_sha 移出 subject
+（仍在 snapshot，RESUME_KEYS 用），新增 persona_sha / plugins_sha，
+model/effort/provider 取有效值（覆盖 > cordis agent-default-model，
+bundle 提供时拿不到 → null，观测兜底）；cordis 解析只在 TS 一份，
+Python 读 manifest.snapshot.cordis 段。
 """
 from __future__ import annotations
 
@@ -31,10 +35,11 @@ def parse_profile_overrides(profile_id: str) -> tuple[str | None, str | None]:
 
 
 def subject_of_manifest(manifest: dict) -> dict:
-    """run.json（manifest）→ subject 字段表（doc/15 §3.1，键序即规范化序）。"""
+    """run.json（manifest）→ subject 字段表（doc/15 §3.1 + doc/18 §2.1，键序即规范化序）。"""
     prof = (manifest or {}).get("profile") or {}
     content = prof.get("content") if isinstance(prof.get("content"), dict) else {}
     snap = (manifest or {}).get("snapshot") or {}
+    cord = snap.get("cordis") if isinstance(snap.get("cordis"), dict) else {}
     pid = str(prof.get("id") or content.get("id") or "")
     ov_model, ov_effort = parse_profile_overrides(pid)
     dsh = content.get("dsh") or {}
@@ -43,10 +48,12 @@ def subject_of_manifest(manifest: dict) -> dict:
         "agent": {"name": agent.get("name") or _DEFAULTS["agent"]["name"],
                   "version": agent.get("version")},
         "dsh_profile": dsh.get("profile") or _DEFAULTS["dsh_profile"],
-        "eline_profile_sha": ((snap.get("eline_profile") or {}) or {}).get("sha256"),
-        "model": ov_model if ov_model is not None else content.get("model"),
-        "model_provider": content.get("model_provider"),
-        "reasoning_effort": ov_effort if ov_effort is not None else content.get("reasoning_effort"),
+        "model": ov_model if ov_model is not None else (content.get("model") or cord.get("model")),
+        "model_provider": content.get("model_provider") or cord.get("model_provider"),
+        "persona_sha": cord.get("persona_sha"),
+        "plugins_sha": cord.get("plugins_sha"),
+        "reasoning_effort": ov_effort if ov_effort is not None
+        else (content.get("reasoning_effort") or cord.get("reasoning_effort")),
         "routing": content.get("routing") or {},
         "skill_tool": content.get("skill_tool") or _DEFAULTS["skill_tool"],
         "skills_base": snap.get("skills_base"),

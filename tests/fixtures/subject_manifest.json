@@ -1,101 +1,209 @@
 {
-  "description": "被测指纹双实现对拍 fixture（doc/15 §7.4）：Python scoring/subject.py 与 TS runner/src/snapshot.ts 必须对每个 case 得出相同 subject_fp。ts_profile_overrides 模拟 CLI --model/--reasoning-effort 在 profile 上的生效值（Python 侧从 profile id 后缀解析）。",
-  "cases": [
-    {
-      "name": "full-bundled-copy",
-      "manifest": {
-        "profile": {
-          "id": "eline-glm53-bundledcopy",
-          "content": {
-            "id": "eline-glm53-bundledcopy",
-            "model": "glm-5.3",
-            "model_provider": "deepseek-account",
-            "reasoning_effort": "high",
-            "skills_mode": "bundled-copy",
-            "skill_tool": "skill",
-            "routing": {
-              "进单资料审核": [
-                "trade-documents"
-              ]
-            },
-            "dsh": {
-              "profile": "headless"
-            }
-          }
-        },
-        "snapshot": {
-          "skills_mode": "bundled-copy",
-          "skills_base": "0123456789abcdef0123",
-          "agent": {
-            "name": "dsh-cli",
-            "version": "0.2.0-rc.6"
-          },
-          "eline_profile": {
-            "method": "files",
-            "sha256": "fedcba0987654321",
-            "files": [
-              "~/.eline/agent.json"
-            ]
-          }
-        }
+ "description": "被测指纹双实现对拍 fixture（doc/15 §7.4 + doc/18 §2.1）：Python scoring/subject.py 与 TS runner/src/snapshot.ts 必须对每个 case 得出相同 subject_fp。ts_profile_overrides 模拟 CLI --model/--reasoning-effort 在 profile 上的生效值（Python 侧从 profile id 后缀解析）。doc/18 起 snapshot 带 cordis 段（persona_sha/plugins_sha/有效模型）；无 cordis 段的旧 manifest 各字段按 null 落（legacy-sparse、persona-bundle-blindspot 验证）。",
+ "cases": [
+  {
+   "name": "full-bundled-copy",
+   "manifest": {
+    "profile": {
+     "id": "eline-glm53-bundledcopy",
+     "content": {
+      "id": "eline-glm53-bundledcopy",
+      "model": "glm-5.3",
+      "model_provider": "deepseek-account",
+      "reasoning_effort": "high",
+      "skills_mode": "bundled-copy",
+      "skill_tool": "skill",
+      "routing": {
+       "进单资料审核": [
+        "trade-documents"
+       ]
       },
-      "ts_profile_overrides": {},
-      "expected_subject_fp": "acef789ca9da6160",
-      "expected_incomplete": false
+      "dsh": {
+       "profile": "headless"
+      }
+     }
     },
-    {
-      "name": "override-suffix",
-      "manifest": {
-        "profile": {
-          "id": "eline-glm53-defaultroots@deepseek-v4-flash-high",
-          "content": {
-            "id": "eline-glm53-defaultroots",
-            "model": "glm-5.3",
-            "reasoning_effort": "low",
-            "skills_mode": "default-roots",
-            "dsh": {
-              "profile": "dsh-eval"
-            }
-          }
-        },
-        "snapshot": {
-          "skills_mode": "default-roots",
-          "skills_base": "abcdef0123456789abcd",
-          "agent": {
-            "name": "dsh-cli",
-            "version": "0.2.0-rc.6"
-          },
-          "eline_profile": {
-            "method": "files",
-            "sha256": "1111222233334444",
-            "files": []
-          }
-        }
-      },
-      "ts_profile_overrides": {
-        "model": "deepseek-v4-flash",
-        "reasoning_effort": "high"
-      },
-      "expected_subject_fp": "d148178046659e23",
-      "expected_incomplete": false
-    },
-    {
-      "name": "legacy-sparse",
-      "manifest": {
-        "profile": {
-          "id": "old-run",
-          "content": {
-            "id": "old-run"
-          }
-        },
-        "snapshot": {
-          "skills_mode": "default-roots",
-          "skills_base": "9999aaaabbbbccccdddd"
-        }
-      },
-      "ts_profile_overrides": {},
-      "expected_subject_fp": "ae687d385a76bafe",
-      "expected_incomplete": false
+    "snapshot": {
+     "skills_mode": "bundled-copy",
+     "skills_base": "0123456789abcdef0123",
+     "agent": {
+      "name": "dsh-cli",
+      "version": "0.2.0-rc.6"
+     },
+     "eline_profile": {
+      "method": "files",
+      "sha256": "fedcba0987654321",
+      "files": [
+       "~/.eline/agent.json"
+      ]
+     },
+     "cordis": {
+      "persona_sha": "pp-persona-1",
+      "plugins_sha": "gg-plugins-1",
+      "model": "glm-5.3",
+      "reasoning_effort": "high",
+      "model_provider": "deepseek-account",
+      "persona_from": "cordis",
+      "model_from": "cordis"
+     }
     }
-  ]
+   },
+   "ts_profile_overrides": {},
+   "expected_subject_fp": "aeebe6dd72b14230",
+   "expected_incomplete": false
+  },
+  {
+   "name": "override-suffix",
+   "manifest": {
+    "profile": {
+     "id": "eline-glm53-defaultroots@deepseek-v4-flash-high",
+     "content": {
+      "id": "eline-glm53-defaultroots",
+      "model": "glm-5.3",
+      "reasoning_effort": "low",
+      "skills_mode": "default-roots",
+      "dsh": {
+       "profile": "dsh-eval"
+      }
+     }
+    },
+    "snapshot": {
+     "skills_mode": "default-roots",
+     "skills_base": "abcdef0123456789abcd",
+     "agent": {
+      "name": "dsh-cli",
+      "version": "0.2.0-rc.6"
+     },
+     "eline_profile": {
+      "method": "files",
+      "sha256": "1111222233334444",
+      "files": []
+     },
+     "cordis": {
+      "persona_sha": "pp-persona-2",
+      "plugins_sha": "gg-plugins-2",
+      "model": "glm-5.3",
+      "reasoning_effort": "low",
+      "model_provider": null,
+      "persona_from": "cordis",
+      "model_from": "cordis"
+     }
+    }
+   },
+   "ts_profile_overrides": {
+    "model": "deepseek-v4-flash",
+    "reasoning_effort": "high"
+   },
+   "expected_subject_fp": "8b3018c751ee88d6",
+   "expected_incomplete": false
+  },
+  {
+   "name": "legacy-sparse",
+   "manifest": {
+    "profile": {
+     "id": "old-run",
+     "content": {
+      "id": "old-run"
+     }
+    },
+    "snapshot": {
+     "skills_mode": "default-roots",
+     "skills_base": "9999aaaabbbbccccdddd"
+    }
+   },
+   "ts_profile_overrides": {},
+   "expected_subject_fp": "8b423a17d7c67a61",
+   "expected_incomplete": false
+  },
+  {
+   "name": "effective-model-from-cordis",
+   "manifest": {
+    "profile": {
+     "id": "eline-cordis-default",
+     "content": {
+      "skills_mode": "default-roots",
+      "skill_tool": "skill",
+      "dsh": {
+       "profile": "evalheadless-trade"
+      }
+     }
+    },
+    "snapshot": {
+     "skills_mode": "default-roots",
+     "skills_base": "abcdef0123456789abcd",
+     "agent": {
+      "name": "dsh-cli",
+      "version": "0.2.1-rc.2"
+     },
+     "eline_profile": {
+      "method": "files",
+      "sha256": "5555666677778888",
+      "files": [
+       "cordis.patch.yml",
+       "cordis.yml",
+       "package.json"
+      ]
+     },
+     "cordis": {
+      "persona_sha": "pp-persona-1",
+      "plugins_sha": "gg-plugins-1",
+      "model": "deepseek-v4-flash",
+      "reasoning_effort": "medium",
+      "model_provider": "deepseek-account",
+      "persona_from": "cordis",
+      "model_from": "cordis"
+     }
+    }
+   },
+   "ts_profile_overrides": {},
+   "expected_subject_fp": "3f56ad59714f42f3",
+   "expected_incomplete": false
+  },
+  {
+   "name": "persona-bundle-blindspot",
+   "manifest": {
+    "profile": {
+     "id": "eline-persona-bundle",
+     "content": {
+      "skills_mode": "default-roots",
+      "skill_tool": "skill",
+      "dsh": {
+       "profile": "evalheadless-trade"
+      },
+      "model": "glm-5.3",
+      "reasoning_effort": "high"
+     }
+    },
+    "snapshot": {
+     "skills_mode": "default-roots",
+     "skills_base": "abcdef0123456789abcd",
+     "agent": {
+      "name": "dsh-cli",
+      "version": "0.2.1-rc.2"
+     },
+     "eline_profile": {
+      "method": "files",
+      "sha256": "5555666677778888",
+      "files": [
+       "cordis.patch.yml",
+       "cordis.yml",
+       "package.json"
+      ]
+     },
+     "cordis": {
+      "persona_sha": null,
+      "plugins_sha": "gg-plugins-1",
+      "model": "glm-5.3",
+      "reasoning_effort": "high",
+      "model_provider": "deepseek-account",
+      "persona_from": "bundle_or_missing",
+      "model_from": "cordis"
+     }
+    }
+   },
+   "ts_profile_overrides": {},
+   "expected_subject_fp": "d65fc8ef3698ec46",
+   "expected_incomplete": false
+  }
+ ]
 }

@@ -84,7 +84,7 @@
     <div data-d="down"><div class="rv-delta-l">变差（−{{ dth }} 以下）</div><div class="rv-delta-n">{{ downs|length }}</div>
       <div class="rv-meta"><span>题</span>{% if rep.anchor_tripwires %}<span>含锚点绊线 {{ rep.anchor_tripwires|length }}</span>{% endif %}</div></div>
     <div><div class="rv-delta-l">不变</div><div class="rv-delta-n">{{ rep.n_shared - rep.questions|length }}</div>
-      <div class="rv-meta"><span>题</span><span>共有 {{ rep.n_shared }} 题 / {{ rep.n_shared_cases }} 用例</span></div></div>
+      <div class="rv-meta"><span>题</span><span>共有 {{ rep.n_shared }} 题 / {{ rep.n_shared_cases }} 用例</span>{% if rep.small_sample %}<span style="color:#b8860b">样本不足（&lt;{{ 30 }}），仅作方向参考</span>{% endif %}</div></div>
   </div>
   <div class="rv-meta" style="margin:-8px 0 16px">快照对比只切换判定标准与执行输入；计分权重按当前数据库口径（切回旧快照不会回滚权重），历史权重请看用例页的保存记录。</div>
 
@@ -101,8 +101,27 @@
     {% endfor %}
   </div>
 
+  {% if rep.cost %}
+  <section class="rv-card" style="margin-bottom:16px">
+    <div class="rv-cn-head"><b>成本对比</b>
+      <span class="rv-meta">tokens 口径 = input+output+reasoning（cache 不计入）；同题配对差的中位数，区间为按用例重采样的 95% 自助区间（与分数差同一批重采样）</span></div>
+    <div class="rv-table-wrap"><table class="rv-table">
+      <thead><tr><th>指标</th><th class="rv-num">基线中位</th><th class="rv-num">对照中位</th><th class="rv-num">差异</th><th class="rv-num">95% 区间</th></tr></thead>
+      <tbody>
+      {% for key, label in [("tokens", "tokens"), ("duration", "耗时(ms)")] %}
+      {% set c = rep.cost[key] %}
+      <tr><td>{{ label }}</td>
+        <td class="rv-num">{% if c.base is not none %}{{ c.base|round(0)|int }}{% else %}—{% endif %}</td>
+        <td class="rv-num">{% if c.target is not none %}{{ c.target|round(0)|int }}{% else %}—{% endif %}</td>
+        <td class="rv-num">{% if c.delta_pct is not none %}{{ '+' if c.delta_pct >= 0 else '−' }}{{ c.delta_pct|abs }}%{% else %}—{% endif %}</td>
+        <td class="rv-num">{% if c.lo is not none %}{{ c.lo }}% ~ {{ c.hi }}%{% else %}—{% endif %}</td></tr>
+      {% endfor %}
+      </tbody></table></div>
+  </section>
+  {% endif %}
+
   <section class="rv-card rv-contrib" style="margin-bottom:16px">
-    <h2>组件贡献：{{ rep.base }} → {{ rep.target }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
+    <h2>组件贡献：{{ axis_names.get(rep.base, rep.base) if axis_names else rep.base }} → {{ axis_names.get(rep.target, rep.target) if axis_names else rep.target }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
     {% set width = (rep.contributions | map(attribute='delta') | select | map('abs') | max) or 1 %}
     {% for ctb in rep.contributions %}
     <div class="rv-contrib-row" title="{{ ctb.name }}：{{ ctb.delta|f1 }} 分（{{ ctb.base|f1 }} → {{ ctb.target|f1 }}）">
@@ -144,7 +163,7 @@
       <div class="rv-notice"><b>缺组合，不能分摊</b><span>需补跑：{{ shap.missing|join('；') }}</span></div></section>
     {% else %}
     <section class="rv-card rv-contrib" style="margin-bottom:16px">
-      <h2>多组件分摊：{{ shap_names }} <span class="rv-meta" style="font-weight:400"><span>Shapley</span></span></h2>
+      <h2>多组件分摊：{{ shap_names }} <span class="rv-meta" style="font-weight:400"><span>Shapley</span>{% if shap_n %}<span>共有 {{ shap_n }} 题{% if shap_n < 30 %}（样本不足，仅作方向参考）{% endif %}</span>{% endif %}</span></h2>
       {% set width2 = shap.phi.values()|map('abs')|max or 1 %}
       {% for f, val in shap.phi.items() %}
       <div class="rv-contrib-row"><span>{{ f }}</span><span class="rv-contrib-track">

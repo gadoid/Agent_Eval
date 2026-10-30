@@ -13,12 +13,110 @@ export interface Snapshot extends Record<string, unknown> {
   evalset: { file: string; sha256: string }
   runner_profile: string
   eline_profile: { method: 'files'; sha256: string; files: string[] }
+  /** cordis 三件套解析出的被测身份（doc/18 §2.1）：persona/plugins 与有效模型 */
+  cordis?: CordisIdentity | null
   skills_mode: string
   skills_base: string
   /** 实体技能根与导出清单（<root>.manifest.json）记录的哈希不一致时为 true */
   skills_base_stale?: boolean
   agent: { name: string; version: string | null }
   models_observed?: string[]
+}
+
+/** cordis 合成后的插件条目（doc/18 §2.1）：insert 已展开，按 id 去重覆盖 */
+interface CordisEntry { id: string; name?: unknown; config?: unknown }
+
+/** snapshot 的 cordis 段：persona_sha / plugins_sha 与有效模型（覆盖值优先在 subjectOf 里取） */
+export interface CordisIdentity {
+  persona_sha: string | null
+  plugins_sha: string | null
+  model: string | null
+  reasoning_effort: string | null
+  model_provider: string | null
+  /** 取值来源：bundle_or_missing 时 run 启动给提示（doc/18 §2.1 兜底） */
+  persona_from: 'cordis' | 'bundle_or_missing'
+  model_from: 'cordis' | 'bundle_or_missing'
+}
+
+function yamlArray(text: string | null): unknown[] | null {
+  if (text === null) return null
+  try {
+    const v = parse(text)
+    return Array.isArray(v) ? v : null
+  } catch {
+    return null
+  }
+}
+
+/** 合成 cordis 条目：cordis.yml → cordis.patch.yml；`- id:` 覆盖同 id 条目、`- insert:` 插入。
+ * bundle（package.json dsh.profile.bundles）的内容不在本地文件里、解析不到（doc/18 §2.1 盲区），
+ * 其清单并入 plugins_sha 载荷，生效差异由 header 观测兜底。 */
+function composeCordis(cordisYml: string | null, patchYml: string | null): CordisEntry[] | null {
+  if (cordisYml === null && patchYml === null) return null
+  const out: CordisEntry[] = []
+  const apply = (entries: unknown): void => {
+    if (!Array.isArray(entries)) return
+    for (const e of entries) {
+      if (!e || typeof e !== 'object' || Array.isArray(e)) continue
+      const entry = e as { id?: unknown; insert?: unknown }
+      if (Array.isArray(entry.insert)) { apply(entry.insert); continue }
+      if (typeof entry.id !== 'string' || entry.id === '') continue
+      const i = out.findIndex((x) => x.id === entry.id)
+      if (i >= 0) out[i] = entry as CordisEntry
+      else out.push(entry as CordisEntry)
+    }
+  }
+  apply(yamlArray(cordisYml))
+  apply(yamlArray(patchYml))
+  return out
+}
+
+/** cordis 三件套 → 被测身份段（doc/18 §2.1）。文件全缺（老环境）返回 null，
+ * subject 各字段按 null 落——同套旧配置不因缺字段分裂。 */
+export async function cordisIdentity(profile: Profile): Promise<CordisIdentity | null> {
+  const dir = join(dshHome(profile), 'profiles', profile.dsh.profile)
+  const read = async (f: string): Promise<string | null> =>
+    await readFile(join(dir, f), 'utf8').catch(() => null)
+  const [cordisYml, patchYml, pkgRaw] = await Promise.all([
+    read('cordis.yml'), read('cordis.patch.yml'), read('package.json'),
+  ])
+  const entries = composeCordis(cordisYml, patchYml)
+  if (entries === null) return null
+  const bundles: string[] = (() => {
+    if (pkgRaw === null) return []
+    try {
+      const b = (JSON.parse(pkgRaw) as { dsh?: { profile?: { bundles?: unknown } } }).dsh?.profile?.bundles
+      return Array.isArray(b) ? b.filter((x): x is string => typeof x === 'string') : []
+    } catch {
+      return []
+    }
+  })()
+  const byId = new Map(entries.map((e) => [e.id, e]))
+  const promptPlugins = profile.prompt_plugins ?? ['persona']      // doc/18 §9-1
+  const personaPayload: Record<string, unknown> = {}
+  let personaFound = false
+  for (const id of promptPlugins) {
+    const e = byId.get(id)
+    if (e) { personaPayload[id] = e.config ?? null; personaFound = true }
+  }
+  const pluginsPayload = {
+    entries: entries
+      .filter((e) => !promptPlugins.includes(e.id) && e.id !== 'agent-default-model')
+      .map((e) => ({ id: e.id, name: e.name ?? null, config: e.config ?? null })),
+    bundles,
+  }
+  const adm = byId.get('agent-default-model')
+  const cfg = (adm?.config ?? {}) as Record<string, unknown>
+  const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null)
+  return {
+    persona_sha: personaFound ? sha256(canonicalJson(personaPayload)) : null,
+    plugins_sha: sha256(canonicalJson(pluginsPayload)),
+    model: str(cfg.model),
+    reasoning_effort: str(cfg.reasoningEffort),
+    model_provider: str(cfg.provider),
+    persona_from: personaFound ? 'cordis' : 'bundle_or_missing',
+    model_from: adm ? 'cordis' : 'bundle_or_missing',
+  }
 }
 
 /** 盘点结果（P0-2 产物 skills-inventory.yaml） */
@@ -128,6 +226,7 @@ export async function computeSnapshot(
     evalset: { file: evalsetFile, sha256: evalsetSha },
     runner_profile: sha256(JSON.stringify(profile)),
     eline_profile: await elineProfileFingerprint(profile),
+    cordis: await cordisIdentity(profile),
     skills_mode: profile.skills_mode,
     skills_base: base.value,
     agent: { name: agent.name, version: agent.version },
@@ -192,18 +291,21 @@ export function canonicalJson(value: unknown): string {
 
 export type SubjectFields = Record<string, unknown>
 
-/** 被测配置字段表（doc/15 §3.1）。缺省与 profile 解析一致：dsh.profile 'headless'、skill_tool 'skill'。 */
+/** 被测配置字段表（doc/15 §3.1 + doc/18 §2.1）。缺省与 profile 解析一致：dsh.profile 'headless'、skill_tool 'skill'。
+ * model/effort/provider 取有效值：profile 覆盖 > cordis agent-default-model（bundle 提供时拿不到 → null，
+ * 由观测兜底）；eline_profile_sha 移出 subject（doc/18 §2.1），仍在 snapshot 供 RESUME_KEYS 用。 */
 export function subjectOf(profile: Profile, snapshot: Snapshot): SubjectFields {
   const dsh = (profile.dsh ?? {}) as { profile?: string }
-  const ep = (snapshot as { eline_profile?: { sha256?: string } }).eline_profile
+  const cord = (snapshot as { cordis?: CordisIdentity | null }).cordis ?? null
   const agent = snapshot.agent ?? { name: 'dsh-cli', version: null as string | null }
   return {
     agent: { name: agent.name ?? 'dsh-cli', version: agent.version ?? null },
     dsh_profile: dsh.profile ?? 'headless',
-    eline_profile_sha: ep?.sha256 ?? null,
-    model: profile.model ?? null,
-    model_provider: profile.model_provider ?? null,
-    reasoning_effort: profile.reasoning_effort ?? null,
+    model: profile.model ?? cord?.model ?? null,
+    model_provider: profile.model_provider ?? cord?.model_provider ?? null,
+    persona_sha: cord?.persona_sha ?? null,
+    plugins_sha: cord?.plugins_sha ?? null,
+    reasoning_effort: profile.reasoning_effort ?? cord?.reasoning_effort ?? null,
     routing: profile.routing ?? {},
     skill_tool: profile.skill_tool ?? 'skill',
     skills_base: snapshot.skills_base ?? null,

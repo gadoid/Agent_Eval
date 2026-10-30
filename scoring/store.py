@@ -29,9 +29,11 @@ from .operators import Verdict
 from .rules import EpisodeVerdict, Rules, canonical_sha, live_items, session_conclusion
 from .subject import subject_fp_of_manifest
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
-# v9 全量建表（doc/17 §7）：空库起步；旧库（schema < 9）直接拒绝打开（决定 15）。
+# v10 全量建表（doc/18 决定 6）：v9 起空库起步、旧库直接拒绝打开（doc/17 决定 15）。
+# v10 新列（answers：persona/tools_sha/system_prompt_sha/成本；runs：capabilities_json）
+# 一次建全——tools 相关列 P2 才有观测写入，期间保持 NULL（tools 轴本来就拦 NULL）。
 _SCHEMA = """
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
 
@@ -39,7 +41,8 @@ CREATE TABLE runs(
   run_id TEXT PRIMARY KEY, run_dir TEXT, evalset_version TEXT, profile_id TEXT,
   snapshot_json TEXT, imported_at TEXT, started_at TEXT, title TEXT,
   subject_fp TEXT, subject_json TEXT, subject_incomplete INTEGER NOT NULL DEFAULT 0,
-  method_sha TEXT, diagnostic INTEGER NOT NULL DEFAULT 0, scope_json TEXT);
+  method_sha TEXT, diagnostic INTEGER NOT NULL DEFAULT 0, scope_json TEXT,
+  capabilities_json TEXT);
 
 CREATE TABLE questions(
   qkey TEXT PRIMARY KEY,
@@ -63,7 +66,9 @@ CREATE TABLE answers(
   skills_mode TEXT, skills_base TEXT, evalset_version TEXT,
   run_status TEXT, record_json TEXT,
   injection_found_gt1 INTEGER, variant_leak_json TEXT, injection_observed_json TEXT,
-  subject_fp TEXT, model TEXT, reasoning_effort TEXT, agent TEXT);
+  subject_fp TEXT, model TEXT, reasoning_effort TEXT, agent TEXT,
+  persona TEXT, tools_sha TEXT, system_prompt_sha TEXT,
+  tokens_total INTEGER, tokens_cache_read INTEGER, steps INTEGER, duration_ms INTEGER);
 
 CREATE TABLE verdicts(
   answer_id TEXT, standard_fp TEXT, chain_sha TEXT, item_id TEXT,
@@ -187,8 +192,8 @@ class Store:
                 current = int(v["value"]) if v else 0
             if 0 < current < SCHEMA_VERSION:
                 raise StoreError(
-                    f"旧版评测库（schema v{current}）不再支持：doc/17 决定 15 起 v9 从空库起步，"
-                    "请按 §9 用新代码重新导入重建（旧库已废弃归档）")
+                    f"旧版评测库（schema v{current}）不再支持：doc/17 决定 15 起空库起步、"
+                    "不写迁移（doc/18 决定 6 同口径），请用新代码重新导入重建（旧库已废弃归档）")
             for version in sorted(_MIGRATIONS):
                 if version > current:
                     for step in _MIGRATIONS[version]:
@@ -661,23 +666,27 @@ class Store:
         else:
             sfp, sjs, incomplete = subject_fp_of_manifest(manifest or {})
         method_sha = ((manifest or {}).get("method") or {}).get("method_sha")
+        caps = ((manifest or {}).get("agent") or {}).get("capabilities")
+        capabilities_json = (json.dumps(caps, ensure_ascii=False)
+                             if caps is not None else None)
         with self.lock, self.conn:
             if started_at is None:
                 row = self.conn.execute("SELECT started_at FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 started_at = row["started_at"] if row else now()
             self.conn.execute(
                 "INSERT INTO runs(run_id, run_dir, evalset_version, profile_id, snapshot_json, imported_at,"
-                " started_at, title, subject_fp, subject_json, subject_incomplete, method_sha, diagnostic)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " started_at, title, subject_fp, subject_json, subject_incomplete, method_sha, diagnostic,"
+                " capabilities_json)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 " ON CONFLICT(run_id) DO UPDATE SET run_dir=excluded.run_dir,"
                 " evalset_version=excluded.evalset_version, profile_id=excluded.profile_id,"
                 " snapshot_json=excluded.snapshot_json, started_at=excluded.started_at,"
                 " title=COALESCE(excluded.title, title), subject_fp=excluded.subject_fp,"
                 " subject_json=excluded.subject_json, subject_incomplete=excluded.subject_incomplete,"
-                " method_sha=excluded.method_sha",
+                " method_sha=excluded.method_sha, capabilities_json=excluded.capabilities_json",
                 (run_id, str(run_dir), evalset_version_of(manifest), profile_id, snapshot_json, now(),
                  started_at, title, sfp, sjs, incomplete, method_sha,
-                 1 if (manifest or {}).get("diagnostic") else 0))
+                 1 if (manifest or {}).get("diagnostic") else 0, capabilities_json))
 
     def ingest_answer(self, record: dict, run_id: str, manifest: dict | None) -> str:
         """入库一条答案：完整 EpisodeRecord 随行保存（run 目录移走后仍可重判），
@@ -704,12 +713,17 @@ class Store:
         found_gt1 = any((a or {}).get("found", 1) > 1 for a in record.get("injections_applied") or [])
         leak_json = json.dumps(variant_leak_suspects([record]), ensure_ascii=False)
         observed = record.get("injection_observed")
+        # 成本（doc/18 §5）：直接取 EpisodeRecord 顶层聚合值；tokens 口径 = input+output+reasoning
+        usage = record.get("usage") or {}
+        tokens = usage.get("tokens") or {}
+        obs_tools = record.get("observed_tools") or {}
         self._exec(
             "INSERT OR REPLACE INTO answers(answer_id, qkey, run_id, episode_id, judge_fp_at_run,"
             " profile_id, models_json, mode, trial, skills_mode, skills_base, evalset_version,"
             " run_status, record_json, injection_found_gt1, variant_leak_json, injection_observed_json,"
-            " subject_fp, model, reasoning_effort, agent)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " subject_fp, model, reasoning_effort, agent, persona, tools_sha, system_prompt_sha,"
+            " tokens_total, tokens_cache_read, steps, duration_ms)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (answer_id, qkey, run_id, episode_id, fp,
              profile_id_of(manifest),
              json.dumps(models, ensure_ascii=False) if models is not None else None,
@@ -721,7 +735,12 @@ class Store:
              run.get("subject_fp"),
              subject.get("model") or (models or [None])[0],
              subject.get("reasoning_effort"),
-             f"{agent.get('name')}" + (f"@{agent['version']}" if agent.get("version") else "")))
+             f"{agent.get('name')}" + (f"@{agent['version']}" if agent.get("version") else ""),
+             subject.get("persona_sha"),
+             obs_tools.get("sha256"),
+             record.get("system_prompt_sha"),
+             tokens.get("total"), tokens.get("cacheRead"), usage.get("steps"),
+             record.get("duration_ms")))
         return answer_id
 
     def answer(self, answer_id: str) -> dict | None:
@@ -1347,6 +1366,9 @@ class Store:
                a.models_json, a.mode, a.trial, a.skills_mode, a.skills_base, a.evalset_version,
                a.run_status, {record_col}a.injection_found_gt1, a.variant_leak_json,
                a.subject_fp, a.model, a.reasoning_effort, a.agent,
+               a.persona, a.tools_sha, a.system_prompt_sha,
+               a.tokens_total, a.tokens_cache_read, a.steps, a.duration_ms,
+               r0.subject_json, r0.capabilities_json,
                CASE WHEN r0.diagnostic = 1 THEN 1 ELSE 0 END AS diagnostic,
                q.uid, q.case_id, q.variant_index, q.rewrite,
                q.dim, q.topic, q.current_standard_fp, q.current_scoring_fp, q.off_snapshot, q.active,

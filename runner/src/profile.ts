@@ -132,6 +132,14 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
 
   const modelProvider = typeof r.model_provider === 'string' ? r.model_provider : undefined
   const reasoningEffort = typeof r.reasoning_effort === 'string' ? r.reasoning_effort : undefined
+  const promptPlugins: string[] = []
+  if (r.prompt_plugins !== undefined && r.prompt_plugins !== null) {
+    if (!Array.isArray(r.prompt_plugins) || r.prompt_plugins.some((x) => typeof x !== 'string' || (x as string).trim() === '')) {
+      errors.push('prompt_plugins 必须是非空字符串数组（提示词类插件 id，doc/18 §9-1）')
+    } else {
+      promptPlugins.push(...(r.prompt_plugins as string[]).map((x) => x.trim()).filter(Boolean))
+    }
+  }
   if (r.model !== undefined && (typeof r.model !== 'string' || (r.model as string).trim() === '')) {
     errors.push('model 必须是非空字符串')
   }
@@ -143,7 +151,7 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
   }
 
   for (const key of Object.keys(r)) {
-    if (!['id', 'description', 'model', 'model_provider', 'reasoning_effort', 'dsh', 'skill_tool', 'routing', 'web',
+    if (!['id', 'description', 'model', 'model_provider', 'reasoning_effort', 'prompt_plugins', 'dsh', 'skill_tool', 'routing', 'web',
           'skills_mode', 'skills_roots', 'skills_inventory', 'budget'].includes(key)) {
       errors.push(`未知字段 ${key}`)
     }
@@ -168,6 +176,7 @@ export function parseProfile(text: string, source = '<profile>'): Profile {
     },
     skills_mode: skillsMode as Profile['skills_mode'],
     skills_roots: skillsRoots.length > 0 ? skillsRoots : undefined,
+    prompt_plugins: promptPlugins.length > 0 ? promptPlugins : undefined,
     skills_inventory: typeof r.skills_inventory === 'string' ? r.skills_inventory : undefined,
     budget: Object.keys(budget).length > 0 ? budget : undefined,
     skill_tool: (r.skill_tool as string | undefined) ?? 'skill',

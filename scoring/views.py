@@ -10,20 +10,27 @@ from collections import defaultdict
 
 from .rules import DEFAULT_METHOD, EpisodeVerdict, Method, Rules
 
-# 答案的比较属性（§4.2，R3 修订后分三类）：
+# 答案的比较属性（§4.2，R3 修订后分三类；doc/18 §3 增 persona/tools）：
 # - 重复采样（trial、run）：默认不限，无需声明——它们是采样标识，不是比较条件
-# - 处理条件（profile、model、mode、skills_base、evalset_version）：必须一致，
+# - 处理条件（profile、model、mode、skills_base、evalset_version、persona）：必须一致，
 #   或作为比较轴，或显式固定 / 声明不限
 # - 不可比较（skills_mode）：必须一致，不能作轴、不能不限
-ATTRS = ("subject", "model", "effort", "agent", "skills_mode", "skills_base", "mode",
-         "trial", "evalset_version", "run")
+# - 观测字段（tools，answers.tools_sha）：可作轴；不作轴时不按不一致拦截（旧 run 无观测
+#   是常态），真实漂移（多个非空取值）只告警——生效工具的变化由 tools 轴显式对比
+ATTRS = ("subject", "model", "effort", "agent", "persona", "tools", "skills_mode", "skills_base",
+         "mode", "trial", "evalset_version", "run")
 SAMPLING_ATTRS = frozenset({"trial", "run"})
-# subject 是被测配置整指纹（doc/15 §3.1）；model/effort/agent/skills_base/skills_mode
-# 是它的拆字段——一个作轴，其余自动放行（拆字段作轴时 subject 整体随之放行）
-SUBJECT_FIELDS = ("model", "effort", "agent", "skills_base", "skills_mode")
+# subject 是被测配置整指纹（doc/15 §3.1 + doc/18 §2.1）；model/effort/agent/persona/
+# skills_base/skills_mode 是它的拆字段——一个作轴，其余自动放行（拆字段作轴时 subject
+# 整体随之放行；persona 是拆字段、tools 是观测字段，二者作轴也放行 subject，但
+# DERIVED_ATTR 不加新键：persona↔subject 会覆盖现有 subject→model，且告警文案会错位）
+SUBJECT_FIELDS = ("model", "effort", "agent", "persona", "skills_base", "skills_mode")
 DERIVED_ATTR = {"subject": "model", "model": "subject",
                 "effort": "subject", "agent": "subject",
                 "skills_base": "subject", "skills_mode": "subject"}
+
+# 小样本阈值（doc/18 §8）：只影响展示标注，不进任何指纹
+SMALL_SAMPLE_N = 30
 
 
 def follows(axis: str) -> set[str]:
@@ -33,7 +40,83 @@ def follows(axis: str) -> set[str]:
         out |= set(SUBJECT_FIELDS)
     elif axis in DERIVED_ATTR:
         out.add(DERIVED_ATTR[axis])
+    elif axis in ("persona", "tools"):
+        out.add("subject")
     return out
+
+
+# ---------------------------------------------------------------- 非 ATTR subject 字段检查（doc/18 §3）
+
+# subject 放行后仍需显式检查的配置面（不属于 ATTRS，被 subject 豁免静默带过）：
+# plugins_sha 按轴放行（见 subject_extra_check）；routing/skill_tool 直接改变会话行为，
+# 不一致拦截；model_provider/dsh_profile 是名称性字段（效果已由 model 与 eline 内容
+# 承载），不一致只告警。subject 自身作轴（或作 Shapley 因子）时整体跳过——
+# subject 整体就是用来跨这些字段做对比的（routing A/B 的出路）。
+WARN_SUBJECT_FIELDS = ("model_provider", "dsh_profile")
+
+
+def _subject_fields_of(row: dict) -> dict:
+    try:
+        s = json.loads(row.get("subject_json") or "{}")
+        return s if isinstance(s, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def _sub_val(s: dict, f: str) -> str:
+    v = s.get(f)
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False, sort_keys=True)
+    return "—" if v is None else str(v)
+
+
+def subject_extra_check(rows: list[dict], axes: set[str]) -> tuple[dict, list[str]]:
+    """非 ATTR subject 字段一致性检查（compare 与 shapley 共用，doc/18 §3）。
+
+    axes：作轴的属性集合（compare 单轴；shapley 为因子集），含 subject 时跳过。
+    plugins_sha：tools 作轴时跨轴值允许不同（工具增减本意）、同一轴值内必须一致
+    （同轴值内 tools_sha 相同而 plugins_sha 不同 = 变的是不暴露工具的集成代码）；
+    其余轴下必须一致。行缺 subject_json（测试行/旧查询）时跳过该行。"""
+    if "subject" in axes:
+        return {}, []
+    cache: dict[str, dict] = {}                    # 同一 run 的 subject_json 只解析一次
+
+    def fields_of(r: dict) -> dict:
+        key = r.get("subject_json")
+        if key not in cache:
+            try:
+                v = json.loads(key or "{}")
+                cache[key] = v if isinstance(v, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                cache[key] = {}
+        return cache[key]
+
+    have = [(r, s) for r in rows if (s := fields_of(r))]
+    if not have:
+        return {}, []
+    blocked: dict[str, list[str]] = {}
+    warns: list[str] = []
+    if "tools" in axes:
+        by_tv: dict[str, set[str]] = defaultdict(set)
+        for r, s in have:
+            by_tv[attr_value(r, "tools")].add(_sub_val(s, "plugins_sha"))
+        bad = {tv: sorted(vs) for tv, vs in by_tv.items() if len(vs) > 1}
+        if bad:
+            blocked["plugins_sha"] = [f"轴值 {tv} 内不一致：{'、'.join(vs)}"
+                                      for tv, vs in sorted(bad.items())]
+    else:
+        vs = {_sub_val(s, "plugins_sha") for _, s in have}
+        if len(vs) > 1:
+            blocked["plugins_sha"] = sorted(vs)
+    for f in ("routing", "skill_tool"):
+        vs = {_sub_val(s, f) for _, s in have}
+        if len(vs) > 1:
+            blocked[f] = sorted(vs)
+    for f in WARN_SUBJECT_FIELDS:
+        vs = {_sub_val(s, f) for _, s in have}
+        if len(vs) > 1:
+            warns.append(f"{f} 不一致：{'、'.join(sorted(vs))}")
+    return blocked, warns
 
 
 # ---------------------------------------------------------------- 区间
@@ -127,6 +210,10 @@ def attr_value(row: dict, name: str) -> str:
         return str(row.get("reasoning_effort") or "?")
     if name == "agent":
         return str(row.get("agent") or "?")
+    if name == "persona":                        # persona_sha 落 answers.persona（doc/18 §2.2）
+        return str(row.get("persona") or "?")
+    if name == "tools":                          # 观测字段：轴名与列名不同（doc/18 §2.2）
+        return str(row.get("tools_sha") or "?")
     if name == "run":
         return str(row.get("run_id"))
     if name == "evalset_version":
@@ -242,8 +329,10 @@ def _axis_selection(rows: list[dict], axis: str, fixes: dict[str, str], anys: se
 
     sel = [r for r in rows if all(attr_value(r, k) == v for k, v in fixes.items())]
     follow = follows(axis)
+    # tools 是观测字段（doc/18 §3）：不作轴时无观测（"?"）是旧 run 常态，不按不一致拦截；
+    # 多个非空取值才是工具清单真实漂移，只告警
     others = [a for a in ATTRS if a not in follow and a not in fixes and a not in anys
-              and a not in SAMPLING_ATTRS]
+              and a not in SAMPLING_ATTRS and a != "tools"]
     inconsistent = {a: sorted({attr_value(r, a) for r in sel}) for a in others
                     if len({attr_value(r, a) for r in sel}) > 1}
     if inconsistent:
@@ -251,6 +340,22 @@ def _axis_selection(rows: list[dict], axis: str, fixes: dict[str, str], anys: se
                               + "；".join(f"{k}={v}" for k, v in inconsistent.items()))
     axis_values = sorted({attr_value(r, axis) for r in sel})
     warnings: list[str] = []
+    if "tools" not in follow and "tools" not in fixes and "tools" not in anys:
+        tvs = {attr_value(r, "tools") for r in sel} - {"?"}
+        if len(tvs) > 1:
+            warnings.append(f"工具清单观测不一致（{sorted(tvs)}）：同一选数内生效工具发生变化")
+    # 观测/配置轴缺值拦截（doc/18 §3）："?" 不构成可对比的轴值
+    if axis in ("persona", "tools") and "?" in axis_values:
+        hint = ("旧 run 无工具观测，tools 轴只对新 run 可用" if axis == "tools"
+                else "persona 取不到配置（bundle/缺失），persona 轴不可用")
+        blocked = blocked or f"{axis} 轴遇到无取值的答案：{hint}"
+    # 非 ATTR subject 字段检查（doc/18 §3）：subject 作轴时跳过（跨字段对比的出路）
+    if not blocked and axis != "subject":
+        extra_blocked, extra_warns = subject_extra_check(sel, {axis})
+        if extra_blocked:
+            blocked = ("被测配置的非轴字段不一致："
+                       + "；".join(f"{k}={v}" for k, v in extra_blocked.items()))
+        warnings.extend(extra_warns)
     if not blocked and axis in DERIVED_ATTR:
         other = DERIVED_ATTR[axis]
         by_axis: dict[str, set[str]] = defaultdict(set)
@@ -718,8 +823,49 @@ def compare_scores(rows: list[dict], axis: str, base: str, target: str, rules: R
             questions.append({"qkey": q, "uid": qs[base][q]["uid"], "case_id": case_of[q], "dim": dim_of[q],
                               "base": b, "target": t, "delta": d, "anchor": q in tripwires})
     questions.sort(key=lambda x: -abs(x["delta"]))
+
+    # 成本差（doc/18 §5）：同题配对差的中位数作点估计，区间沿用同一批重采样
+    # （_bootstrap 固定种子按位置抽样，同一 cases 序列 → 与分数差抽到的样本一致）
+    def _side_cost(side_rows: list[dict]) -> dict[str, tuple[float, float]]:
+        acc: dict[str, list[tuple[float, float]]] = defaultdict(list)
+        for r in side_rows:
+            if r.get("tokens_total") is not None:
+                acc[r["qkey"]].append((r["tokens_total"], r.get("duration_ms") or 0))
+        return {q: (sum(t for t, _ in v) / len(v), sum(d for _, d in v) / len(v))
+                for q, v in acc.items()}
+
+    def _median(xs: list[float]) -> float | None:
+        if not xs:
+            return None
+        ys = sorted(xs)
+        n = len(ys)
+        return ys[n // 2] if n % 2 else (ys[n // 2 - 1] + ys[n // 2]) / 2
+
+    cost: dict[str, dict] = {}
+    cb, ct = _side_cost(sides[base]), _side_cost(sides[target])
+    shared_cost = [q for q in shared if q in cb and q in ct]
+    if shared_cost:
+        q_by_case_cost: dict[str, list[str]] = defaultdict(list)
+        for q in shared_cost:
+            q_by_case_cost[case_of[q]].append(q)
+        for label, idx in (("tokens", 0), ("duration", 1)):
+            rel = {q: (ct[q][idx] - cb[q][idx]) / cb[q][idx]
+                   for q in shared_cost if cb[q][idx] and cb[q][idx] > 0}
+            cell = {"base": _median([cb[q][idx] for q in shared_cost]),
+                    "target": _median([ct[q][idx] for q in shared_cost]),
+                    "delta_pct": None, "lo": None, "hi": None}
+            if rel:
+                def stat(cs: list[str]) -> float:
+                    return _median([rel[q] for c in cs for q in q_by_case_cost.get(c, ())]) or 0.0
+                lo, hi = paired(stat)
+                point = _median([rel[q] for q in shared_cost])
+                cell.update(delta_pct=round(point * 100, 1),
+                            lo=round(lo * 100, 1), hi=round(hi * 100, 1))
+            cost[label] = cell
     return {**info, "base": base, "target": target,
             "n_shared": len(shared), "n_shared_cases": len(cases),
+            "small_sample": len(shared) < SMALL_SAMPLE_N,       # doc/18 §8：只影响展示
+            "cost": cost or None,                                # 无成本数据的旧 run 为 None
             "metrics": metrics, "contributions": contributions,
             "questions": questions, "excluded_qkeys": excluded,
             "anchor_tripwires": wires}
@@ -763,20 +909,32 @@ def shapley_cells(rows: list[dict], factors: list[str], rules: Rules,
         raise ValueError(f"未知组件：{unknown}（只能是 {'/'.join(ATTRS)}）")
     if "skills_mode" in factors:
         raise ValueError("skills_mode 不能作组件（跨 mode 对比无效）")
+    for f in ("persona", "tools"):
+        if f in factors and "?" in {attr_value(r, f) for r in rows}:
+            raise ValueError(f"{f} 因子遇到无取值的答案（旧 run 无观测或配置缺失），不能分摊")
     pairs = {}
     for f in factors:
         vals = sorted({attr_value(r, f) for r in rows})
         if len(vals) != 2:
             raise ValueError(f"组件 {f} 需要恰好两个取值（现有 {len(vals)} 个：{vals[:4]}）")
         pairs[f] = vals
-    others = [a for a in ATTRS if a not in factors and a not in SAMPLING_ATTRS
-              and a != "mode"                       # mode 由逐题主口径选择处理，不按不一致拦截
-              and a not in {DERIVED_ATTR.get(f) for f in factors}]
+    # 放行集合 = ∪ follows(f)（doc/18 §3）：persona/tools 无 DERIVED_ATTR 键，作因子时
+    # subject 靠这里放行（原实现只查 DERIVED_ATTR.get(f)，persona 作因子会直接报
+    # 「subject 取值不一致」）；mode 不按不一致拦截（逐题主口径选择处理）
+    follow_all: set[str] = set()
+    for f in factors:
+        follow_all |= follows(f)
+    others = [a for a in ATTRS if a not in follow_all and a not in SAMPLING_ATTRS
+              and a != "tools" and a != "mode"]
     inconsistent = {a: sorted({attr_value(r, a) for r in rows}) for a in others
                     if len({attr_value(r, a) for r in rows}) > 1}
     if inconsistent:
         raise ValueError("组件之外未固定的属性取值不一致："
                          + "；".join(f"{k}={v}" for k, v in inconsistent.items()))
+    extra_blocked, _ = subject_extra_check(rows, set(factors))
+    if extra_blocked:
+        raise ValueError("组件之外的被测配置字段不一致（doc/18 §3）："
+                         + "；".join(f"{k}={v}" for k, v in extra_blocked.items()))
     sel_by_cell: dict[frozenset, list[dict]] = {}
     for i in range(2 ** len(factors)):
         on = frozenset(factors[j] for j in range(len(factors)) if i >> j & 1)

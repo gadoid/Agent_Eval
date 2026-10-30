@@ -38,7 +38,7 @@ def ingest(store, tmp_path, name, records, snapshot=None, run_id=None, manifest=
 
 def test_schema_version(store):
     v = store.conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-    assert v["value"] == "9"
+    assert v["value"] == "10"
     # spec_versions 已回填
     assert store.conn.execute("SELECT COUNT(*) c FROM spec_versions").fetchone()["c"] >= 0
     # 重复打开不重复迁移（meta 行数稳定：v9 起含 current_snapshot/rules_sha 等固定键）
@@ -361,7 +361,7 @@ def test_backup(store, tmp_path):
 # ---------------------------------------------------------------- 旧库拒绝打开（doc/17 决定 15）
 
 def test_old_schema_db_refused(tmp_path):
-    """v9 从空库起步：schema < 9 的旧库直接拒绝打开（迁移链已删除）。"""
+    """空库起步、不写迁移（doc/17 决定 15；doc/18 决定 6 同口径）：schema < 10 的旧库直接拒绝打开。"""
     import sqlite3
     db = tmp_path / "old.db"
     conn = sqlite3.connect(str(db))
@@ -376,8 +376,8 @@ def test_old_schema_db_refused(tmp_path):
         Store(db)
 
 
-def test_fresh_db_schema_v9(tmp_path):
-    """空库起步即 v9：case_scoring / temp_weights 存在，conclusions 键为 scoring_fp。"""
+def test_fresh_db_schema_v10(tmp_path):
+    """空库起步即 v10（doc/18 决定 6）：新列一次建全，tools 相关列 P2 前保持 NULL。"""
     s = Store(tmp_path / "fresh.db")
     tables = {r["name"] for r in s.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"case_scoring", "temp_weights"} <= tables
@@ -386,7 +386,38 @@ def test_fresh_db_schema_v9(tmp_path):
     assert "scoring_fp" in cols and "weight_fp" not in cols
     qcols = {r["name"] for r in s.conn.execute("PRAGMA table_info(questions)")}
     assert "current_scoring_fp" in qcols and "current_weight_fp" not in qcols
+    acols = {r["name"] for r in s.conn.execute("PRAGMA table_info(answers)")}
+    assert {"persona", "tools_sha", "system_prompt_sha",
+            "tokens_total", "tokens_cache_read", "steps", "duration_ms"} <= acols
+    rcols = {r["name"] for r in s.conn.execute("PRAGMA table_info(runs)")}
+    assert "capabilities_json" in rcols
     s.close()
+
+
+def test_ingest_records_cost_and_cordis_columns(store, tmp_path):
+    """成本列（doc/18 §5）：直接取 EpisodeRecord 顶层聚合值；tokens 口径沿用 total
+    （input+output+reasoning），cacheRead 单列；persona 取 run 的 subject。"""
+    record = mk_record(usage={"steps": 7, "tokens": {"input": 100, "output": 40, "reasoning": 10,
+                                                     "cacheRead": 500, "cacheWrite": 20,
+                                                     "total": 150}},
+                       duration_ms=32000)
+    ingest(store, tmp_path, "cost", [record])
+    a = store.answers()[0]
+    assert a["tokens_total"] == 150 and a["tokens_cache_read"] == 500
+    assert a["steps"] == 7 and a["duration_ms"] == 32000
+    assert a["tools_sha"] is None and a["system_prompt_sha"] is None     # P2 前保持 NULL
+    assert a["persona"] is None                                          # manifest 无 cordis 段
+
+    # 带 subject 段（runner TS 侧算好）时 persona/tools 观测随行入库
+    run_dir = make_run(tmp_path, "cost2", [dict(record, episode_id="e2", usage={"steps": 1, "tokens": {"total": 9}})])
+    manifest = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    manifest["subject"] = {"subject_fp": "fp2", "incomplete": False,
+                           "fields": {"persona_sha": "ps1", "model": "glm-5.3"}}
+    (run_dir / "run.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    from scoring.cli import ingest_run
+    ingest_run(store, run_dir)
+    a2 = [a for a in store.answers() if a["episode_id"] == "e2"][0]
+    assert a2["persona"] == "ps1" and a2["model"] == "glm-5.3" and a2["tokens_total"] == 9
 
 
 def test_run_without_started_at_falls_back_stably(tmp_path):

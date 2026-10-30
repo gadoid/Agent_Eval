@@ -92,6 +92,8 @@ export interface Profile {
   }
   /** web-ui 适配器：驱动 dsh web 服务（独立 DSH_HOME），会话由 web 服务原生落盘，双端天然同步 */
   web?: { home: string; port: number; headless?: boolean }
+  /** 提示词类插件 id（doc/18 §9-1）：列入的进 persona_sha，其余插件进 plugins_sha；缺省 ['persona'] */
+  prompt_plugins?: string[]
   /** isolated 必填：评测基底（生产可见 skill 根），本 run 唯一 skill 来源 */
   skills_roots?: string[]
   /** P0-2 盘点结果（含同名 skill 的生效来源） */

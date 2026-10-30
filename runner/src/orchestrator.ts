@@ -59,6 +59,13 @@ export async function runEvaluation(options: EvaluationOptions): Promise<RunMani
     name: adapter.name,
     version: adapter.version ?? null,
   })
+  // bundle 盲区提示（doc/18 §2.1）：配置侧取不到的字段按 null 落 subject，各自的兜底口径见方案
+  if (!profile.model && snapshot.cordis && snapshot.cordis.model_from === 'bundle_or_missing') {
+    warnings.push('agent-default-model 不在本地 cordis 三件套（来自 bundle 或缺失）：subject.model 为空，model 轴将回退观测值')
+  }
+  if (snapshot.cordis && snapshot.cordis.persona_from === 'bundle_or_missing') {
+    warnings.push('persona 不在本地 cordis 三件套（来自 bundle 或缺失）：persona_sha 为空，persona 轴不可用')
+  }
 
   // 注入预演（isolated 才有注入可跑；default-roots 下 ec 已在规划期整体跳过）
   let rehearsal: ReadonlyMap<string, string> | undefined

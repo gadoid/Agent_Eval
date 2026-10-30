@@ -39,6 +39,8 @@ python -m scoring serve --db demo/dsh-trade/eval.db \
 
 ## 全流程复现（从零重跑）
 
+> **2026-10-30 起**：被测指纹字段变更（doc/18：persona/plugins/有效模型，schema v10），本目录随仓库带的 `eval.db` 是旧 schema 库、打开会被拒绝——按本节流程重建即可。
+
 > **注意**：`evalset/dist/` 已不进 git（原因见仓库 `.gitignore` 里该目录的注释）。要复现本页描述的
 > 历史快照 `v20261028-dsh`，需先 `git checkout` 到删除 dist 之前的提交，再执行下面的 `build`；
 > 新版本直接用当前 md 编译即可。

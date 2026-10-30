@@ -38,20 +38,24 @@ TAB_LABELS = {"all": "全部", "undecided": "结论待定", "unjudged": "有未�
               "mismatch": "人工≠机器", "failed": "会话失败"}
 AXIS_LABELS = {"subject": "被测配置（subject）", "profile": "被测配置（subject）",
                "model": "被测模型（model）", "effort": "努力程度（effort）", "agent": "agent 版本",
+               "persona": "提示词（persona）", "tools": "工具清单（tools）",
                "mode": "干预模式（mode）", "skills_base": "知识库（skills_base）",
                "evalset_version": "快照（评测集版本）",
                "trial": "采样次数（trial）", "run": "run"}
 FIELD_LABELS = {"model": "模型（model）", "effort": "努力程度（effort）",
                 "reasoning_effort": "努力程度（effort）", "agent": "agent 版本",
+                "persona_sha": "提示词（persona_sha）", "plugins_sha": "插件与集成（plugins_sha）",
                 "skills_base": "知识库（skills_base）", "skills_mode": "技能模式（skills_mode）",
                 "evalset_version": "评测集快照", "mode": "干预模式（mode）",
                 "model_provider": "模型提供方（model_provider）", "skill_tool": "技能工具（skill_tool）",
                 "dsh_profile": "dsh 配置（dsh_profile）", "eline_profile_sha": "eline 配置指纹",
-                "routing": "路由（routing）", "subject": "被测配置（subject）"}
+                "routing": "路由（routing）", "subject": "被测配置（subject）",
+                "persona": "提示词（persona）", "tools": "工具清单（tools）"}
 # 指纹字段表的展示序（subject_of_manifest 的键）；FP_ATTR_NAME 把指纹键映射到比较属性名
-FP_FIELD_ORDER = ("model", "reasoning_effort", "agent", "skills_base", "skills_mode",
-                  "model_provider", "skill_tool", "dsh_profile", "eline_profile_sha", "routing")
-FP_ATTR_NAME = {"reasoning_effort": "effort"}
+FP_FIELD_ORDER = ("model", "reasoning_effort", "persona_sha", "plugins_sha", "agent",
+                  "skills_base", "skills_mode", "model_provider", "skill_tool", "dsh_profile",
+                  "eline_profile_sha", "routing")
+FP_ATTR_NAME = {"reasoning_effort": "effort", "persona_sha": "persona"}
 
 
 def _fmt_val(v) -> str:
@@ -1040,7 +1044,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                       any: str = "", fix: str = "", factors: str = "", run: str = "",
                       std_a: str = "", std_b: str = ""):
         rep = error = shap = diff = None
-        shap_note = shap_names = None
+        shap_note = shap_names = shap_n = None
         std_rep = None
         if std_a and std_b:                       # 标准修订验证（doc/15 §4.7 P2）
             try:
@@ -1125,6 +1129,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                 cells, shared = views.shapley_cells(rs, facs, rules, method_of(snapshot_of(request)))
                 shap = views.shapley(cells, facs)
                 shap_names = "、".join(FIELD_LABELS.get(f, f) for f in facs)
+                shap_n = len(shared)
             except ValueError as e:
                 error = str(e)
         elif diff and not error and len(diff["changed"]) >= 2:
@@ -1139,6 +1144,7 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
                                                         method_of(snapshot_of(request)))
                     shap = views.shapley(cells, shap_fields)
                     shap_names = "、".join(FIELD_LABELS.get(f, f) for f in diff["changed"])
+                    shap_n = len(shared)
                 except ValueError as e:
                     shap_note = f"总差异无法自动分摊：{e}"
             else:
@@ -1155,16 +1161,26 @@ def create_app(db: str | Path, rules_path: str | Path | None = None,
             ag_s = (f"{ag.get('name')}@{ag.get('version') or '?'}"
                     if isinstance(ag, dict) else str(ag or "?"))
             sbx = str(f.get("skills_base") or "—")
+            ps = str(f.get("persona_sha") or "—")           # persona 短 sha（doc/18 §3：只改展示）
             parts = [str(f.get("model") or "?"), str(f.get("reasoning_effort") or "—"),
+                     ps[:8] if ps != "—" else "—",
                      ag_s, sbx[:12] + ("…" if len(sbx) > 12 else ""),
                      str(f.get("skills_mode") or "—")]
             return " · ".join(parts)
+        # persona 轴的取值是哈希：展示为「dsh_profile · 短 sha」（doc/18 §3，只改展示不改分组）
+        axis_names: dict[str, str] = {}
+        if rep and axis == "persona" and not rep.get("blocked"):
+            for r in rs:
+                pv = views.attr_value(r, "persona")
+                if pv != "?" and pv not in axis_names:
+                    dp = views._subject_fields_of(r).get("dsh_profile") or "?"
+                    axis_names[pv] = f"{dp}·{pv[:8]}"
         return render(request, "compare.html", axis=axis, std_rep=std_rep,
                       std_a=std_a, std_b=std_b, snapshot_options=[s["evalset_version"] for s in store.snapshots()],
                       diagnostic_count=diag_n,
                       base=base, target=target, any=any, fix=fix, factors=factors,
                       rep=rep, error=error, shap=shap, shap_note=shap_note,
-                      shap_names=shap_names, diff=diff,
+                      shap_names=shap_names, shap_n=shap_n, diff=diff, axis_names=axis_names,
                       subject_options=[{"fp": fp, "label": _label(subjects[fp])}
                                        for fp in sorted(subjects)],
                       attrs=[a for a in views.ATTRS if a not in followed

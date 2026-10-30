@@ -1,14 +1,15 @@
-"""比较轴与锚点绊线（改造方案 §7、整改清单 R3 验收）。"""
+"""比较轴与锚点绊线（改造方案 §7、整改清单 R3 验收；doc/18 §3 persona/tools 轴）。"""
 import json
 
 import pytest
 
-from scoring.views import compare_axis
+from scoring.views import compare_axis, shapley_cells
 
 
 def row(qkey="q1", uid="kr-1#0", case="kr-1", vi=0, rewrite=None, dim="知识召回", mode="natural",
         trial=1, profile="p1", models='["glm-5.3"]', skills_mode="default-roots", skills_base="s1",
-        evalset="v1", run="a", status="pass", answer=None, anchor=False, topic="t1"):
+        evalset="v1", run="a", status="pass", answer=None, anchor=False, topic="t1",
+        persona=None, tools_sha=None, subject_fp=None, subject_json=None):
     return {
         "answer_id": answer or f"{run}/{uid}-{mode}-t{trial}", "qkey": qkey, "run_id": run,
         "episode_id": f"{uid}-{mode}-t{trial}", "judge_fp_at_run": "f1", "profile_id": profile,
@@ -16,7 +17,11 @@ def row(qkey="q1", uid="kr-1#0", case="kr-1", vi=0, rewrite=None, dim="知识召
         "skills_base": skills_base, "evalset_version": evalset, "run_status": "ok",
         "record_json": json.dumps({"anchor": anchor}), "uid": uid, "case_id": case,
         "variant_index": vi, "rewrite": rewrite, "dim": dim, "topic": topic,
+        "persona": persona, "tools_sha": tools_sha,
+        "subject_fp": subject_fp or profile,
+        "subject_json": json.dumps(subject_json, ensure_ascii=False) if subject_json is not None else None,
         "current_standard_fp": "f1", "active": 1, "c_status": status, "c_reason": "", "detail_json": "{}",
+        "c_score": 80 if status == "pass" else (30 if status == "fail" else None),
     }
 
 
@@ -125,3 +130,99 @@ def test_anchor_tripwire_by_qkey():
 def test_unknown_axis_raises():
     with pytest.raises(ValueError):
         compare_axis([row()], axis="nope")
+
+
+# ---------------------------------------------------------------- doc/18 §3：persona/tools 轴与非 ATTR 检查
+
+def _fields(**over):
+    base = {"model": "glm-5.3", "reasoning_effort": "high", "persona_sha": "pp1", "plugins_sha": "gg1",
+            "agent": {"name": "dsh-cli", "version": "0.2.1"}, "routing": {"尾款放单": ["trade-documents"]},
+            "skill_tool": "skill", "model_provider": "deepseek-account", "dsh_profile": "evalheadless",
+            "skills_mode": "default-roots", "skills_base": "s1"}
+    base.update(over)
+    return base
+
+
+def test_persona_axis_blocks_on_missing_value():
+    """persona_sha 取不到（bundle/缺失 → "?"）时 persona 轴拦截，不与有值侧比较。"""
+    rows = [row(persona="pp1", subject_fp="fp1"), row(persona=None, subject_fp="fp2")]
+    rep = compare_axis(rows, axis="persona")
+    assert rep["blocked"] and "persona 取不到配置" in rep["blocked"]
+
+
+def test_persona_axis_groups_and_blocks_model_mix():
+    rows = [row(persona="pp1", subject_fp="fp1"), row(persona="pp2", subject_fp="fp2")]
+    rep = compare_axis(rows, axis="persona")
+    assert rep["blocked"] is None and rep["axis_values"] == ["pp1", "pp2"]
+    # persona 轴放行 subject，但 model 仍是独立 ATTR：混变拦截（防「换提示词顺手换了模型」）
+    mixed = [row(persona="pp1", subject_fp="fp1", models='["glm-5.3"]'),
+             row(persona="pp2", subject_fp="fp2", models='["glm-4"]')]
+    assert "model" in compare_axis(mixed, axis="persona")["blocked"]
+
+
+def test_tools_axis_blocks_on_null_rows_and_warns_on_drift():
+    """旧 run 无观测（"?"）时 tools 轴拦截；不作轴时无观测是常态不拦截、真实漂移只告警。"""
+    rows = [row(tools_sha="tt1", subject_fp="fp1"), row(tools_sha=None, subject_fp="fp1")]
+    rep = compare_axis(rows, axis="tools")
+    assert rep["blocked"] and "旧 run 无工具观测" in rep["blocked"]
+    # 不作轴：{"?", "tt1"} 不拦截（新旧混跑常态）；{"?", "tt1", "tt2"} 多个非空取值才告警
+    legacy = [row(tools_sha=None, subject_fp="fp1"), row(tools_sha="tt1", subject_fp="fp1")]
+    assert compare_axis(legacy, axis="subject")["blocked"] is None
+    drift = legacy + [row(tools_sha="tt2", subject_fp="fp1", trial=2)]
+    rep2 = compare_axis(drift, axis="subject")
+    assert rep2["blocked"] is None
+    assert rep2["warnings"] and "工具清单观测不一致" in rep2["warnings"][0]
+
+
+def test_plugins_sha_rules_by_axis():
+    """非 tools 轴下 plugins_sha 不一致拦截；tools 轴下跨轴值放行、同轴值内拦截（doc/18 §3）。"""
+    a = row(persona="pp1", subject_fp="fp1", subject_json=_fields(plugins_sha="gg1"))
+    b = row(persona="pp1", subject_fp="fp2", subject_json=_fields(plugins_sha="gg2"))
+    # persona 轴（非 tools）：plugins_sha 混入检索/记忆插件类变化 → 拦截
+    assert "plugins_sha" in compare_axis([a, b], axis="persona")["blocked"]
+    # tools 轴：跨轴值（工具真的变了）放行
+    t1 = row(tools_sha="tt1", subject_fp="fp1", subject_json=_fields(plugins_sha="gg1"))
+    t2 = row(tools_sha="tt2", subject_fp="fp2", subject_json=_fields(plugins_sha="gg2"))
+    assert compare_axis([t1, t2], axis="tools")["blocked"] is None
+    # tools 同轴值内 plugins_sha 不一致 = 变的是不暴露工具的集成代码 → 拦截
+    t3 = row(tools_sha="tt1", subject_fp="fp3", trial=2, subject_json=_fields(plugins_sha="gg3"))
+    assert "plugins_sha" in compare_axis([t1, t2, t3], axis="tools")["blocked"]
+
+
+def test_routing_blocked_but_subject_axis_skips():
+    """routing/skill_tool 不一致拦截（改变会话行为）；subject 整体作轴时跳过——routing A/B 的出路。"""
+    a = row(subject_fp="fp1", subject_json=_fields(routing={"尾款放单": ["trade-documents"]}))
+    b = row(subject_fp="fp2", subject_json=_fields(routing={"收汇": ["trade-payment"]}))
+    assert "routing" in compare_axis([a, b], axis="model")["blocked"]
+    rep = compare_axis([a, b], axis="subject")
+    assert rep["blocked"] is None                        # subject 轴跳过非 ATTR 检查
+    # provider/dsh_profile 是名称性字段：只告警
+    c = row(subject_fp="fp3", subject_json=_fields(model_provider="other-account", dsh_profile="p2"))
+    rep2 = compare_axis([a, c], axis="model")
+    assert rep2["blocked"] is None
+    assert any("model_provider" in w for w in rep2["warnings"])
+
+
+def test_shapley_persona_factor_works():
+    """persona 作 Shapley 因子：放行集合 = ∪ follows(f)——subject 被放行、非 ATTR 检查生效；
+    无取值（"?"）的因子直接拒绝。"""
+    rows = [
+        row(qkey="q1", persona="pp1", subject_fp="fp1", subject_json=_fields()),
+        row(qkey="q1", persona="pp2", subject_fp="fp2", subject_json=_fields(persona_sha="pp2")),
+        row(qkey="q2", uid="kr-2#0", persona="pp1", subject_fp="fp1", subject_json=_fields()),
+        row(qkey="q2", uid="kr-2#0", persona="pp2", subject_fp="fp2", subject_json=_fields(persona_sha="pp2")),
+    ]
+    cells, shared = _shap(rows)
+    assert shared == {"q1", "q2"}
+    assert set(cells) == {frozenset(), frozenset({"persona"})}
+    with pytest.raises(ValueError, match="无取值"):
+        shapley_cells([row(persona=None)], ["persona"], _rules())
+
+
+def _rules():
+    from scoring.rules import rules_from_dict
+    return rules_from_dict({})
+
+
+def _shap(rows):
+    return shapley_cells(rows, ["persona"], _rules())

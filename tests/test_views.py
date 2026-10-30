@@ -81,13 +81,15 @@ def test_model_label_and_verdicts_of():
 # ---------------------------------------------------------------- 百分制聚合（doc/10 §6.3–6.4 样例复现）
 
 def _srow(qkey, case, dim, score, mode="forced", trial=1, vi=0, rewrite=None,
-          skills_base="s1", profile="p1"):
+          skills_base="s1", profile="p1", **over):
     status = "pass" if score is not None and score >= 60 else ("invalid" if score == -1 else "fail")
-    return {"qkey": qkey, "uid": qkey, "case_id": case, "dim": dim, "mode": mode, "trial": trial,
-            "c_status": None if score is None else ("invalid" if score == -1 else ("pass" if score >= 60 else "fail")),
-            "c_score": None if score in (None, -1) else score, "variant_index": vi, "rewrite": rewrite,
-            "profile_id": profile, "models_json": '["m"]', "skills_mode": "default-roots",
-            "skills_base": skills_base, "evalset_version": "v1", "run_id": "r1"}
+    d = {"qkey": qkey, "uid": qkey, "case_id": case, "dim": dim, "mode": mode, "trial": trial,
+         "c_status": None if score is None else ("invalid" if score == -1 else ("pass" if score >= 60 else "fail")),
+         "c_score": None if score in (None, -1) else score, "variant_index": vi, "rewrite": rewrite,
+         "profile_id": profile, "models_json": '["m"]', "skills_mode": "default-roots",
+         "skills_base": skills_base, "evalset_version": "v1", "run_id": "r1"}
+    d.update(over)
+    return d
 
 
 def test_dimension_and_composite_scores_doc_sample():
@@ -135,6 +137,29 @@ def test_compare_scores_single_component():
     by_name = {c["name"]: c for c in rep["contributions"]}
     assert by_name["错误知识纠正"]["delta"] == 9.0
     assert by_name["多轮上下文召回"]["delta"] == -1.2
+
+
+def test_compare_scores_cost_and_small_sample():
+    """doc/18 §5/§8：成本差 = 同题配对差的中位数（区间与分数差同一批重采样）；
+    小样本标注只影响展示；无成本数据（旧 run）→ cost 为 None。"""
+    policy = rules_from_dict({})
+    rows = []
+    base_tok, tgt_tok = [100, 200, 400], [150, 100, 500]       # 相对差 +50/−50/+25% → 中位 +25%
+    base_dur, tgt_dur = [1000, 2000, 4000], [2000, 1000, 4000]  # +100/−50/0% → 中位 0%
+    for i in range(3):
+        rows.append(_srow(f"q{i}|a", f"c{i}", "知识召回", 80, mode="natural", skills_base="v1",
+                          tokens_total=base_tok[i], duration_ms=base_dur[i]))
+        rows.append(_srow(f"q{i}|a", f"c{i}", "知识召回", 80, mode="natural", skills_base="v2",
+                          tokens_total=tgt_tok[i], duration_ms=tgt_dur[i]))
+    rep = views.compare_scores(rows, axis="skills_base", base="v1", target="v2", rules=policy)
+    assert rep["small_sample"] is True                          # 3 题 < 30
+    cost = rep["cost"]
+    assert cost["tokens"]["delta_pct"] == 25.0
+    assert cost["duration"]["delta_pct"] == 0.0
+    assert cost["tokens"]["lo"] <= 25.0 <= cost["tokens"]["hi"]
+    rows_nc = [{k: v for k, v in r.items() if k not in ("tokens_total", "duration_ms")} for r in rows]
+    assert views.compare_scores(rows_nc, axis="skills_base", base="v1", target="v2",
+                                rules=policy)["cost"] is None
 
 
 def test_shapley_doc_sample():
