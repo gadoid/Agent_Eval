@@ -1,0 +1,556 @@
+{
+ "axis": "model",
+ "axis_values": [
+  "deepseek-v4-flash",
+  "deepseek-v4-pro",
+  "glm-5.3",
+  "glm-5.3-flash"
+ ],
+ "fixed": {
+  "mode": "natural",
+  "evalset_version": "v20261030-3",
+  "effort": "high"
+ },
+ "any": [],
+ "blocked": null,
+ "inconsistent": {},
+ "warnings": [],
+ "matrix": {
+  "ec-0401#0|e48511f18709159e": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   }
+  },
+  "ec-0402#0|db75db8c84271e62": {
+   "deepseek-v4-flash": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "ec-0501#0|103f57ad30412270": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "ec-0502#0|3bd4b72b8019e17e": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0401#0|3589b52bb0346a47": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0402#0|4c3b0d273b8345b3": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0403#0|84424403a90911ee": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0404#0|6917f3cee43163a4": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0501#0|795371b753fa84c0": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0502#0|15416e791016eb3b": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0503#0|71356438397a5eb4": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "kr-0504#0|33ab82015a1ac9a4": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "mt-0401#0|d888ada77843431a": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "mt-0402#0|004d620159d47952": {
+   "deepseek-v4-flash": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "mt-0501#0|9fe249f1575fc661": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  },
+  "mt-0502#0|9c50ea30ac66fba8": {
+   "deepseek-v4-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "deepseek-v4-pro": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "glm-5.3-flash": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   }
+  }
+ },
+ "excluded_qkeys": [],
+ "dims": {
+  "多轮上下文召回": {
+   "deepseek-v4-flash": {
+    "pass": 3,
+    "n": 3,
+    "rate": 1.0,
+    "ci": [
+     0.4385,
+     1.0
+    ]
+   },
+   "deepseek-v4-pro": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "glm-5.3": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "glm-5.3-flash": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   }
+  },
+  "知识召回": {
+   "deepseek-v4-flash": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "deepseek-v4-pro": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "glm-5.3": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "glm-5.3-flash": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   }
+  },
+  "错误知识纠正": {
+   "deepseek-v4-flash": {
+    "pass": 3,
+    "n": 4,
+    "rate": 0.75,
+    "ci": [
+     0.3006,
+     0.9544
+    ]
+   },
+   "deepseek-v4-pro": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "glm-5.3": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "glm-5.3-flash": {
+    "pass": 3,
+    "n": 4,
+    "rate": 0.75,
+    "ci": [
+     0.3006,
+     0.9544
+    ]
+   }
+  }
+ },
+ "evalset_versions": null,
+ "anchor_tripwires": [],
+ "pending_answers": 0
+}

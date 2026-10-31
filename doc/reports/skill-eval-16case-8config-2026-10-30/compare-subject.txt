@@ -1,0 +1,1560 @@
+{
+ "axis": "subject",
+ "axis_values": [
+  "1cd0eb01f18add6e",
+  "248f7e9e1f3a9e32",
+  "3779438b3d8ae877",
+  "4cf78803a05312a6",
+  "571f64a0383f88b6",
+  "652bc48a1ba5df4e",
+  "7f2c025982ca9072",
+  "8a1d386bc119b922",
+  "a5f756587c9e4c19",
+  "b412c90014135639"
+ ],
+ "fixed": {
+  "mode": "natural"
+ },
+ "any": [],
+ "blocked": "比较轴之外未固定的属性取值不一致：evalset_version=['v20261029-2', 'v20261030-2', 'v20261030-3']",
+ "inconsistent": {
+  "evalset_version": [
+   "v20261029-2",
+   "v20261030-2",
+   "v20261030-3"
+  ]
+ },
+ "warnings": [],
+ "matrix": {
+  "ec-0401#0|e48511f18709159e": {
+   "1cd0eb01f18add6e": {
+    "pass": 0,
+    "n": 1,
+    "pending": 1,
+    "rate": 0.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 2,
+    "n": 2,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "ec-0402#0|db75db8c84271e62": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 1,
+    "pending": 1,
+    "rate": 0.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 1,
+    "pending": 0,
+    "rate": 0.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "ec-0501#0|103f57ad30412270": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "ec-0502#0|3bd4b72b8019e17e": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0201#0|bf6bc2de1c7f71e0": {
+   "1cd0eb01f18add6e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "3779438b3d8ae877": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 4,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "7f2c025982ca9072": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 2,
+    "rate": null
+   }
+  },
+  "kr-0201#1|35af3e6ee0204d89": {
+   "1cd0eb01f18add6e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "3779438b3d8ae877": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 1,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "7f2c025982ca9072": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 2,
+    "rate": null
+   }
+  },
+  "kr-0201#2|48f879001d046b3d": {
+   "1cd0eb01f18add6e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "3779438b3d8ae877": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 1,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "7f2c025982ca9072": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 2,
+    "rate": null
+   }
+  },
+  "kr-0202#0|6e21cd4cdeadc03c": {
+   "1cd0eb01f18add6e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "3779438b3d8ae877": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 2,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "7f2c025982ca9072": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 2,
+    "rate": null
+   }
+  },
+  "kr-0202#1|9e8b2c79d42166ce": {
+   "1cd0eb01f18add6e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "3779438b3d8ae877": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 1,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "7f2c025982ca9072": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 2,
+    "rate": null
+   }
+  },
+  "kr-0401#0|3589b52bb0346a47": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 2,
+    "n": 2,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 2,
+    "n": 2,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0402#0|4c3b0d273b8345b3": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 2,
+    "n": 2,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0403#0|84424403a90911ee": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0404#0|6917f3cee43163a4": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0501#0|795371b753fa84c0": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0502#0|15416e791016eb3b": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0503#0|71356438397a5eb4": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "kr-0504#0|33ab82015a1ac9a4": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "mt-0401#0|d888ada77843431a": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 2,
+    "n": 2,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "mt-0402#0|004d620159d47952": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 0,
+    "n": 0,
+    "pending": 1,
+    "rate": null
+   },
+   "a5f756587c9e4c19": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "mt-0501#0|9fe249f1575fc661": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  },
+  "mt-0502#0|9c50ea30ac66fba8": {
+   "1cd0eb01f18add6e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "3779438b3d8ae877": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "4cf78803a05312a6": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   },
+   "571f64a0383f88b6": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "652bc48a1ba5df4e": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "7f2c025982ca9072": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "8a1d386bc119b922": {
+    "pass": 1,
+    "n": 1,
+    "pending": 1,
+    "rate": 1.0
+   },
+   "a5f756587c9e4c19": {
+    "pass": 1,
+    "n": 1,
+    "pending": 0,
+    "rate": 1.0
+   },
+   "b412c90014135639": {
+    "pass": 0,
+    "n": 0,
+    "pending": 0,
+    "rate": null
+   }
+  }
+ },
+ "excluded_qkeys": [],
+ "dims": {
+  "多轮上下文召回": {
+   "652bc48a1ba5df4e": {
+    "pass": 5,
+    "n": 5,
+    "rate": 1.0,
+    "ci": [
+     0.5655,
+     1.0
+    ]
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 3,
+    "n": 3,
+    "rate": 1.0,
+    "ci": [
+     0.4385,
+     1.0
+    ]
+   },
+   "a5f756587c9e4c19": {
+    "pass": 3,
+    "n": 3,
+    "rate": 1.0,
+    "ci": [
+     0.4385,
+     1.0
+    ]
+   },
+   "571f64a0383f88b6": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "7f2c025982ca9072": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "3779438b3d8ae877": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "8a1d386bc119b922": {
+    "pass": 3,
+    "n": 3,
+    "rate": 1.0,
+    "ci": [
+     0.4385,
+     1.0
+    ]
+   },
+   "1cd0eb01f18add6e": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   }
+  },
+  "知识召回": {
+   "652bc48a1ba5df4e": {
+    "pass": 9,
+    "n": 9,
+    "rate": 1.0,
+    "ci": [
+     0.7008,
+     1.0
+    ]
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "a5f756587c9e4c19": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "571f64a0383f88b6": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "7f2c025982ca9072": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "3779438b3d8ae877": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   },
+   "8a1d386bc119b922": {
+    "pass": 10,
+    "n": 10,
+    "rate": 1.0,
+    "ci": [
+     0.7225,
+     1.0
+    ]
+   },
+   "1cd0eb01f18add6e": {
+    "pass": 8,
+    "n": 8,
+    "rate": 1.0,
+    "ci": [
+     0.6756,
+     1.0
+    ]
+   }
+  },
+  "错误知识纠正": {
+   "652bc48a1ba5df4e": {
+    "pass": 4,
+    "n": 5,
+    "rate": 0.8,
+    "ci": [
+     0.3755,
+     0.9638
+    ]
+   },
+   "248f7e9e1f3a9e32": {
+    "pass": 3,
+    "n": 4,
+    "rate": 0.75,
+    "ci": [
+     0.3006,
+     0.9544
+    ]
+   },
+   "a5f756587c9e4c19": {
+    "pass": 2,
+    "n": 4,
+    "rate": 0.5,
+    "ci": [
+     0.15,
+     0.85
+    ]
+   },
+   "571f64a0383f88b6": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "7f2c025982ca9072": {
+    "pass": 3,
+    "n": 4,
+    "rate": 0.75,
+    "ci": [
+     0.3006,
+     0.9544
+    ]
+   },
+   "3779438b3d8ae877": {
+    "pass": 4,
+    "n": 4,
+    "rate": 1.0,
+    "ci": [
+     0.5101,
+     1.0
+    ]
+   },
+   "8a1d386bc119b922": {
+    "pass": 3,
+    "n": 4,
+    "rate": 0.75,
+    "ci": [
+     0.3006,
+     0.9544
+    ]
+   },
+   "1cd0eb01f18add6e": {
+    "pass": 3,
+    "n": 4,
+    "rate": 0.75,
+    "ci": [
+     0.3006,
+     0.9544
+    ]
+   }
+  }
+ },
+ "evalset_versions": null,
+ "anchor_tripwires": [],
+ "pending_answers": 48
+}
