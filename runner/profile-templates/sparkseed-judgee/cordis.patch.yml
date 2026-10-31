@@ -1,0 +1,14 @@
+# 判定专用 profile（Agent_Eval 专用）：无业务知识、无人设，固定判定模型。
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    personaSuffix: Your working directory is {{cwd}}.
+    personaPrefix: |
+      你是严格、独立的评测判定员。只依据给定的条目与助手回答判断事实与要求是否成立，
+      不引入外部知识，不替回答补全未说出的内容，不迎合任何一方。
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: deepseek-account
+    model: deepseek-v4-pro
+    reasoningEffort: low
