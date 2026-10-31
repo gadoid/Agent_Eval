@@ -1,0 +1,48 @@
+# SparkSeed 评测技能根盘点（2026-10-30）：trade 21 篇 + lvyue 18 篇，实体副本
+exported_at: 2026-10-30T00:00:00.000Z
+agent_version: dsh 0.2.0-rc.8
+roots:
+  - path: D:/Agent_Eval/.eval-skills/sparkseed-trade
+    manifest_sha256: 027523c06d1c5dc7dbfcba99418e40a61ea3b93b196542eef5acbf79d155a6cf
+  - path: D:/Agent_Eval/.eval-skills/sparkseed-lvyue
+    manifest_sha256: 0fd8ddd545b2aef8b9942698aefff24654a62bdb165903055fee43c6a46a590f
+skills:
+  - {name: trade-company, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-company.md", sha256: 5e4de2c16ca3de2830c457a769e4977c37a5fd68cccc904eec76da6d4d4dfedc}
+  - {name: trade-contract, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-contract.md", sha256: f3daba4f2b90db4363e6343081a60583b7c86663694e5eb1d589c72a8f9949d8}
+  - {name: trade-customs, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-customs.md", sha256: 48a837f065b211a45b8ba7aaa13fb4b2dab2322b9b23d54ab8b56c11ab8d8270}
+  - {name: trade-documents, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-documents.md", sha256: e2e576212df957cf093e1d5653813cea312371ddefaaa3e0f253435fb24c9a82}
+  - {name: trade-email-templates, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-email-templates.md", sha256: d8bcf95200115beb8cde88505c9a677130a4ad4cf8821139d71c324347ba7db9}
+  - {name: trade-faq, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-faq.md", sha256: c2fd890f3060f125f7006b8e7b89f926a292b17179828130cc87bf02184b0d1d}
+  - {name: trade-finance-policy, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-finance-policy.md", sha256: a5fa871266f4ac7f6452cb59fdda73e547516c0bff6fa000375550f2d82dc268}
+  - {name: trade-finance, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-finance.md", sha256: 01c634ca956431907eefa06996bfa4fde7868ac217e94691a1d54d35b5b412a3}
+  - {name: trade-glossary, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-glossary.md", sha256: a2ec2968b97d2715523c692250844d4e2fe6bdffb0792b38dca342f24d943ff4}
+  - {name: trade-incoterms, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-incoterms.md", sha256: c76ce303a1fd7fa074ae347ebb03afc98fd428d6185af48bcde4867b27d3da92}
+  - {name: trade-lead-gen, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-lead-gen.md", sha256: 0812d306ab20c1a4b06130265c4797848040049206b2c095994fb918f765fab7}
+  - {name: trade-logistics, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-logistics.md", sha256: b58b7e0bfc824dd3e60a9da4b8e3077c94039a6b9d474e6b06f079731b926227}
+  - {name: trade-negotiation, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-negotiation.md", sha256: 9a7ea020767f001e892c68d2b462a38b7b0bbb5355c889a7b5897fa85ec73022}
+  - {name: trade-payment, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-payment.md", sha256: ae6ebd0db9c92ae45edef8a3ade1e5ed1c72fc2ef016cb51c8a7805d6d722edb}
+  - {name: trade-process, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-process.md", sha256: d2d9395453faad172f998a17267b3079265750a3d45cccc86865bce1f5666df5}
+  - {name: trade-products, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-products.md", sha256: c5ce282a4d0bb28a41681b053b5ca584bfe0d3c7847012c85f92057db769f90a}
+  - {name: trade-qc-supply-chain, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-qc-supply-chain.md", sha256: 16ebb1ad97224f37b5aad5570877268511d74d1e99ac38cbd10c218b6afb2f7c}
+  - {name: trade-regional-markets, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-regional-markets.md", sha256: 0aa4560667e08a19e9cee152853b9d0e557e8c1b61bd88f2c267a167926c4e91}
+  - {name: trade-regulations, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-regulations.md", sha256: bd81db613680e9e19a2d84bd5f3c2575622857652a6f49a4b20b47c55e84a40b}
+  - {name: trade-risk, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-risk.md", sha256: a9e1d0b5fda43522d83787d216ce9e6bf297bc54ac6a6f726366444d659c28b9}
+  - {name: trade-yhr-system, root: "D:/Agent_Eval/.eval-skills/sparkseed-trade", file: "trade-yhr-system.md", sha256: 756627373a86c9e513128566f597614d30821efa55d40e4a4618a3769a2038ae}
+  - {name: lvyue-contacts, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-contacts.md", sha256: 2ba9ba1a0e0f5e26a5c2f795526b32a1773dc6c124b688c5eb5e9214a6fb9c25}
+  - {name: lvyue-cops-core, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-cops-core.md", sha256: 672e9b338eb55364510d1054210099d602a16f910f04757f611cda504ce8bacd}
+  - {name: lvyue-cops-daily, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-cops-daily.md", sha256: af1ebd4c06a9073ecc1aff6ddd6156465788f32e8df0961743a3c246866079f2}
+  - {name: lvyue-cops-js, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-cops-js.md", sha256: 33b2318f536b67b51736113afaebf97893f0a7c19b4dd7734687da6569841683}
+  - {name: lvyue-logistics-admin, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-logistics-admin.md", sha256: b74fe80bb79ef5026ee82e99c827e6b34ae459a2da79957ff840000e3d84f094}
+  - {name: lvyue-logistics-faq, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-logistics-faq.md", sha256: 5d0d8f67caf82d352665fa27bed0daed6a9381169a3fdd7f71b7c27926bb512e}
+  - {name: lvyue-logistics-fees, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-logistics-fees.md", sha256: 38a12bf0a2b7230753f8e2acfc1ce542ecbb8fdc4b582c39feecfd077850decc}
+  - {name: lvyue-logistics-order, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-logistics-order.md", sha256: 6ea55bfc73c5e3904467b2c44972f6b43084fbed081034c27fac3cbcd68e7cc1}
+  - {name: lvyue-ops-intake, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-ops-intake.md", sha256: 04111c09fe58e6ee2977fa11fcc8642df82c83def70c58b298cc56a328e8db41}
+  - {name: lvyue-ops-order, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-ops-order.md", sha256: 0f040390e9fa757235919b0acf1c73472e644aadf0b842f8b6b91f2f8dc67e9a}
+  - {name: lvyue-ops-postloan, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-ops-postloan.md", sha256: e424d12e1ae4c8520586df87999cb82bebc02297982a8e0684e3423ae7a67b49}
+  - {name: lvyue-overview, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-overview.md", sha256: b4a6cd8f6eda82812f6b82efbf985903e61d9ac2e200cbfcb3d60ff485397659}
+  - {name: lvyue-postloan-paths, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-postloan-paths.md", sha256: 713139199de5030126c7a76a643ca791a27854730d1d9f7544e876a6d92fdb40}
+  - {name: lvyue-rules-business, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-rules-business.md", sha256: b8b605697bf4f2690efb381e4e24ddbd5e2ec27fd23d652d51d65ca9975246ae}
+  - {name: lvyue-rules-finance, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-rules-finance.md", sha256: 53c90789f3327dd5deb11ca94619ce1a30fb387685f6f6a13e7c70442768fa3e}
+  - {name: lvyue-rules-system, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-rules-system.md", sha256: 69263874125e99033195ae1f418a783f0f936349b4cea2b287aac12303f7cce1}
+  - {name: lvyue-service-policy, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-service-policy.md", sha256: 1546514c4a6d785eed8bf44cc45ab7d01c404df33a77e22e914e3a6632a52342}
+  - {name: lvyue-ticket-settlement, root: "D:/Agent_Eval/.eval-skills/sparkseed-lvyue", file: "lvyue-ticket-settlement.md", sha256: 245e2000bf681216798008ed57d116f412c042dfc6da304499eb9b6156697a30}

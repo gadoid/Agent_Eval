@@ -162,6 +162,24 @@ def test_compare_scores_cost_and_small_sample():
                                 rules=policy)["cost"] is None
 
 
+def test_compare_scores_contrib_scale_covers_ci():
+    """组件贡献图的对称刻度要盖住 95% 区间：两题方向相反时点估计为 0、区间却到 ±50，
+    刻度若只取点估计，区间线会画到轨道外（页面横向溢出、穿过左侧标签）。"""
+    policy = rules_from_dict({})
+    rows = [
+        _srow("q0|a", "c0", "知识召回", 50, mode="natural", skills_base="v1"),
+        _srow("q0|a", "c0", "知识召回", 100, mode="natural", skills_base="v2"),
+        _srow("q1|a", "c1", "知识召回", 50, mode="natural", skills_base="v1"),
+        _srow("q1|a", "c1", "知识召回", 0, mode="natural", skills_base="v2"),
+    ]
+    rep = views.compare_scores(rows, axis="skills_base", base="v1", target="v2", rules=policy)
+    comp = rep["contributions"][0]
+    assert (comp["delta"], comp["lo"], comp["hi"]) == (0.0, -50.0, 50.0)
+    assert rep["contrib_scale"] == 50.0                          # 由区间而非点估计决定
+    assert all(-rep["contrib_scale"] <= c["lo"] <= c["hi"] <= rep["contrib_scale"]
+               for c in rep["contributions"] if c["delta"] is not None)
+
+
 def test_shapley_doc_sample():
     """doc/10 §6.4 样例：2×2 全因子（66/70/71/78）→ φ = +5.5 / +6.5，合计 +12.0。"""
     cells = {frozenset(): 66.0, frozenset({"model"}): 70.0,

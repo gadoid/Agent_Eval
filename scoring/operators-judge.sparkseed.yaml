@@ -1,0 +1,31 @@
+# 带模型算子的判定链（SparkSeed 链路）：llm-fact / llm-forbid 经 dsh CLI 单发会话调用
+# judgee profile（无业务知识、固定 deepseek-v4-pro low）；结论由判据推导表得出。
+# 机器路径属本机部署配置，故独立于默认 operators.yaml（链 sha 不同，复核服务显示「规则+模型」）。
+schema: 1
+operators:
+  keyword:    {impl: keyword}
+  skill-path: {impl: skill-path}
+  llm-fact:
+    impl: "scoring.ext.judges:LlmFact"
+    model: deepseek-v4-pro
+    dsh_bin: ['D:/sparkseed/sparkseed.exe', --expose-internals, 'D:/sparkseed/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js']
+    dsh_profile: judgee
+    dsh_home: C:/Users/jiaoshouxiang/.sparkseed-eval
+    dsh_env: {ELECTRON_RUN_AS_NODE: "1"}
+    timeout: 600
+  llm-forbid:
+    impl: "scoring.ext.judges:LlmForbidden"
+    model: deepseek-v4-pro
+    dsh_bin: ['D:/sparkseed/sparkseed.exe', --expose-internals, 'D:/sparkseed/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js']
+    dsh_profile: judgee
+    dsh_home: C:/Users/jiaoshouxiang/.sparkseed-eval
+    dsh_env: {ELECTRON_RUN_AS_NODE: "1"}
+    timeout: 600
+
+chains:
+  required:  [keyword, llm-fact]
+  expected:  [keyword, llm-fact]
+  forbidden: [llm-forbid]
+  precond:   []                  # llm-precond 未就绪，前提条目人工判
+  path:      [skill-path]
+  refusal:   []

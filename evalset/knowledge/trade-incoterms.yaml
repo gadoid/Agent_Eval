@@ -1,0 +1,14 @@
+# trade-incoterms 注入点：key 取自 .eval-skills/sparkseed-trade/trade-incoterms.md 真实原文
+- id: CIF风险转移
+  file: trade-incoterms.md
+  key: 风险仍在装运港装上船时转移
+  tags: [业务/合同]
+  options:
+    反转: {value: "风险在货物到达目的港时转移", rev: 1}
+    删除: {value: "", rev: 1}
+- id: CIF投保加成
+  file: trade-incoterms.md
+  key: 110%（CIF 价 × 110%）
+  tags: [业务/合同]
+  options:
+    反转: {value: "100%（CIF 价 × 100%）", rev: 1}

@@ -88,7 +88,7 @@
   </div>
   <div class="rv-meta" style="margin:-8px 0 16px">快照对比只切换判定标准与执行输入；计分权重按当前数据库口径（切回旧快照不会回滚权重），历史权重请看用例页的保存记录。</div>
 
-  <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px">
+  <div class="rv-comp-grid">
     {% for side, label in [(rep.base, '基线'), (rep.target, '对照')] %}
     {% set comp = rep.metrics[side].composite %}
     <section class="rv-card rv-comp"><div class="rv-comp-head"><span class="rv-comp-n">{{ comp.score|f1 }}</span>
@@ -122,14 +122,14 @@
 
   <section class="rv-card rv-contrib" style="margin-bottom:16px">
     <h2>组件贡献：{{ axis_names.get(rep.base, rep.base) if axis_names else rep.base }} → {{ axis_names.get(rep.target, rep.target) if axis_names else rep.target }} <span class="rv-meta" style="font-weight:400"><span>单组件</span><span>共有 {{ rep.n_shared_cases }} 个用例</span></span></h2>
-    {% set width = (rep.contributions | map(attribute='delta') | select | map('abs') | max) or 1 %}
+    {% set width = rep.contrib_scale %}
     {% for ctb in rep.contributions %}
     <div class="rv-contrib-row" title="{{ ctb.name }}：{{ ctb.delta|f1 }} 分（{{ ctb.base|f1 }} → {{ ctb.target|f1 }}）">
       <span>{{ ctb.name }}</span>
       <span class="rv-contrib-track">
         {% if ctb.delta is not none %}
         <span class="rv-contrib-bar" {% if ctb.delta < 0 %}data-neg{% endif %} style="{% if ctb.delta >= 0 %}left:50%;width:{{ (ctb.delta / width * 50)|round(1) }}%{% else %}left:{{ 50 + (ctb.delta / width * 50)|round(1) }}%;width:{{ (-ctb.delta / width * 50)|round(1) }}%{% endif %}"></span>
-        <span class="rv-contrib-ci" style="left:{{ 50 + (ctb.lo / width * 50)|round(1) }}%;width:{{ ((ctb.hi - ctb.lo) / width * 50)|round(1) }}%"></span>{% endif %}
+        <span class="rv-contrib-ci" style="left:{{ (50 + ctb.lo / width * 50)|round(1) }}%;width:{{ ((ctb.hi - ctb.lo) / width * 50)|round(1) }}%"></span>{% endif %}
       </span>
       <span class="rv-contrib-v">{% if ctb.delta is not none %}{{ '+' if ctb.delta >= 0 else '−' }}{{ ctb.delta|abs|f1 }}{% else %}—{% endif %}
         <small>{{ ctb.base|f1 if ctb.base is not none else '—' }} → {{ ctb.target|f1 if ctb.target is not none else '—' }}</small></span></div>

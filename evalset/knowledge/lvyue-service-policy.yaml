@@ -1,0 +1,7 @@
+# lvyue-service-policy 注入点：key 取自 skill 原文（条件规则表）
+- id: 穿行折扣
+  file: lvyue-service-policy.md
+  key: 100%穿行（折扣97.5%）
+  tags: [业务/服务策略]
+  options:
+    反转: {value: "100%穿行（折扣92.5%）", rev: 1}

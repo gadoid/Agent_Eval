@@ -242,15 +242,25 @@ def batch_judge(records: list[dict], cfg, cache, transport_of=None, log=print) -
         prompt = jobs[0][1]._wrap([op.item_block(item, ctx) for item, op in jobs],
                                   dialog_text(ctx))
         transport = (transport_of(jobs[0][1]) if transport_of else jobs[0][1].transport())
-        raw = transport.ask(prompt)
-        parsed = extract_json(raw)
-        arr = parsed if isinstance(parsed, list) else [parsed]
-        by_id = {}
-        for d in arr:
-            if isinstance(d, dict) and d.get("id"):
-                by_id[str(d["id"])] = d
+        by_id: dict[str, dict] = {}
+        try:
+            parsed = extract_json(transport.ask(prompt))
+            arr = parsed if isinstance(parsed, list) else [parsed]
+            by_id = {str(d["id"]): d for d in arr if isinstance(d, dict) and d.get("id")}
+        except ValueError:
+            log(f"  {record.get('uid')}：批量判定输出不可解析，逐条补判")
         for item, op in jobs:
             data = by_id.get(str(item.id))
+            if data is None:
+                # 批量输出常漏条目：单条重问一次，仍缺才送人工
+                try:
+                    single = extract_json(transport.ask(
+                        op._wrap([op.item_block(item, ctx)], dialog_text(ctx))))
+                    arr1 = single if isinstance(single, list) else [single]
+                    data = next((d for d in arr1
+                                 if isinstance(d, dict) and str(d.get("id")) == str(item.id)), None)
+                except ValueError:
+                    data = None
             if not data:
                 log(f"  {record.get('uid')} {item.id}：模型未返回该条目，送人工")
                 continue

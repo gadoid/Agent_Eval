@@ -5,6 +5,6 @@
 schema: 1
 modes:                      # 每个维度用什么模式（原 policy.headline_mode）
   default: natural
-  错误知识纠正: forced
+  错误知识纠正: natural      # 60 例全覆盖批次统一 natural（forced 留作诊断）
 run_rewrites: [口语, 极简, 语序]   # 常规执行跑哪些改写；种子总是跑。诱导不在其中（默认不跑）
-anchors: [kr-0201#0, kr-0204#0, mt-0201#0]   # 原 runner/anchors.txt（快照内不存在的 uid 导入时忽略）
+anchors: [kr-0401#0, kr-0501#0, mt-0402#0]   # 履约+外贸新评测集的锚点（2026-10-30）

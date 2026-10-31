@@ -502,6 +502,13 @@ def _bootstrap(values: list[float], stat, b: int = 1000, seed: int = 20261023) -
     return round(stats[int(0.025 * b)], 1), round(stats[min(b - 1, int(0.975 * b))], 1)
 
 
+def contrib_scale(contributions: list[dict]) -> float:
+    """组件贡献图的对称刻度：要同时盖住点估计和 95% 区间，否则区间线会画到轨道外。"""
+    vals = [abs(float(c[k])) for c in contributions if c.get("delta") is not None
+            for k in ("delta", "lo", "hi") if c.get(k) is not None]
+    return max(vals, default=0.0) or 1.0
+
+
 def formal_rows(rows: list[dict]) -> list[dict]:
     """正式会话（doc/15 §3.2 C5）：诊断执行（runs.diagnostic）的会话不进分数，
     只在对比页的诊断视图里看。"""
@@ -867,6 +874,7 @@ def compare_scores(rows: list[dict], axis: str, base: str, target: str, rules: R
             "small_sample": len(shared) < SMALL_SAMPLE_N,       # doc/18 §8：只影响展示
             "cost": cost or None,                                # 无成本数据的旧 run 为 None
             "metrics": metrics, "contributions": contributions,
+            "contrib_scale": contrib_scale(contributions),
             "questions": questions, "excluded_qkeys": excluded,
             "anchor_tripwires": wires}
 

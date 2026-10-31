@@ -1,0 +1,9 @@
+# lvyue-ticket-settlement 注入点：key 取自 .eval-skills/sparkseed-lvyue/lvyue-ticket-settlement.md 真实原文
+# 注意：该句在原文表格注释行中重复出现 7 次，反转会同时改写这 7 处（同一句、语义一致）
+- id: 保证金回款时效
+  file: lvyue-ticket-settlement.md
+  key: 客户的保证金回款最长时效为T+5工作日
+  tags: [业务/资方对应]
+  options:
+    反转: {value: "客户的保证金回款最长时效为T+30工作日", rev: 1}
+    删除: {value: "", rev: 1}

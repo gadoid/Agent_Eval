@@ -1,0 +1,8 @@
+# lvyue-postloan-paths 注入点：key 取自 .eval-skills/sparkseed-lvyue/lvyue-postloan-paths.md 真实原文
+- id: 费用确认单时效
+  file: lvyue-postloan-paths.md
+  key: 最晚ATD+45前公众号确认
+  tags: [业务/单证]
+  options:
+    反转: {value: "最晚ATD+15前公众号确认", rev: 1}
+    删除: {value: "", rev: 1}

@@ -1,0 +1,7 @@
+# lvyue-rules-finance 注入点：key 取自 skill 原文
+- id: 资方放款时效
+  file: lvyue-rules-finance.md
+  key: 放款时效T+2~3天放款
+  tags: [业务/融资]
+  options:
+    反转: {value: "放款时效T+7天放款", rev: 1}

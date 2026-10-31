@@ -522,10 +522,11 @@ mark.rv-forbid { background: var(--mark-forbid); color: var(--ink); padding: 0 2
 /* ================================================================ v4：综合分、组件贡献、注入观测 */
 
 /* ScoreBreakdown：维度分 × 权重 → 综合分 */
-.rv-comp { display: grid; gap: var(--space-2); }
+.rv-comp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.rv-comp { display: grid; gap: var(--space-2); min-width: 0; }
 .rv-comp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
 .rv-comp-n { font-family: var(--font-mono); font-size: 32px; line-height: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.rv-comp-row { display: grid; grid-template-columns: 132px 52px minmax(120px, 1fr) 56px; gap: var(--space-3); align-items: center; font-size: 13px; }
+.rv-comp-row { display: grid; grid-template-columns: 132px 52px minmax(0, 1fr) 56px; gap: var(--space-3); align-items: center; font-size: 13px; }
 .rv-comp-row .rv-scorebar { height: 8px; }
 .rv-comp-w { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-3); }
 .rv-comp-v { font-family: var(--font-mono); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }

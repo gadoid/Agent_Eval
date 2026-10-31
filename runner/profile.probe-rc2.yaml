@@ -1,0 +1,25 @@
+# SparkSeed 0.2.0-rc.8 链路 + 两份业务知识（trade 21 篇 / lvyue 18 篇）的评测 Profile。
+# 运行时：sparkseed.exe 以 Node 模式跑 asar 内 dsh CLI；home 用独立 .sparkseed-eval，
+# 不碰桌面客户端的登录态与 profile。skills_mode: isolated —— 每段会话复制一份技能副本，
+# overlay 把 skill-filesystem 指到副本（includeDefaultRoots: false），注入只改副本。
+# 模型/努力程度不写死：由 CLI --model / --reasoning-effort 覆盖（两者须同时给）。
+id: dsh-rc2-probe
+dsh:
+  bin: '"C:/Users/jiaoshouxiang/AppData/Local/Programs/DeepSeek Harness/DeepSeek Harness.exe" --expose-internals "C:/Users/jiaoshouxiang/AppData/Local/Programs/DeepSeek Harness/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js"'
+  profile: evalmin
+  home: C:/Users/jiaoshouxiang/.sparkseed-eval
+  env:
+    ELECTRON_RUN_AS_NODE: "1"
+  timeout_ms: 600000
+skills_mode: isolated
+skills_roots:
+  - D:/Agent_Eval/.eval-skills/sparkseed-trade
+  - D:/Agent_Eval/.eval-skills/sparkseed-lvyue
+skills_inventory: D:/Agent_Eval/runner/skills-inventory-sparkseed.yaml
+budget:
+  max_tokens: 8000000
+  max_hours: 6
+skill_tool: skill
+routing:
+  履约知识: [lvyue-overview]
+  外贸知识: [trade-process]
